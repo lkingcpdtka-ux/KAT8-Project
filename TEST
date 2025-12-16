@@ -1,0 +1,790 @@
+#!/usr/bin/env Rscript
+
+## =========================================================
+## KAT8 bulk RNA-seq: Tissue KAT8KD vs CTL
+## iWAT & gWAT, F/M; FL vs AKO/MAKO
+## Density (before/after), PCA, MDS, limma-voom,
+## volcanos (viridis + standard thresholds, cells-style),
+## per-contrast heatmaps, DEG counts
+## (pathway analysis removed)
+## WITH save_core / run management
+## =========================================================
+
+## 0) Working dir (optional) --------------------------------
+## setwd("C:/Users/lking/OneDrive - Louisiana State University/PBRC/Bioinformatics/KAT8KD_RNAseq")
+
+## 1) Packages ----------------------------------------------
+required_pkgs <- c(
+  "dplyr",
+  "limma",
+  "edgeR",
+  "ggplot2",
+  "RColorBrewer",
+  "ggrepel",
+  "viridis",
+  "pheatmap",
+  "grid"
+)
+
+to_install <- setdiff(required_pkgs, rownames(installed.packages()))
+if (length(to_install) > 0) {
+  install.packages(to_install, dependencies = TRUE)
+}
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(limma)
+  library(edgeR)
+  library(ggplot2)
+  library(RColorBrewer)
+  library(ggrepel)
+  library(viridis)
+  library(pheatmap)
+  library(grid)   ## for unit()
+})
+
+## 2) save_core utilities -----------------------------------
+
+utils_dir <- file.path(getwd(), "save_core")
+source(file.path(utils_dir, "save.R"))
+source(file.path(utils_dir, "findsave.R"))
+source(file.path(utils_dir, "purge.R"))
+source(file.path(utils_dir, "dedupe.R"))
+
+## 2.5) Run metadata ----------------------------------------
+
+run_info <- list(
+  script_name = "KAT8_bulk_tissue_KAT8KD.R",
+  species     = "mouse",
+  data_type   = "bulkRNAseq_WAT_tissue",
+  keywords    = c("KAT8", "WAT", "iWAT", "gWAT", "bulk RNA-seq", "tissue"),
+  notes       = "KAT8KD vs CTL in iWAT/gWAT, F/M; per-depot/sex contrasts",
+  message     = "Tissue KAT8KD vs CTL: limma-voom + PCA/MDS + DEGs (pathway removed)"
+)
+
+## 3) init_run ----------------------------------------------
+
+run_ctx <- init_run(
+  script_name = run_info$script_name,
+  species     = run_info$species,
+  data_type   = run_info$data_type,
+  keywords    = run_info$keywords,
+  notes       = run_info$notes
+)
+
+outdir  <- run_ctx$outdir
+run_tag <- run_ctx$run_tag
+
+cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
+
+## 4) Main logic --------------------------------------------
+
+hero_volcano_file <- NULL  ## holds one representative plot for save_core
+
+tryCatch({
+
+  ## 4.1) Load raw counts -----------------------------------
+
+  cat("\n=== RAW COUNTS MATRIX (FULL) ===\n")
+
+  counts_raw <- read.delim(
+    "counts.txt",
+    header           = TRUE,
+    stringsAsFactors = FALSE,
+    check.names      = FALSE
+  )
+
+  cat("Dimensions (rows x cols):", paste(dim(counts_raw), collapse = " x "), "\n")
+  cat("First 10 column names:\n")
+  print(head(colnames(counts_raw), 10))
+
+  cat("\nHead of counts (first 5 rows, first 6 cols):\n")
+  print(head(counts_raw[, 1:min(6, ncol(counts_raw))]))
+
+  ## 4.2) Define tissue samples + annotation ----------------
+
+  sample_ids <- paste0("JS_", sprintf("%02d", 1:40))
+
+  sample_annot_full <- data.frame(
+    Sample   = sample_ids,
+    Depot    = c(
+      rep("iWAT", 10),
+      rep("iWAT", 10),
+      rep("gWAT", 10),
+      rep("gWAT", 10)
+    ),
+    Sex      = c(
+      rep("F", 5),  rep("F", 5),   # iWAT F CTL / KAT8KD
+      rep("M", 5),  rep("M", 5),   # iWAT M CTL / KAT8KD
+      rep("F", 5),  rep("F", 5),   # gWAT F CTL / KAT8KD
+      rep("M", 5),  rep("M", 5)    # gWAT M CTL / KAT8KD
+    ),
+    Genotype = c(
+      rep("CTL",    5), rep("KAT8KD", 5),
+      rep("CTL",    5), rep("KAT8KD", 5),
+      rep("CTL",    5), rep("KAT8KD", 5),
+      rep("CTL",    5), rep("KAT8KD", 5)
+    ),
+    stringsAsFactors = FALSE
+  )
+
+  ## Remove outlier samples at the annotation level
+  outlier_samples <- c("JS_08", "JS_28")
+  sample_annot <- sample_annot_full %>%
+    dplyr::filter(!(Sample %in% outlier_samples))
+
+  tissue_samples <- sample_annot$Sample
+
+  ## Sanity check
+  missing_tissue <- setdiff(tissue_samples, colnames(counts_raw))
+  if (length(missing_tissue) > 0) {
+    stop(
+      "These tissue sample columns are missing in counts.txt: ",
+      paste(missing_tissue, collapse = ", ")
+    )
+  }
+
+  counts_tissue_raw <- counts_raw[, c("gene_id", "gene", tissue_samples)]
+
+  cat("\n=== TISSUE SUBSET (with outliers removed) ===\n")
+  cat("Dimensions (rows x cols):", paste(dim(counts_tissue_raw), collapse = " x "), "\n")
+  cat("Column names:\n")
+  print(colnames(counts_tissue_raw))
+
+  ## 4.3) Gene cleaning -------------------------------------
+
+  counts_tissue <- counts_tissue_raw %>%
+    mutate(
+      ensembl_gene_id = gene_id,
+      gene_name       = gene
+    )
+
+  na_or_blank <- is.na(counts_tissue$gene_name) | counts_tissue$gene_name == ""
+  counts_tissue$gene_name[na_or_blank] <- counts_tissue$ensembl_gene_id[na_or_blank]
+
+  cat("\nAny NA in gene_name (tissue)?  ", any(is.na(counts_tissue$gene_name)), "\n")
+  cat("Any blank gene_name (tissue)?  ", any(counts_tissue$gene_name == ""), "\n")
+  cat("Any duplicated gene_name (tissue)?  ", any(duplicated(counts_tissue$gene_name)), "\n")
+
+  dup_count_tissue <- sum(duplicated(counts_tissue$gene_name))
+  cat("Number of duplicated gene_name entries (tissue): ", dup_count_tissue, "\n")
+
+  if (dup_count_tissue > 0) {
+    cat("Renaming duplicated gene_name entries as ensembl_gene_id_gene_name (tissue).\n")
+
+    dup_flag <- duplicated(counts_tissue$gene_name) |
+      duplicated(counts_tissue$gene_name, fromLast = TRUE)
+
+    counts_tissue$gene_name[dup_flag] <- paste0(
+      counts_tissue$ensembl_gene_id[dup_flag],
+      "_",
+      counts_tissue$gene_name[dup_flag]
+    )
+  }
+
+  rownames(counts_tissue) <- counts_tissue$gene_name
+
+  cat("\n=== AFTER GENE CLEANING (TISSUE) ===\n")
+  cat("Dimensions (rows x cols):", paste(dim(counts_tissue), collapse = " x "), "\n")
+
+  ## 4.4) DGEList construction ------------------------------
+
+  count_matrix_tissue <- as.matrix(counts_tissue[, tissue_samples])
+  rownames(count_matrix_tissue) <- counts_tissue$gene_name
+
+  DGE_tissue <- DGEList(counts = count_matrix_tissue)
+
+  DGE_tissue$genes <- data.frame(
+    gene_name       = rownames(DGE_tissue$counts),
+    ensembl_gene_id = counts_tissue$ensembl_gene_id[
+      match(rownames(DGE_tissue$counts), counts_tissue$gene_name)
+    ],
+    stringsAsFactors = FALSE
+  )
+
+  ## 4.5) Attach sample annotation --------------------------
+
+  sample_annot <- sample_annot[match(colnames(DGE_tissue$counts),
+                                     sample_annot$Sample), ]
+
+  DGE_tissue$samples$Sample   <- sample_annot$Sample
+  DGE_tissue$samples$Depot    <- sample_annot$Depot
+  DGE_tissue$samples$Sex      <- sample_annot$Sex
+  DGE_tissue$samples$Genotype <- factor(sample_annot$Genotype,
+                                        levels = c("CTL", "KAT8KD"))
+
+  DGE_tissue$samples$DepotSex <- factor(
+    paste(DGE_tissue$samples$Depot, DGE_tissue$samples$Sex, sep = "_"),
+    levels = c("iWAT_F", "iWAT_M", "gWAT_F", "gWAT_M")
+  )
+
+  DGE_tissue$samples$GroupFull <- factor(
+    paste(DGE_tissue$samples$Depot,
+          DGE_tissue$samples$Sex,
+          DGE_tissue$samples$Genotype,
+          sep = "_"),
+    levels = c(
+      "iWAT_F_CTL",   "iWAT_F_KAT8KD",
+      "iWAT_M_CTL",   "iWAT_M_KAT8KD",
+      "gWAT_F_CTL",   "gWAT_F_KAT8KD",
+      "gWAT_M_CTL",   "gWAT_M_KAT8KD"
+    )
+  )
+
+  rownames(DGE_tissue$samples) <- colnames(DGE_tissue$counts)
+
+  cat("\nSample annotation head:\n")
+  print(head(DGE_tissue$samples))
+
+  cat("\n=== DGE BASIC QC (TISSUE) ===\n")
+  cat("Number of genes:   ", nrow(DGE_tissue$counts), "\n")
+  cat("Number of samples: ", ncol(DGE_tissue$counts), "\n")
+  cat("Library sizes:\n")
+  print(DGE_tissue$samples$lib.size)
+  cat("\nSummary of library sizes:\n")
+  print(summary(DGE_tissue$samples$lib.size))
+
+  ## 4.6) TMM normalization + filtering ---------------------
+
+  DGE_tissue <- calcNormFactors(DGE_tissue)
+
+  n_tissue <- ncol(DGE_tissue$counts)
+
+  logCPM_tissue <- cpm(DGE_tissue, log = TRUE, prior.count = 3)
+
+  keep_tissue <- rowSums(cpm(DGE_tissue) > 1) >= (n_tissue / 2)
+
+  cat("\nNumber of genes before CPM filter (tissue): ", length(keep_tissue), "\n")
+  cat("Number of genes passing CPM filter  (tissue): ", sum(keep_tissue), "\n")
+
+  DGE_tissue_filt <- DGE_tissue[keep_tissue, , keep.lib.sizes = FALSE]
+
+  cat("Number of genes after filtering (tissue): ",
+      nrow(DGE_tissue_filt$counts), "\n")
+
+  logCPM_tissue_filt <- cpm(DGE_tissue_filt, log = TRUE, prior.count = 3)
+
+  ## 4.7) Density plots (before/after filter) ---------------
+
+  plot_density_tissue <- function() {
+
+    par(mfrow = c(1, 2), mar = c(5, 5, 4, 2))
+    par(xpd = NA)
+
+    cols_before <- viridis(ncol(logCPM_tissue), option = "D", end = 0.95)
+    cols_after  <- viridis(ncol(logCPM_tissue_filt), option = "D", end = 0.95)
+
+    dens_before <- apply(logCPM_tissue,      2, density)
+    dens_after  <- apply(logCPM_tissue_filt, 2, density)
+
+    max_y_before <- max(sapply(dens_before, function(d) max(d$y)))
+    max_y_after  <- max(sapply(dens_after,  function(d) max(d$y)))
+
+    ## BEFORE filter
+    plot(dens_before[[1]],
+         main = "Tissue: log2 CPM (before filter)",
+         xlab = "log2 CPM",
+         lwd  = 2,
+         col  = cols_before[1],
+         ylim = c(0, max_y_before * 1.1))
+    if (ncol(logCPM_tissue) > 1) {
+      for (i in 2:ncol(logCPM_tissue)) {
+        lines(dens_before[[i]], lwd = 2, col = cols_before[i])
+      }
+    }
+    legend("topright",
+           legend = colnames(DGE_tissue$counts),
+           col    = cols_before,
+           lwd    = 2,
+           cex    = 0.4,
+           bty    = "n")
+
+    ## AFTER filter
+    plot(dens_after[[1]],
+         main = "Tissue: log2 CPM (after filter)",
+         xlab = "log2 CPM",
+         lwd  = 2,
+         col  = cols_after[1],
+         ylim = c(0, max_y_after * 1.1))
+    if (ncol(logCPM_tissue_filt) > 1) {
+      for (i in 2:ncol(logCPM_tissue_filt)) {
+        lines(dens_after[[i]], lwd = 2, col = cols_after[i])
+      }
+    }
+    legend("topright",
+           legend = colnames(DGE_tissue_filt$counts),
+           col    = cols_after,
+           lwd    = 2,
+           cex    = 0.4,
+           bty    = "n")
+  }
+
+  density_file_tissue <- paste0("logCPM_density_KAT8KD_tissue_before_after_", run_tag, ".png")
+  png(file.path(outdir, "plots", density_file_tissue),
+      width = 1400, height = 800, res = 150)
+  plot_density_tissue()
+  dev.off()
+
+  cat("\nSaved density plots to ",
+      file.path(outdir, "plots", density_file_tissue), "\n")
+
+  ## 4.8) PCA -----------------------------------------------
+
+  pca_tissue <- prcomp(t(logCPM_tissue_filt), scale. = TRUE)
+  pca_var_tissue <- summary(pca_tissue)$importance[2, 1:2] * 100
+
+  pca_tissue_df <- data.frame(
+    Sample   = colnames(DGE_tissue_filt$counts),
+    Genotype = DGE_tissue_filt$samples$Genotype,
+    DepotSex = DGE_tissue_filt$samples$DepotSex,
+    Depot    = DGE_tissue_filt$samples$Depot,
+    Sex      = DGE_tissue_filt$samples$Sex,
+    PC1      = pca_tissue$x[, 1],
+    PC2      = pca_tissue$x[, 2],
+    stringsAsFactors = FALSE
+  )
+
+  p_tissue <- ggplot(
+    pca_tissue_df,
+    aes(x = PC1, y = PC2,
+        color = DepotSex,
+        shape = Genotype,
+        label = Sample)
+  ) +
+    geom_point(size = 3) +
+    geom_text_repel(size = 3, max.overlaps = 60) +
+    scale_color_manual(
+      values = c(
+        "iWAT_F" = "#1b9e77",
+        "iWAT_M" = "#d95f02",
+        "gWAT_F" = "#7570b3",
+        "gWAT_M" = "#e7298a"
+      ),
+      name = "Depot/Sex"
+    ) +
+    scale_shape_manual(
+      values = c("CTL" = 16, "KAT8KD" = 17),
+      name = "Genotype"
+    ) +
+    labs(
+      title = "Tissue PCA (log2 CPM, filtered)",
+      x = paste0("PC1 (", round(pca_var_tissue[1], 1), "%)"),
+      y = paste0("PC2 (", round(pca_var_tissue[2], 1), "%)")
+    ) +
+    theme_bw(base_size = 14) +
+    theme(
+      plot.title      = element_text(hjust = 0.5, face = "bold"),
+      legend.position = "right"
+    )
+
+  pca_file_tissue <- paste0("PCA_KAT8KD_tissue_PC1_PC2_", run_tag, ".png")
+  ggsave(
+    file.path(outdir, "plots", pca_file_tissue),
+    plot   = p_tissue,
+    width  = 8,
+    height = 6,
+    dpi    = 300
+  )
+
+  cat("Saved PCA plot to ",
+      file.path(outdir, "plots", pca_file_tissue), "\n")
+
+  ## 4.9) MDS -----------------------------------------------
+
+  dist_mat <- dist(t(logCPM_tissue_filt))
+  mds_coords <- cmdscale(dist_mat, k = 2)
+  mds_df <- data.frame(
+    Sample   = colnames(DGE_tissue_filt$counts),
+    Genotype = DGE_tissue_filt$samples$Genotype,
+    DepotSex = DGE_tissue_filt$samples$DepotSex,
+    Depot    = DGE_tissue_filt$samples$Depot,
+    Sex      = DGE_tissue_filt$samples$Sex,
+    MDS1     = mds_coords[, 1],
+    MDS2     = mds_coords[, 2],
+    stringsAsFactors = FALSE
+  )
+
+  mds_plot <- ggplot(
+    mds_df,
+    aes(x = MDS1, y = MDS2,
+        color = DepotSex,
+        shape = Genotype,
+        label = Sample)
+  ) +
+    geom_point(size = 3) +
+    geom_text_repel(size = 3, max.overlaps = 60) +
+    scale_color_manual(
+      values = c(
+        "iWAT_F" = "#1b9e77",
+        "iWAT_M" = "#d95f02",
+        "gWAT_F" = "#7570b3",
+        "gWAT_M" = "#e7298a"
+      ),
+      name = "Depot/Sex"
+    ) +
+    scale_shape_manual(
+      values = c("CTL" = 16, "KAT8KD" = 17),
+      name = "Genotype"
+    ) +
+    labs(
+      title = "Tissue MDS (log2 CPM, filtered)",
+      x = "MDS1",
+      y = "MDS2"
+    ) +
+    theme_bw(base_size = 14) +
+    theme(
+      plot.title      = element_text(hjust = 0.5, face = "bold"),
+      legend.position = "right"
+    )
+
+  mds_file_tissue <- paste0("MDS_KAT8KD_tissue_", run_tag, ".png")
+  ggsave(
+    file.path(outdir, "plots", mds_file_tissue),
+    plot   = mds_plot,
+    width  = 8,
+    height = 6,
+    dpi    = 300
+  )
+
+  cat("Saved MDS plot to ",
+      file.path(outdir, "plots", mds_file_tissue), "\n")
+
+  ## 4.10) Design matrix + voom -----------------------------
+
+  design_tissue <- model.matrix(~ 0 + DGE_tissue_filt$samples$GroupFull)
+  colnames(design_tissue) <- levels(DGE_tissue_filt$samples$GroupFull)
+
+  cat("\nDesign matrix (first rows):\n")
+  print(head(design_tissue))
+
+  v_tissue   <- voom(DGE_tissue_filt, design_tissue, plot = FALSE)
+  fit_tissue <- lmFit(v_tissue, design_tissue)
+
+  ## 4.11) Define contrasts ---------------------------------
+
+  cont_tissue <- makeContrasts(
+    iWAT_F_KD_vs_CTL = iWAT_F_KAT8KD - iWAT_F_CTL,
+    iWAT_M_KD_vs_CTL = iWAT_M_KAT8KD - iWAT_M_CTL,
+    gWAT_F_KD_vs_CTL = gWAT_F_KAT8KD - gWAT_F_CTL,
+    gWAT_M_KD_vs_CTL = gWAT_M_KAT8KD - gWAT_M_CTL,
+    levels = design_tissue
+  )
+
+  contrast_names <- colnames(cont_tissue)
+
+  ## 4.12) DE thresholds (match cells script) ---------------
+
+  logFC_cut_tissue <- 1
+  fdr_cut_tissue   <- 0.05
+
+  ## 4.13) Container for DE summary -------------------------
+
+  deg_summary <- data.frame(
+    Contrast              = contrast_names,
+    N_DEG_FDR_lt_0_05     = NA_integer_,
+    stringsAsFactors      = FALSE
+  )
+
+  ## store per-contrast DE tables (gene-level only)
+  tt_list <- vector("list", length(contrast_names))
+  names(tt_list) <- contrast_names
+
+  ## 4.14) Loop over contrasts: DE, volcano, heatmap --------
+
+  for (cn in contrast_names) {
+
+    cat("\n=== Contrast: ", cn, " ===\n", sep = "")
+
+    ## ---- DE fit + table -----------------------------------
+    fit2 <- contrasts.fit(fit_tissue, cont_tissue[, cn, drop = FALSE])
+    fit2 <- eBayes(fit2)
+
+    tt <- topTable(
+      fit2,
+      coef    = 1,
+      n       = Inf,
+      sort.by = "P"
+    )
+
+    if (!"gene_name" %in% colnames(tt)) {
+      tt$gene_name <- rownames(tt)
+    }
+
+    ## store for later reference (gene-level only)
+    tt_list[[cn]] <- tt
+
+    de_file <- paste0("DE_tissue_", cn, "_", run_tag, ".csv")
+    write.csv(
+      tt,
+      file      = file.path(outdir, "tables", de_file),
+      row.names = TRUE
+    )
+
+    n_sig <- sum(tt$adj.P.Val < fdr_cut_tissue, na.rm = TRUE)
+    cat("DE table written: ",
+        file.path(outdir, "tables", de_file), "\n", sep = "")
+    cat("Number of genes with FDR < 0.05 (", cn, "): ",
+        n_sig, "\n", sep = "")
+
+    deg_summary$N_DEG_FDR_lt_0_05[deg_summary$Contrast == cn] <- n_sig
+
+    ## ---- Volcano plot (viridis + FDR + |FC| labels) -------
+
+    tt_plot <- tt %>%
+      dplyr::filter(
+        is.finite(logFC),
+        is.finite(adj.P.Val),
+        adj.P.Val > 0
+      ) %>%
+      mutate(
+        negLogFDR = -log10(adj.P.Val)
+      )
+
+    logFC_cut <- logFC_cut_tissue
+    fdr_cut   <- fdr_cut_tissue
+
+    tt_plot <- tt_plot %>%
+      mutate(
+        sig_cat = dplyr::case_when(
+          adj.P.Val < fdr_cut & logFC >=  logFC_cut  ~ "Up",
+          adj.P.Val < fdr_cut & logFC <= -logFC_cut  ~ "Down",
+          TRUE                                       ~ "NS"
+        ),
+        sig_cat = factor(sig_cat, levels = c("Up", "Down", "NS"))
+      )
+
+    ## Filter to significant DEs for label selection
+    tt_sig <- tt_plot %>%
+      dplyr::filter(
+        adj.P.Val < fdr_cut,
+        abs(logFC) >= logFC_cut,
+        sig_cat != "NS"
+      )
+
+    top_n_fdr <- 10  ## per direction by FDR
+    top_n_fc  <- 10  ## per direction by |logFC|
+
+    ## --- Upregulated ---
+    up_sig <- tt_sig %>% dplyr::filter(sig_cat == "Up")
+
+    up_top_fdr <- up_sig %>%
+      dplyr::arrange(adj.P.Val) %>%
+      dplyr::slice_head(n = top_n_fdr)
+
+    up_top_fc <- up_sig %>%
+      dplyr::arrange(dplyr::desc(logFC)) %>%
+      dplyr::slice_head(n = top_n_fc)
+
+    ## --- Downregulated ---
+    down_sig <- tt_sig %>% dplyr::filter(sig_cat == "Down")
+
+    down_top_fdr <- down_sig %>%
+      dplyr::arrange(adj.P.Val) %>%
+      dplyr::slice_head(n = top_n_fdr)
+
+    down_top_fc <- down_sig %>%
+      dplyr::arrange(logFC) %>%  ## most negative first
+      dplyr::slice_head(n = top_n_fc)
+
+    ## combine and dedupe
+    label_genes <- dplyr::bind_rows(
+      up_top_fdr,
+      up_top_fc,
+      down_top_fdr,
+      down_top_fc
+    ) %>%
+      dplyr::distinct(gene_name, .keep_all = TRUE)
+
+    vol_tissue <- ggplot(
+      tt_plot,
+      aes(
+        x     = logFC,
+        y     = negLogFDR,
+        color = negLogFDR,
+        shape = sig_cat
+      )
+    ) +
+      geom_point(size = 2, alpha = 0.9) +
+      scale_color_viridis(
+        option    = "rocket",
+        direction = 1,
+        name      = "-log10(FDR)"
+      ) +
+      scale_shape_manual(
+        values = c(
+          "Up"   = 17,  # triangle up
+          "Down" = 25,  # filled triangle down
+          "NS"   = 16   # circle
+        ),
+        name = "Direction"
+      ) +
+      geom_point(
+        data = label_genes,
+        size = 2.8
+      ) +
+      geom_text_repel(
+        data          = label_genes,
+        aes(label     = gene_name),
+        color         = "black",
+        size          = 3.5,
+        box.padding   = unit(0.25, "lines"),
+        segment.color = "gray25",
+        segment.size  = 0.25,
+        point.padding = unit(0.2, "lines"),
+        max.overlaps  = Inf
+      ) +
+      geom_hline(yintercept = -log10(fdr_cut), linetype = "dashed") +
+      geom_vline(xintercept = c(logFC_cut, -logFC_cut), linetype = "dashed") +
+      theme_bw(base_size = 14) +
+      theme(
+        panel.grid      = element_blank(),
+        axis.text       = element_text(size = 10, face = "bold", colour = "black"),
+        axis.title      = element_text(size = 16, face = "bold", colour = "black"),
+        strip.text      = element_text(size = 10, face = "bold", colour = "black"),
+        plot.title      = element_text(face = "bold", hjust = 0.5),
+        legend.position = "bottom"
+      ) +
+      ggtitle(paste0("Volcano: ", cn, " (WAT tissue)")) +
+      xlab(paste0("log2FC (", cn, ")")) +
+      ylab("-log10 FDR")
+
+    volcano_file <- paste0("Volcano_tissue_", cn, "_", run_tag, ".png")
+    ggsave(
+      file.path(outdir, "plots", volcano_file),
+      plot   = vol_tissue,
+      width  = 8,
+      height = 6,
+      dpi    = 300
+    )
+
+    cat("Volcano saved: ",
+        file.path(outdir, "plots", volcano_file), "\n", sep = "")
+
+    if (is.null(hero_volcano_file)) {
+      hero_volcano_file <- volcano_file
+    }
+
+    ## ---- Heatmap of strongest DEGs ------------------------
+
+    de_sig <- tt %>%
+      dplyr::filter(adj.P.Val < fdr_cut_tissue,
+                    abs(logFC) > logFC_cut_tissue)
+
+    if (nrow(de_sig) >= 2) {
+
+      de_sig <- de_sig[order(de_sig$adj.P.Val), , drop = FALSE]
+      if (nrow(de_sig) > 300) {
+        de_sig <- de_sig[1:300, , drop = FALSE]
+      }
+      gene_set <- rownames(de_sig)
+
+      depot <- NA_character_
+      sex   <- NA_character_
+      if (grepl("^iWAT_F", cn)) {
+        depot <- "iWAT"; sex <- "F"
+      } else if (grepl("^iWAT_M", cn)) {
+        depot <- "iWAT"; sex <- "M"
+      } else if (grepl("^gWAT_F", cn)) {
+        depot <- "gWAT"; sex <- "F"
+      } else if (grepl("^gWAT_M", cn)) {
+        depot <- "gWAT"; sex <- "M"
+      }
+
+      if (!is.na(depot) && !is.na(sex)) {
+
+        idx_samples <- with(DGE_tissue_filt$samples,
+                            Depot == depot & Sex == sex)
+        samples_heat <- rownames(DGE_tissue_filt$samples)[idx_samples]
+
+        mat <- logCPM_tissue_filt[gene_set, samples_heat, drop = FALSE]
+
+        palette_hm <- colorRampPalette(c("blue", "white", "red"))(100)
+
+        annot_col <- data.frame(
+          Genotype = DGE_tissue_filt$samples$Genotype[idx_samples],
+          Depot    = DGE_tissue_filt$samples$Depot[idx_samples],
+          Sex      = DGE_tissue_filt$samples$Sex[idx_samples]
+        )
+        rownames(annot_col) <- samples_heat
+
+        annot_colors <- list(
+          Genotype = c(CTL = "#1B9E77", KAT8KD = "#D95F02"),
+          Depot    = c(iWAT = "#377eb8", gWAT = "#e41a1c"),
+          Sex      = c(F = "#984ea3", M = "#ff7f00")
+        )
+
+        heat_file <- paste0("Heatmap_tissue_", cn, "_", run_tag, ".png")
+        png(file.path(outdir, "plots", heat_file),
+            width = 3000, height = 3500, res = 300)
+        pheatmap(
+          mat,
+          show_rownames     = TRUE,
+          show_colnames     = TRUE,
+          scale             = "row",
+          cluster_cols      = FALSE,
+          cluster_rows      = TRUE,
+          color             = palette_hm,
+          border_color      = NA,
+          fontsize_row      = 6,
+          fontsize_col      = 10,
+          annotation_col    = annot_col,
+          annotation_colors = annot_colors,
+          annotation_legend = TRUE,
+          main              = paste0("Top DEGs ", cn,
+                                     " (FDR<0.05, |logFC|>", logFC_cut_tissue, ")")
+        )
+        dev.off()
+        cat("Heatmap saved: ",
+            file.path(outdir, "plots", heat_file), "\n", sep = "")
+
+      } else {
+        cat("Could not map contrast ", cn, " to depot/sex for heatmap.\n", sep = "")
+      }
+    } else {
+      cat("Not enough DE genes for heatmap (", cn, ").\n", sep = "")
+    }
+
+  } ## end contrast loop
+
+  ## 4.15) DEG summary table -------------------------------
+
+  deg_summary_file <- paste0("DEG_summary_tissue_", run_tag, ".csv")
+  write.csv(
+    deg_summary,
+    file = file.path(outdir, "tables", deg_summary_file),
+    row.names = FALSE
+  )
+  cat("\nDEG summary written: ",
+      file.path(outdir, "tables", deg_summary_file), "\n", sep = "")
+
+  ## 4.16) save_core bookkeeping ----------------------------
+
+  ## Save a representative plot (optional)
+  if (!is.null(hero_volcano_file)) {
+    hero_path <- file.path(outdir, "plots", hero_volcano_file)
+    if (file.exists(hero_path)) {
+      save_run_file(hero_path, tag = "hero_volcano")
+    }
+  }
+
+  ## Let save_core dedupe if your setup uses it
+  ## (safe to call even if it does nothing in your implementation)
+  try(dedupe(outdir), silent = TRUE)
+
+  cat("\nDONE.\n")
+
+}, error = function(e) {
+
+  cat("\nERROR:\n")
+  cat(conditionMessage(e), "\n")
+
+  ## Optionally write error log into run folder
+  err_file <- paste0("ERROR_", run_tag, ".txt")
+  writeLines(
+    c("Script error:", conditionMessage(e)),
+    con = file.path(outdir, "logs", err_file)
+  )
+
+  stop(e)
+
+})
