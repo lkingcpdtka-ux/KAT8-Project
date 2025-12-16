@@ -137,15 +137,48 @@ cat("\n=== LOADING PATHWAY GENE SETS ===\n")
 ## MSigDB Hallmark gene sets for mouse
 msigdb_hallmark <- msigdbr(species = "Mus musculus", category = "H")
 
-## MSigDB C2 KEGG gene sets
-msigdb_kegg <- msigdbr(species = "Mus musculus", category = "C2", subcategory = "CP:KEGG")
+## MSigDB C2 KEGG gene sets - use robust loading with error handling
+msigdb_kegg <- tryCatch({
+  msigdbr(species = "Mus musculus", category = "C2", subcategory = "CP:KEGG")
+}, error = function(e) {
+  cat("⚠ CP:KEGG subcategory not found, trying KEGG legacy format...\n")
+  tryCatch({
+    msigdbr(species = "Mus musculus", category = "C2", subcategory = "KEGG")
+  }, error = function(e2) {
+    cat("⚠ Loading all C2 and filtering for KEGG...\n")
+    all_c2 <- msigdbr(species = "Mus musculus", category = "C2")
+    all_c2 %>% dplyr::filter(grepl("KEGG", gs_name, ignore.case = TRUE))
+  })
+})
 
-## MSigDB C5 GO Biological Process
-msigdb_gobp <- msigdbr(species = "Mus musculus", category = "C5", subcategory = "GO:BP")
+## MSigDB C5 GO Biological Process - use robust loading
+msigdb_gobp <- tryCatch({
+  msigdbr(species = "Mus musculus", category = "C5", subcategory = "GO:BP")
+}, error = function(e) {
+  cat("⚠ GO:BP subcategory syntax issue, trying alternative...\n")
+  tryCatch({
+    msigdbr(species = "Mus musculus", category = "C5", subcategory = "BP")
+  }, error = function(e2) {
+    cat("⚠ Loading all C5 and filtering for GO:BP...\n")
+    all_c5 <- msigdbr(species = "Mus musculus", category = "C5")
+    all_c5 %>% dplyr::filter(gs_subcat == "GO:BP" | grepl("^GO.*BIOLOGICAL.*PROCESS", gs_name, ignore.case = TRUE))
+  })
+})
 
 cat("✓ Loaded", length(unique(msigdb_hallmark$gs_name)), "Hallmark pathways\n")
 cat("✓ Loaded", length(unique(msigdb_kegg$gs_name)), "KEGG pathways\n")
 cat("✓ Loaded", length(unique(msigdb_gobp$gs_name)), "GO:BP terms\n")
+
+## Validate we have gene sets
+if (length(unique(msigdb_hallmark$gs_name)) == 0) {
+  warning("No Hallmark pathways loaded - pathway analysis may be incomplete")
+}
+if (length(unique(msigdb_kegg$gs_name)) == 0) {
+  warning("No KEGG pathways loaded - pathway analysis may be incomplete")
+}
+if (length(unique(msigdb_gobp$gs_name)) == 0) {
+  warning("No GO:BP terms loaded - pathway analysis may be incomplete")
+}
 
 ## 4) Main logic --------------------------------------------
 
