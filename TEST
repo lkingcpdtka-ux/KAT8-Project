@@ -130,6 +130,262 @@ tryCatch({
 
   ## Remove outlier samples at the annotation level
   outlier_samples <- c("JS_08", "JS_28")
+
+  ## =========================================================
+  ## 4.2.1) QC PLOTS BEFORE OUTLIER REMOVAL
+  ## Evidence supporting outlier removal decision
+  ## =========================================================
+
+  cat("\n=== QC BEFORE OUTLIER REMOVAL ===\n")
+
+  ## Get counts for ALL tissue samples (including outliers)
+  all_tissue_samples <- sample_annot_full$Sample
+  missing_all <- setdiff(all_tissue_samples, colnames(counts_raw))
+  if (length(missing_all) > 0) {
+    stop("Missing columns for QC: ", paste(missing_all, collapse = ", "))
+  }
+
+  counts_all_tissue <- as.matrix(counts_raw[, all_tissue_samples])
+  rownames(counts_all_tissue) <- counts_raw$gene_id
+
+  ## Create temp DGEList with ALL samples
+  DGE_all <- DGEList(counts = counts_all_tissue)
+  DGE_all <- calcNormFactors(DGE_all)
+
+  ## Attach sample info
+  DGE_all$samples$Sample   <- sample_annot_full$Sample
+  DGE_all$samples$Depot    <- sample_annot_full$Depot
+  DGE_all$samples$Sex      <- sample_annot_full$Sex
+  DGE_all$samples$Genotype <- factor(sample_annot_full$Genotype,
+                                      levels = c("CTL", "KAT8KD"))
+  DGE_all$samples$DepotSex <- factor(
+    paste(sample_annot_full$Depot, sample_annot_full$Sex, sep = "_"),
+    levels = c("iWAT_F", "iWAT_M", "gWAT_F", "gWAT_M")
+  )
+  DGE_all$samples$IsOutlier <- DGE_all$samples$Sample %in% outlier_samples
+
+  ## Compute logCPM for all samples (before gene filtering)
+  logCPM_all <- cpm(DGE_all, log = TRUE, prior.count = 3)
+
+  ## --- (a) Library Size Plot ---
+  lib_sizes_all <- data.frame(
+    Sample     = colnames(DGE_all$counts),
+    LibSize    = DGE_all$samples$lib.size,
+    DepotSex   = DGE_all$samples$DepotSex,
+    Genotype   = DGE_all$samples$Genotype,
+    IsOutlier  = DGE_all$samples$IsOutlier,
+    stringsAsFactors = FALSE
+  )
+  lib_sizes_all$Sample <- factor(lib_sizes_all$Sample,
+                                  levels = lib_sizes_all$Sample[order(lib_sizes_all$LibSize)])
+
+  qc_libsize_plot <- ggplot(lib_sizes_all,
+                             aes(x = Sample, y = LibSize / 1e6,
+                                 fill = DepotSex, alpha = IsOutlier)) +
+    geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
+    geom_text(
+      data = lib_sizes_all[lib_sizes_all$IsOutlier, ],
+      aes(label = Sample),
+      vjust = -0.5, hjust = 0.5, size = 3, fontface = "bold", color = "red"
+    ) +
+    scale_fill_manual(
+      values = c("iWAT_F" = "#1b9e77", "iWAT_M" = "#d95f02",
+                 "gWAT_F" = "#7570b3", "gWAT_M" = "#e7298a"),
+      name = "Depot/Sex"
+    ) +
+    scale_alpha_manual(values = c("FALSE" = 1, "TRUE" = 0.5),
+                       name = "Outlier", labels = c("No", "Yes")) +
+    labs(
+      title    = "Library Sizes (Before Outlier Removal)",
+      subtitle = paste0("Outliers highlighted: ", paste(outlier_samples, collapse = ", ")),
+      x        = "Sample",
+      y        = "Library Size (millions)"
+    ) +
+    theme_bw(base_size = 12) +
+    theme(
+      axis.text.x     = element_text(angle = 45, hjust = 1, size = 8),
+      plot.title      = element_text(hjust = 0.5, face = "bold"),
+      plot.subtitle   = element_text(hjust = 0.5, color = "red"),
+      legend.position = "right"
+    )
+
+  libsize_file <- paste0("QC_library_size_before_outlier_removal_", run_tag, ".png")
+  ggsave(
+    file.path(outdir, "plots", libsize_file),
+    plot   = qc_libsize_plot,
+    width  = 12,
+    height = 6,
+    dpi    = 300
+  )
+  cat("Saved QC library size plot to ",
+      file.path(outdir, "plots", libsize_file), "\n")
+
+  ## --- (b) Sample-Sample Correlation Heatmap ---
+  cor_mat <- cor(logCPM_all, method = "pearson")
+
+  ## Annotation for heatmap
+  annot_row_corr <- data.frame(
+    DepotSex = DGE_all$samples$DepotSex,
+    Genotype = DGE_all$samples$Genotype,
+    Outlier  = ifelse(DGE_all$samples$IsOutlier, "Yes", "No")
+  )
+  rownames(annot_row_corr) <- colnames(DGE_all$counts)
+
+  annot_colors_corr <- list(
+    DepotSex = c("iWAT_F" = "#1b9e77", "iWAT_M" = "#d95f02",
+                 "gWAT_F" = "#7570b3", "gWAT_M" = "#e7298a"),
+    Genotype = c(CTL = "#1B9E77", KAT8KD = "#D95F02"),
+    Outlier  = c(Yes = "red", No = "grey80")
+  )
+
+  corr_heatmap_file <- paste0("QC_sample_correlation_before_outlier_removal_", run_tag, ".png")
+  png(file.path(outdir, "plots", corr_heatmap_file),
+      width = 2400, height = 2200, res = 200)
+  pheatmap(
+    cor_mat,
+    color             = colorRampPalette(c("navy", "white", "firebrick3"))(100),
+    breaks            = seq(0.7, 1, length.out = 101),
+    cluster_rows      = TRUE,
+    cluster_cols      = TRUE,
+    show_rownames     = TRUE,
+    show_colnames     = TRUE,
+    fontsize_row      = 8,
+    fontsize_col      = 8,
+    annotation_row    = annot_row_corr,
+    annotation_col    = annot_row_corr,
+    annotation_colors = annot_colors_corr,
+    main              = paste0("Sample Correlation (logCPM, before outlier removal)\n",
+                               "Outliers: ", paste(outlier_samples, collapse = ", "))
+  )
+  dev.off()
+  cat("Saved QC sample correlation heatmap to ",
+      file.path(outdir, "plots", corr_heatmap_file), "\n")
+
+  ## --- (c) PCA Before Outlier Removal ---
+  pca_all <- prcomp(t(logCPM_all), scale. = TRUE)
+  pca_var_all <- summary(pca_all)$importance[2, 1:2] * 100
+
+  pca_all_df <- data.frame(
+    Sample    = colnames(DGE_all$counts),
+    Genotype  = DGE_all$samples$Genotype,
+    DepotSex  = DGE_all$samples$DepotSex,
+    Depot     = DGE_all$samples$Depot,
+    Sex       = DGE_all$samples$Sex,
+    IsOutlier = DGE_all$samples$IsOutlier,
+    PC1       = pca_all$x[, 1],
+    PC2       = pca_all$x[, 2],
+    stringsAsFactors = FALSE
+  )
+
+  qc_pca_plot <- ggplot(
+    pca_all_df,
+    aes(x = PC1, y = PC2,
+        color = DepotSex,
+        shape = Genotype,
+        label = Sample)
+  ) +
+    geom_point(aes(size = IsOutlier), alpha = 0.85) +
+    geom_point(
+      data = pca_all_df[pca_all_df$IsOutlier, ],
+      color = "red", shape = 1, size = 6, stroke = 2
+    ) +
+    geom_text_repel(
+      data          = pca_all_df[pca_all_df$IsOutlier, ],
+      aes(label     = Sample),
+      color         = "red",
+      size          = 4,
+      fontface      = "bold",
+      box.padding   = unit(0.5, "lines"),
+      max.overlaps  = Inf
+    ) +
+    geom_text_repel(
+      data          = pca_all_df[!pca_all_df$IsOutlier, ],
+      aes(label     = Sample),
+      size          = 2.5,
+      color         = "gray30",
+      max.overlaps  = 30
+    ) +
+    scale_color_manual(
+      values = c("iWAT_F" = "#1b9e77", "iWAT_M" = "#d95f02",
+                 "gWAT_F" = "#7570b3", "gWAT_M" = "#e7298a"),
+      name = "Depot/Sex"
+    ) +
+    scale_shape_manual(
+      values = c("CTL" = 16, "KAT8KD" = 17),
+      name = "Genotype"
+    ) +
+    scale_size_manual(
+      values = c("FALSE" = 3, "TRUE" = 4),
+      guide = "none"
+    ) +
+    labs(
+      title    = "PCA Before Outlier Removal",
+      subtitle = paste0("Outliers circled in red: ", paste(outlier_samples, collapse = ", ")),
+      x        = paste0("PC1 (", round(pca_var_all[1], 1), "%)"),
+      y        = paste0("PC2 (", round(pca_var_all[2], 1), "%)")
+    ) +
+    theme_bw(base_size = 14) +
+    theme(
+      plot.title      = element_text(hjust = 0.5, face = "bold"),
+      plot.subtitle   = element_text(hjust = 0.5, color = "red"),
+      legend.position = "right"
+    )
+
+  pca_qc_file <- paste0("QC_PCA_before_outlier_removal_", run_tag, ".png")
+  ggsave(
+    file.path(outdir, "plots", pca_qc_file),
+    plot   = qc_pca_plot,
+    width  = 10,
+    height = 8,
+    dpi    = 300
+  )
+  cat("Saved QC PCA plot to ",
+      file.path(outdir, "plots", pca_qc_file), "\n")
+
+  ## --- (d) Outlier Rationale Log File ---
+  outlier_log_file <- file.path(outdir, "logs", paste0("outliers_", run_tag, ".txt"))
+
+  lib_summary <- summary(DGE_all$samples$lib.size)
+  outlier_lib_sizes <- DGE_all$samples$lib.size[DGE_all$samples$IsOutlier]
+  names(outlier_lib_sizes) <- DGE_all$samples$Sample[DGE_all$samples$IsOutlier]
+
+  outlier_log_lines <- c(
+    "=== Outlier Removal Rationale ===",
+    paste0("Run tag: ", run_tag),
+    paste0("Generated: ", Sys.time()),
+    "",
+    "--- Outlier Sample IDs ---",
+    paste0("  ", paste(outlier_samples, collapse = ", ")),
+    "",
+    "--- Library Sizes (All Samples) ---",
+    paste0("  Min:     ", format(lib_summary["Min."], big.mark = ",")),
+    paste0("  1st Qu:  ", format(lib_summary["1st Qu."], big.mark = ",")),
+    paste0("  Median:  ", format(lib_summary["Median"], big.mark = ",")),
+    paste0("  Mean:    ", format(lib_summary["Mean"], big.mark = ",")),
+    paste0("  3rd Qu:  ", format(lib_summary["3rd Qu."], big.mark = ",")),
+    paste0("  Max:     ", format(lib_summary["Max."], big.mark = ",")),
+    "",
+    "--- Outlier Library Sizes ---",
+    sapply(names(outlier_lib_sizes), function(s) {
+      paste0("  ", s, ": ", format(outlier_lib_sizes[s], big.mark = ","))
+    }),
+    "",
+    "--- Rationale ---",
+    "  Flagged based on separation in PCA/MDS and/or low library size in QC plots.",
+    "  See QC plots for visual evidence:",
+    paste0("    - ", libsize_file),
+    paste0("    - ", corr_heatmap_file),
+    paste0("    - ", pca_qc_file)
+  )
+  writeLines(outlier_log_lines, con = outlier_log_file)
+  cat("Saved outlier rationale log to ", outlier_log_file, "\n")
+
+  cat("=== END QC BEFORE OUTLIER REMOVAL ===\n\n")
+
+  ## =========================================================
+  ## Continue with outlier removal
+  ## =========================================================
+
   sample_annot <- sample_annot_full %>%
     dplyr::filter(!(Sample %in% outlier_samples))
 
@@ -268,60 +524,63 @@ tryCatch({
 
   plot_density_tissue <- function() {
 
-    par(mfrow = c(1, 2), mar = c(5, 5, 4, 2))
-    par(xpd = NA)
+    ## Compute density objects for all samples first
+    dens_before <- apply(logCPM_tissue,      2, density)
+    dens_after  <- apply(logCPM_tissue_filt, 2, density)
+
+    ## Compute global xlim from density objects (covers all curves)
+    xlim_before <- range(sapply(dens_before, function(d) range(d$x)))
+    xlim_after  <- range(sapply(dens_after,  function(d) range(d$x)))
+    ## Use global xlim across both plots for comparability
+    xlim_global <- range(c(xlim_before, xlim_after))
+
+    ## Compute ylim from density objects
+    max_y_before <- max(sapply(dens_before, function(d) max(d$y)))
+    max_y_after  <- max(sapply(dens_after,  function(d) max(d$y)))
+
+    ## Increased margins: bottom, left, top, right (extra top for subtitle)
+    par(mfrow = c(1, 2), mar = c(5, 5, 5, 2), oma = c(0, 0, 2, 0))
+    par(xpd = FALSE)
 
     cols_before <- viridis(ncol(logCPM_tissue), option = "D", end = 0.95)
     cols_after  <- viridis(ncol(logCPM_tissue_filt), option = "D", end = 0.95)
 
-    dens_before <- apply(logCPM_tissue,      2, density)
-    dens_after  <- apply(logCPM_tissue_filt, 2, density)
-
-    max_y_before <- max(sapply(dens_before, function(d) max(d$y)))
-    max_y_after  <- max(sapply(dens_after,  function(d) max(d$y)))
-
     ## BEFORE filter
     plot(dens_before[[1]],
          main = "Tissue: log2 CPM (before filter)",
+         sub  = paste0("Each line = one sample (n=", ncol(logCPM_tissue), ")"),
          xlab = "log2 CPM",
          lwd  = 2,
          col  = cols_before[1],
-         ylim = c(0, max_y_before * 1.1))
+         xlim = xlim_global,
+         ylim = c(0, max_y_before * 1.15))
     if (ncol(logCPM_tissue) > 1) {
       for (i in 2:ncol(logCPM_tissue)) {
         lines(dens_before[[i]], lwd = 2, col = cols_before[i])
       }
     }
-    legend("topright",
-           legend = colnames(DGE_tissue$counts),
-           col    = cols_before,
-           lwd    = 2,
-           cex    = 0.4,
-           bty    = "n")
+    ## Legend removed; subtitle note added above
 
     ## AFTER filter
     plot(dens_after[[1]],
          main = "Tissue: log2 CPM (after filter)",
+         sub  = paste0("Each line = one sample (n=", ncol(logCPM_tissue_filt), ")"),
          xlab = "log2 CPM",
          lwd  = 2,
          col  = cols_after[1],
-         ylim = c(0, max_y_after * 1.1))
+         xlim = xlim_global,
+         ylim = c(0, max_y_after * 1.15))
     if (ncol(logCPM_tissue_filt) > 1) {
       for (i in 2:ncol(logCPM_tissue_filt)) {
         lines(dens_after[[i]], lwd = 2, col = cols_after[i])
       }
     }
-    legend("topright",
-           legend = colnames(DGE_tissue_filt$counts),
-           col    = cols_after,
-           lwd    = 2,
-           cex    = 0.4,
-           bty    = "n")
+    ## Legend removed; subtitle note added above
   }
 
   density_file_tissue <- paste0("logCPM_density_KAT8KD_tissue_before_after_", run_tag, ".png")
   png(file.path(outdir, "plots", density_file_tissue),
-      width = 1400, height = 800, res = 150)
+      width = 1600, height = 900, res = 150)
   plot_density_tissue()
   dev.off()
 
@@ -476,6 +735,59 @@ tryCatch({
 
   logFC_cut_tissue <- 1
   fdr_cut_tissue   <- 0.05
+
+  ## 4.12.1) Params list (centralized parameters) -----------
+
+  params <- list(
+    outlier_samples   = outlier_samples,
+    cpm_filter        = list(
+      min_cpm         = 1,
+      min_samples_frac = 0.5,
+      description     = "Keep genes with CPM > 1 in at least 50% of samples"
+    ),
+    prior_count       = 3,
+    de_thresholds     = list(
+      logFC_cutoff    = logFC_cut_tissue,
+      fdr_cutoff      = fdr_cut_tissue
+    ),
+    volcano_labels    = list(
+      top_n_by_fdr    = 10,
+      top_n_by_fc     = 10
+    ),
+    heatmap_max_genes = 300
+  )
+
+  ## Save params to log file
+  params_file <- file.path(outdir, "logs", paste0("params_", run_tag, ".txt"))
+  params_lines <- c(
+    "=== RNA-seq Pipeline Parameters ===",
+    paste0("Run tag: ", run_tag),
+    paste0("Generated: ", Sys.time()),
+    "",
+    "--- Outlier Samples ---",
+    paste0("  IDs: ", paste(params$outlier_samples, collapse = ", ")),
+    "",
+    "--- CPM Filter Rule ---",
+    paste0("  Minimum CPM: ", params$cpm_filter$min_cpm),
+    paste0("  Minimum samples fraction: ", params$cpm_filter$min_samples_frac),
+    paste0("  Description: ", params$cpm_filter$description),
+    "",
+    "--- logCPM Calculation ---",
+    paste0("  prior.count: ", params$prior_count),
+    "",
+    "--- DE Thresholds ---",
+    paste0("  logFC cutoff: ", params$de_thresholds$logFC_cutoff),
+    paste0("  FDR cutoff: ", params$de_thresholds$fdr_cutoff),
+    "",
+    "--- Volcano Plot Labels ---",
+    paste0("  Top N by FDR (per direction): ", params$volcano_labels$top_n_by_fdr),
+    paste0("  Top N by |logFC| (per direction): ", params$volcano_labels$top_n_by_fc),
+    "",
+    "--- Heatmap ---",
+    paste0("  Max genes displayed: ", params$heatmap_max_genes)
+  )
+  writeLines(params_lines, con = params_file)
+  cat("Saved params to ", params_file, "\n")
 
   ## 4.13) Container for DE summary -------------------------
 
