@@ -320,270 +320,10 @@ tryCatch({
     dplyr::summarise(n = dplyr::n(), .groups = "drop")
   print(as.data.frame(group_counts))
 
-  ## =========================================================
-  ## 4.2.1) QC PLOTS BEFORE OUTLIER REMOVAL
-  ## Evidence supporting outlier removal decision
-  ## =========================================================
-
-  cat("\n=== QC BEFORE OUTLIER REMOVAL ===\n")
-
-  ## Get counts for ALL tissue samples (including outliers)
-  all_tissue_samples <- sample_annot_full$Sample
-  missing_all <- setdiff(all_tissue_samples, colnames(counts_raw))
-  if (length(missing_all) > 0) {
-    stop("Missing columns for QC: ", paste(missing_all, collapse = ", "))
-  }
-
-  counts_all_tissue <- as.matrix(counts_raw[, all_tissue_samples])
-  rownames(counts_all_tissue) <- counts_raw$gene_id
-
-  ## Create temp DGEList with ALL samples
-  DGE_all <- DGEList(counts = counts_all_tissue)
-  DGE_all <- calcNormFactors(DGE_all)
-
-  ## Attach sample info
-  DGE_all$samples$Sample   <- sample_annot_full$Sample
-  DGE_all$samples$Depot    <- sample_annot_full$Depot
-  DGE_all$samples$Sex      <- sample_annot_full$Sex
-  DGE_all$samples$Genotype <- factor(sample_annot_full$Genotype,
-                                      levels = c("CTL", "KAT8KD"))
-  DGE_all$samples$DepotSex <- factor(
-    paste(sample_annot_full$Depot, sample_annot_full$Sex, sep = "_"),
-    levels = c("iWAT_F", "iWAT_M", "gWAT_F", "gWAT_M")
-  )
-
-  ## Define outlier samples
-  outlier_samples <- c("JS_08", "JS_28")
-  DGE_all$samples$IsOutlier <- DGE_all$samples$Sample %in% outlier_samples
-
-  ## Compute logCPM for all samples
-  logCPM_all <- cpm(DGE_all, log = TRUE, prior.count = 3)
-
-  ## --- (a) Library Size Plot ---
-  lib_sizes_all <- data.frame(
-    Sample     = colnames(DGE_all$counts),
-    LibSize    = DGE_all$samples$lib.size,
-    DepotSex   = DGE_all$samples$DepotSex,
-    Genotype   = DGE_all$samples$Genotype,
-    IsOutlier  = DGE_all$samples$IsOutlier,
-    stringsAsFactors = FALSE
-  )
-  lib_sizes_all$Sample <- factor(lib_sizes_all$Sample,
-                                  levels = lib_sizes_all$Sample[order(lib_sizes_all$LibSize)])
-
-  qc_libsize_plot <- ggplot(lib_sizes_all,
-                             aes(x = Sample, y = LibSize / 1e6,
-                                 fill = DepotSex, alpha = IsOutlier)) +
-    geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
-    geom_text(
-      data = lib_sizes_all[lib_sizes_all$IsOutlier, ],
-      aes(label = Sample),
-      vjust = -0.5, hjust = 0.5, size = 3, fontface = "bold", color = "red"
-    ) +
-    scale_fill_manual(
-      values = c("iWAT_F" = "#1b9e77", "iWAT_M" = "#d95f02",
-                 "gWAT_F" = "#7570b3", "gWAT_M" = "#e7298a"),
-      name = "Depot/Sex"
-    ) +
-    scale_alpha_manual(values = c("FALSE" = 1, "TRUE" = 0.5),
-                       name = "Outlier", labels = c("No", "Yes")) +
-    labs(
-      title    = "Library Sizes (Before Outlier Removal)",
-      subtitle = paste0("Outliers highlighted: ", paste(outlier_samples, collapse = ", ")),
-      x        = "Sample",
-      y        = "Library Size (millions)"
-    ) +
-    theme_bw(base_size = 12) +
-    theme(
-      axis.text.x     = element_text(angle = 45, hjust = 1, size = 8),
-      plot.title      = element_text(hjust = 0.5, face = "bold"),
-      plot.subtitle   = element_text(hjust = 0.5, color = "red"),
-      legend.position = "right"
-    )
-
-  libsize_file <- paste0("QC_library_size_before_outlier_removal_", run_tag, ".png")
-  ggsave(
-    file.path(outdir, "plots", libsize_file),
-    plot   = qc_libsize_plot,
-    width  = 12,
-    height = 6,
-    dpi    = 300
-  )
-  cat("Saved QC library size plot to",
-      file.path(outdir, "plots", libsize_file), "\n")
-
-  ## --- (b) Sample-Sample Correlation Heatmap ---
-  cor_mat <- cor(logCPM_all, method = "pearson")
-
-  annot_row_corr <- data.frame(
-    DepotSex = DGE_all$samples$DepotSex,
-    Genotype = DGE_all$samples$Genotype,
-    Outlier  = ifelse(DGE_all$samples$IsOutlier, "Yes", "No")
-  )
-  rownames(annot_row_corr) <- colnames(DGE_all$counts)
-
-  annot_colors_corr <- list(
-    DepotSex = c("iWAT_F" = "#1b9e77", "iWAT_M" = "#d95f02",
-                 "gWAT_F" = "#7570b3", "gWAT_M" = "#e7298a"),
-    Genotype = c(CTL = "#1B9E77", KAT8KD = "#D95F02"),
-    Outlier  = c(Yes = "red", No = "grey80")
-  )
-
-  corr_heatmap_file <- paste0("QC_sample_correlation_before_outlier_removal_", run_tag, ".png")
-  png(file.path(outdir, "plots", corr_heatmap_file),
-      width = 2400, height = 2200, res = 200)
-  pheatmap(
-    cor_mat,
-    color             = colorRampPalette(c("navy", "white", "firebrick3"))(100),
-    breaks            = seq(0.7, 1, length.out = 101),
-    cluster_rows      = TRUE,
-    cluster_cols      = TRUE,
-    show_rownames     = TRUE,
-    show_colnames     = TRUE,
-    fontsize_row      = 8,
-    fontsize_col      = 8,
-    annotation_row    = annot_row_corr,
-    annotation_col    = annot_row_corr,
-    annotation_colors = annot_colors_corr,
-    main              = paste0("Sample Correlation (logCPM, before outlier removal)\n",
-                               "Outliers: ", paste(outlier_samples, collapse = ", "))
-  )
-  dev.off()
-  cat("Saved QC sample correlation heatmap to",
-      file.path(outdir, "plots", corr_heatmap_file), "\n")
-
-  ## --- (c) PCA Before Outlier Removal ---
-  pca_all <- prcomp(t(logCPM_all), scale. = TRUE)
-  pca_var_all <- summary(pca_all)$importance[2, 1:2] * 100
-
-  pca_all_df <- data.frame(
-    Sample    = colnames(DGE_all$counts),
-    Genotype  = DGE_all$samples$Genotype,
-    DepotSex  = DGE_all$samples$DepotSex,
-    Depot     = DGE_all$samples$Depot,
-    Sex       = DGE_all$samples$Sex,
-    IsOutlier = DGE_all$samples$IsOutlier,
-    PC1       = pca_all$x[, 1],
-    PC2       = pca_all$x[, 2],
-    stringsAsFactors = FALSE
-  )
-
-  qc_pca_plot <- ggplot(
-    pca_all_df,
-    aes(x = PC1, y = PC2,
-        color = DepotSex,
-        shape = Genotype,
-        label = Sample)
-  ) +
-    geom_point(aes(size = IsOutlier), alpha = 0.85) +
-    geom_point(
-      data = pca_all_df[pca_all_df$IsOutlier, ],
-      color = "red", shape = 1, size = 6, stroke = 2
-    ) +
-    geom_text_repel(
-      data          = pca_all_df[pca_all_df$IsOutlier, ],
-      aes(label     = Sample),
-      color         = "red",
-      size          = 4,
-      fontface      = "bold",
-      box.padding   = unit(0.5, "lines"),
-      max.overlaps  = Inf
-    ) +
-    geom_text_repel(
-      data          = pca_all_df[!pca_all_df$IsOutlier, ],
-      aes(label     = Sample),
-      size          = 2.5,
-      color         = "gray30",
-      max.overlaps  = 30
-    ) +
-    scale_color_manual(
-      values = c("iWAT_F" = "#1b9e77", "iWAT_M" = "#d95f02",
-                 "gWAT_F" = "#7570b3", "gWAT_M" = "#e7298a"),
-      name = "Depot/Sex"
-    ) +
-    scale_shape_manual(
-      values = c("CTL" = 16, "KAT8KD" = 17),
-      name = "Genotype"
-    ) +
-    scale_size_manual(
-      values = c("FALSE" = 3, "TRUE" = 4),
-      guide = "none"
-    ) +
-    labs(
-      title    = "PCA Before Outlier Removal",
-      subtitle = paste0("Outliers circled in red: ", paste(outlier_samples, collapse = ", ")),
-      x        = paste0("PC1 (", round(pca_var_all[1], 1), "%)"),
-      y        = paste0("PC2 (", round(pca_var_all[2], 1), "%)")
-    ) +
-    theme_bw(base_size = 14) +
-    theme(
-      plot.title      = element_text(hjust = 0.5, face = "bold"),
-      plot.subtitle   = element_text(hjust = 0.5, color = "red"),
-      legend.position = "right"
-    )
-
-  pca_qc_file <- paste0("QC_PCA_before_outlier_removal_", run_tag, ".png")
-  ggsave(
-    file.path(outdir, "plots", pca_qc_file),
-    plot   = qc_pca_plot,
-    width  = 10,
-    height = 8,
-    dpi    = 300
-  )
-  cat("Saved QC PCA plot to",
-      file.path(outdir, "plots", pca_qc_file), "\n")
-
-  ## --- (d) Outlier Rationale Log File ---
-  outlier_log_file <- file.path(outdir, "logs", paste0("outliers_", run_tag, ".txt"))
-
-  lib_summary <- summary(DGE_all$samples$lib.size)
-  outlier_lib_sizes <- DGE_all$samples$lib.size[DGE_all$samples$IsOutlier]
-  names(outlier_lib_sizes) <- DGE_all$samples$Sample[DGE_all$samples$IsOutlier]
-
-  outlier_log_lines <- c(
-    "=== Outlier Removal Rationale ===",
-    paste0("Run tag: ", run_tag),
-    paste0("Generated: ", Sys.time()),
-    "",
-    "--- Outlier Sample IDs ---",
-    paste0("  ", paste(outlier_samples, collapse = ", ")),
-    "",
-    "--- Library Sizes (All Samples) ---",
-    paste0("  Min:     ", format(lib_summary["Min."], big.mark = ",")),
-    paste0("  1st Qu:  ", format(lib_summary["1st Qu."], big.mark = ",")),
-    paste0("  Median:  ", format(lib_summary["Median"], big.mark = ",")),
-    paste0("  Mean:    ", format(lib_summary["Mean"], big.mark = ",")),
-    paste0("  3rd Qu:  ", format(lib_summary["3rd Qu."], big.mark = ",")),
-    paste0("  Max:     ", format(lib_summary["Max."], big.mark = ",")),
-    "",
-    "--- Outlier Library Sizes ---",
-    sapply(names(outlier_lib_sizes), function(s) {
-      paste0("  ", s, ": ", format(outlier_lib_sizes[s], big.mark = ","))
-    }),
-    "",
-    "--- Rationale ---",
-    "  Flagged based on separation in PCA/MDS and/or low library size in QC plots.",
-    "  See QC plots for visual evidence:",
-    paste0("    - ", libsize_file),
-    paste0("    - ", corr_heatmap_file),
-    paste0("    - ", pca_qc_file)
-  )
-  writeLines(outlier_log_lines, con = outlier_log_file)
-  cat("Saved outlier rationale log to", outlier_log_file, "\n")
-
-  cat("=== END QC BEFORE OUTLIER REMOVAL ===\n\n")
-
-  ## Clean up QC objects to free memory
-  rm(DGE_all, logCPM_all, cor_mat, pca_all)
-  gc()
-
-  ## =========================================================
-  ## Continue with outlier removal
-  ## =========================================================
-
-  ## Remove outlier samples at the annotation level
+  ## 4.2.1) Remove outlier samples --------------------------
   ## NOTE: JS_08 and JS_28 identified as outliers from preliminary QC
   ## (extreme deviation in PCA/MDS, low library size, or sample quality issues)
+  outlier_samples <- c("JS_08", "JS_28")
   cat("\n[INFO] Removing outlier samples:", paste(outlier_samples, collapse = ", "), "\n")
   sample_annot <- sample_annot_full %>%
     dplyr::filter(!(Sample %in% outlier_samples))
@@ -1638,6 +1378,316 @@ tryCatch({
   }
 
   cat("[PASS] DE results validation complete\n")
+
+  ## =========================================================
+  ## 4.15.5) CROSS-CONTRAST COMPARISON ANALYSES
+  ## Compare M vs F and gWAT vs iWAT responses to KAT8KD
+  ## =========================================================
+
+  cat("\n=== CROSS-CONTRAST COMPARISONS ===\n")
+
+  ## Helper function to extract DEGs from topTable
+  ## Note: Uses gene_name column instead of rownames() for reliability after dplyr::filter()
+  get_degs <- function(tt, fdr_cut = 0.05, logfc_cut = 1, direction = "both") {
+    if (direction == "up") {
+      tt %>% dplyr::filter(adj.P.Val < fdr_cut, logFC > logfc_cut) %>% dplyr::pull(gene_name)
+    } else if (direction == "down") {
+      tt %>% dplyr::filter(adj.P.Val < fdr_cut, logFC < -logfc_cut) %>% dplyr::pull(gene_name)
+    } else {
+      tt %>% dplyr::filter(adj.P.Val < fdr_cut, abs(logFC) > logfc_cut) %>% dplyr::pull(gene_name)
+    }
+  }
+
+  ## Safe Jaccard index calculation (handles empty sets)
+  safe_jaccard <- function(set1, set2) {
+    union_size <- length(union(set1, set2))
+    if (union_size == 0) return(NA_real_)
+    length(intersect(set1, set2)) / union_size
+  }
+
+  ## --- (a) LogFC Correlation Between Contrasts ---
+  cat("\n--- LogFC Correlation Analysis ---\n")
+
+  ## Create a merged logFC matrix from all contrasts
+  logfc_matrix <- data.frame(gene = rownames(tt_list[[1]]))
+  for (cn in contrast_names) {
+    logfc_matrix[[cn]] <- tt_list[[cn]]$logFC[match(logfc_matrix$gene, rownames(tt_list[[cn]]))]
+  }
+  rownames(logfc_matrix) <- logfc_matrix$gene
+  logfc_matrix$gene <- NULL
+
+  ## Calculate correlation matrix
+  logfc_cor <- cor(logfc_matrix, use = "pairwise.complete.obs", method = "pearson")
+
+  cat("[INFO] LogFC correlation matrix:\n")
+  print(round(logfc_cor, 3))
+
+  ## Save correlation matrix
+  cor_file <- paste0("LogFC_correlation_matrix_", run_tag, ".csv")
+  write.csv(round(logfc_cor, 4), file = file.path(outdir, "tables", cor_file))
+  cat("[OK] Saved logFC correlation matrix:", cor_file, "\n")
+
+  ## --- (b) Sex Comparison: Female vs Male within each depot ---
+  cat("\n--- Sex Comparison (F vs M within depot) ---\n")
+
+  ## iWAT: Female vs Male
+  iwat_f_degs <- get_degs(tt_list[["iWAT_F_KD_vs_CTL"]], fdr_cut_tissue, logFC_cut_tissue)
+  iwat_m_degs <- get_degs(tt_list[["iWAT_M_KD_vs_CTL"]], fdr_cut_tissue, logFC_cut_tissue)
+
+  iwat_shared <- intersect(iwat_f_degs, iwat_m_degs)
+  iwat_f_only <- setdiff(iwat_f_degs, iwat_m_degs)
+  iwat_m_only <- setdiff(iwat_m_degs, iwat_f_degs)
+
+  cat("[INFO] iWAT DEG overlap (F vs M):\n")
+  cat("  - Female only:", length(iwat_f_only), "\n")
+  cat("  - Male only:", length(iwat_m_only), "\n")
+  cat("  - Shared:", length(iwat_shared), "\n")
+  cat("  - Jaccard index:", round(safe_jaccard(iwat_f_degs, iwat_m_degs), 3), "\n")
+
+  ## gWAT: Female vs Male
+  gwat_f_degs <- get_degs(tt_list[["gWAT_F_KD_vs_CTL"]], fdr_cut_tissue, logFC_cut_tissue)
+  gwat_m_degs <- get_degs(tt_list[["gWAT_M_KD_vs_CTL"]], fdr_cut_tissue, logFC_cut_tissue)
+
+  gwat_shared <- intersect(gwat_f_degs, gwat_m_degs)
+  gwat_f_only <- setdiff(gwat_f_degs, gwat_m_degs)
+  gwat_m_only <- setdiff(gwat_m_degs, gwat_f_degs)
+
+  cat("\n[INFO] gWAT DEG overlap (F vs M):\n")
+  cat("  - Female only:", length(gwat_f_only), "\n")
+  cat("  - Male only:", length(gwat_m_only), "\n")
+  cat("  - Shared:", length(gwat_shared), "\n")
+  cat("  - Jaccard index:", round(safe_jaccard(gwat_f_degs, gwat_m_degs), 3), "\n")
+
+  ## --- (c) Depot Comparison: iWAT vs gWAT within each sex ---
+  cat("\n--- Depot Comparison (iWAT vs gWAT within sex) ---\n")
+
+  ## Female: iWAT vs gWAT
+  f_iwat_degs <- iwat_f_degs
+  f_gwat_degs <- gwat_f_degs
+
+  f_shared <- intersect(f_iwat_degs, f_gwat_degs)
+  f_iwat_only <- setdiff(f_iwat_degs, f_gwat_degs)
+  f_gwat_only <- setdiff(f_gwat_degs, f_iwat_degs)
+
+  cat("[INFO] Female DEG overlap (iWAT vs gWAT):\n")
+  cat("  - iWAT only:", length(f_iwat_only), "\n")
+  cat("  - gWAT only:", length(f_gwat_only), "\n")
+  cat("  - Shared:", length(f_shared), "\n")
+  cat("  - Jaccard index:", round(safe_jaccard(f_iwat_degs, f_gwat_degs), 3), "\n")
+
+  ## Male: iWAT vs gWAT
+  m_iwat_degs <- iwat_m_degs
+  m_gwat_degs <- gwat_m_degs
+
+  m_shared <- intersect(m_iwat_degs, m_gwat_degs)
+  m_iwat_only <- setdiff(m_iwat_degs, m_gwat_degs)
+  m_gwat_only <- setdiff(m_gwat_degs, m_iwat_degs)
+
+  cat("\n[INFO] Male DEG overlap (iWAT vs gWAT):\n")
+  cat("  - iWAT only:", length(m_iwat_only), "\n")
+  cat("  - gWAT only:", length(m_gwat_only), "\n")
+  cat("  - Shared:", length(m_shared), "\n")
+  cat("  - Jaccard index:", round(safe_jaccard(m_iwat_degs, m_gwat_degs), 3), "\n")
+
+  ## --- (d) LogFC Correlation Scatter Plots ---
+  cat("\n--- Generating LogFC correlation plots ---\n")
+
+  ## Sex comparison plots
+  ## iWAT: F vs M
+  plot_data_iwat_sex <- data.frame(
+    gene = rownames(tt_list[["iWAT_F_KD_vs_CTL"]]),
+    logFC_F = tt_list[["iWAT_F_KD_vs_CTL"]]$logFC,
+    logFC_M = tt_list[["iWAT_M_KD_vs_CTL"]]$logFC[match(rownames(tt_list[["iWAT_F_KD_vs_CTL"]]),
+                                                        rownames(tt_list[["iWAT_M_KD_vs_CTL"]]))]
+  )
+  plot_data_iwat_sex <- plot_data_iwat_sex[complete.cases(plot_data_iwat_sex), ]
+
+  cor_iwat_sex <- cor(plot_data_iwat_sex$logFC_F, plot_data_iwat_sex$logFC_M, use = "complete.obs")
+
+  p_iwat_sex <- ggplot(plot_data_iwat_sex, aes(x = logFC_F, y = logFC_M)) +
+    geom_point(alpha = 0.3, size = 1) +
+    geom_smooth(method = "lm", se = TRUE, color = "red", linewidth = 1) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+    geom_hline(yintercept = 0, color = "gray70") +
+    geom_vline(xintercept = 0, color = "gray70") +
+    labs(
+      title = paste0("iWAT: Female vs Male KAT8KD Response"),
+      subtitle = paste0("Pearson r = ", round(cor_iwat_sex, 3)),
+      x = "logFC (Female KAT8KD vs CTL)",
+      y = "logFC (Male KAT8KD vs CTL)"
+    ) +
+    theme_bw(base_size = 12) +
+    theme(plot.title = element_text(face = "bold", hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5))
+
+  ggsave(file.path(outdir, "plots", paste0("Comparison_iWAT_F_vs_M_logFC_", run_tag, ".png")),
+         plot = p_iwat_sex, width = 7, height = 7, dpi = 300)
+
+  ## gWAT: F vs M
+  plot_data_gwat_sex <- data.frame(
+    gene = rownames(tt_list[["gWAT_F_KD_vs_CTL"]]),
+    logFC_F = tt_list[["gWAT_F_KD_vs_CTL"]]$logFC,
+    logFC_M = tt_list[["gWAT_M_KD_vs_CTL"]]$logFC[match(rownames(tt_list[["gWAT_F_KD_vs_CTL"]]),
+                                                        rownames(tt_list[["gWAT_M_KD_vs_CTL"]]))]
+  )
+  plot_data_gwat_sex <- plot_data_gwat_sex[complete.cases(plot_data_gwat_sex), ]
+
+  cor_gwat_sex <- cor(plot_data_gwat_sex$logFC_F, plot_data_gwat_sex$logFC_M, use = "complete.obs")
+
+  p_gwat_sex <- ggplot(plot_data_gwat_sex, aes(x = logFC_F, y = logFC_M)) +
+    geom_point(alpha = 0.3, size = 1) +
+    geom_smooth(method = "lm", se = TRUE, color = "red", linewidth = 1) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+    geom_hline(yintercept = 0, color = "gray70") +
+    geom_vline(xintercept = 0, color = "gray70") +
+    labs(
+      title = paste0("gWAT: Female vs Male KAT8KD Response"),
+      subtitle = paste0("Pearson r = ", round(cor_gwat_sex, 3)),
+      x = "logFC (Female KAT8KD vs CTL)",
+      y = "logFC (Male KAT8KD vs CTL)"
+    ) +
+    theme_bw(base_size = 12) +
+    theme(plot.title = element_text(face = "bold", hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5))
+
+  ggsave(file.path(outdir, "plots", paste0("Comparison_gWAT_F_vs_M_logFC_", run_tag, ".png")),
+         plot = p_gwat_sex, width = 7, height = 7, dpi = 300)
+
+  ## Depot comparison plots
+  ## Female: iWAT vs gWAT
+  plot_data_f_depot <- data.frame(
+    gene = rownames(tt_list[["iWAT_F_KD_vs_CTL"]]),
+    logFC_iWAT = tt_list[["iWAT_F_KD_vs_CTL"]]$logFC,
+    logFC_gWAT = tt_list[["gWAT_F_KD_vs_CTL"]]$logFC[match(rownames(tt_list[["iWAT_F_KD_vs_CTL"]]),
+                                                           rownames(tt_list[["gWAT_F_KD_vs_CTL"]]))]
+  )
+  plot_data_f_depot <- plot_data_f_depot[complete.cases(plot_data_f_depot), ]
+
+  cor_f_depot <- cor(plot_data_f_depot$logFC_iWAT, plot_data_f_depot$logFC_gWAT, use = "complete.obs")
+
+  p_f_depot <- ggplot(plot_data_f_depot, aes(x = logFC_iWAT, y = logFC_gWAT)) +
+    geom_point(alpha = 0.3, size = 1) +
+    geom_smooth(method = "lm", se = TRUE, color = "red", linewidth = 1) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+    geom_hline(yintercept = 0, color = "gray70") +
+    geom_vline(xintercept = 0, color = "gray70") +
+    labs(
+      title = paste0("Female: iWAT vs gWAT KAT8KD Response"),
+      subtitle = paste0("Pearson r = ", round(cor_f_depot, 3)),
+      x = "logFC (iWAT KAT8KD vs CTL)",
+      y = "logFC (gWAT KAT8KD vs CTL)"
+    ) +
+    theme_bw(base_size = 12) +
+    theme(plot.title = element_text(face = "bold", hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5))
+
+  ggsave(file.path(outdir, "plots", paste0("Comparison_Female_iWAT_vs_gWAT_logFC_", run_tag, ".png")),
+         plot = p_f_depot, width = 7, height = 7, dpi = 300)
+
+  ## Male: iWAT vs gWAT
+  plot_data_m_depot <- data.frame(
+    gene = rownames(tt_list[["iWAT_M_KD_vs_CTL"]]),
+    logFC_iWAT = tt_list[["iWAT_M_KD_vs_CTL"]]$logFC,
+    logFC_gWAT = tt_list[["gWAT_M_KD_vs_CTL"]]$logFC[match(rownames(tt_list[["iWAT_M_KD_vs_CTL"]]),
+                                                           rownames(tt_list[["gWAT_M_KD_vs_CTL"]]))]
+  )
+  plot_data_m_depot <- plot_data_m_depot[complete.cases(plot_data_m_depot), ]
+
+  cor_m_depot <- cor(plot_data_m_depot$logFC_iWAT, plot_data_m_depot$logFC_gWAT, use = "complete.obs")
+
+  p_m_depot <- ggplot(plot_data_m_depot, aes(x = logFC_iWAT, y = logFC_gWAT)) +
+    geom_point(alpha = 0.3, size = 1) +
+    geom_smooth(method = "lm", se = TRUE, color = "red", linewidth = 1) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+    geom_hline(yintercept = 0, color = "gray70") +
+    geom_vline(xintercept = 0, color = "gray70") +
+    labs(
+      title = paste0("Male: iWAT vs gWAT KAT8KD Response"),
+      subtitle = paste0("Pearson r = ", round(cor_m_depot, 3)),
+      x = "logFC (iWAT KAT8KD vs CTL)",
+      y = "logFC (gWAT KAT8KD vs CTL)"
+    ) +
+    theme_bw(base_size = 12) +
+    theme(plot.title = element_text(face = "bold", hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5))
+
+  ggsave(file.path(outdir, "plots", paste0("Comparison_Male_iWAT_vs_gWAT_logFC_", run_tag, ".png")),
+         plot = p_m_depot, width = 7, height = 7, dpi = 300)
+
+  cat("[OK] Saved all logFC correlation plots\n")
+
+  ## --- (e) DEG Overlap Summary Bar Plot ---
+  overlap_summary <- data.frame(
+    Comparison = c("iWAT F vs M", "iWAT F vs M", "iWAT F vs M",
+                   "gWAT F vs M", "gWAT F vs M", "gWAT F vs M",
+                   "Female iWAT vs gWAT", "Female iWAT vs gWAT", "Female iWAT vs gWAT",
+                   "Male iWAT vs gWAT", "Male iWAT vs gWAT", "Male iWAT vs gWAT"),
+    Category = c("Group1 Only", "Group2 Only", "Shared",
+                 "Group1 Only", "Group2 Only", "Shared",
+                 "Group1 Only", "Group2 Only", "Shared",
+                 "Group1 Only", "Group2 Only", "Shared"),
+    Count = c(length(iwat_f_only), length(iwat_m_only), length(iwat_shared),
+              length(gwat_f_only), length(gwat_m_only), length(gwat_shared),
+              length(f_iwat_only), length(f_gwat_only), length(f_shared),
+              length(m_iwat_only), length(m_gwat_only), length(m_shared)),
+    stringsAsFactors = FALSE
+  )
+
+  ## Add proper labels
+  overlap_summary$Category <- factor(overlap_summary$Category,
+                                      levels = c("Group1 Only", "Shared", "Group2 Only"))
+
+  p_overlap <- ggplot(overlap_summary, aes(x = Comparison, y = Count, fill = Category)) +
+    geom_bar(stat = "identity", position = "stack", color = "black", linewidth = 0.3) +
+    scale_fill_manual(
+      values = c("Group1 Only" = "#1b9e77", "Shared" = "#7570b3", "Group2 Only" = "#d95f02"),
+      labels = c("Group1 Only" = "First Group Only",
+                 "Shared" = "Shared DEGs",
+                 "Group2 Only" = "Second Group Only")
+    ) +
+    labs(
+      title = "DEG Overlap Between Contrasts",
+      subtitle = "Comparison of KAT8KD effects across sex and depot",
+      x = NULL,
+      y = "Number of DEGs",
+      fill = "Category"
+    ) +
+    theme_bw(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(hjust = 0.5),
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    ) +
+    geom_text(aes(label = Count), position = position_stack(vjust = 0.5), size = 3)
+
+  ggsave(file.path(outdir, "plots", paste0("DEG_overlap_summary_", run_tag, ".png")),
+         plot = p_overlap, width = 10, height = 7, dpi = 300)
+  cat("[OK] Saved DEG overlap summary plot\n")
+
+  ## --- (f) Save cross-contrast comparison summary ---
+  comparison_summary <- data.frame(
+    Comparison = c("iWAT: F vs M", "gWAT: F vs M", "Female: iWAT vs gWAT", "Male: iWAT vs gWAT"),
+    LogFC_Correlation = round(c(cor_iwat_sex, cor_gwat_sex, cor_f_depot, cor_m_depot), 3),
+    Shared_DEGs = c(length(iwat_shared), length(gwat_shared), length(f_shared), length(m_shared)),
+    Group1_Only = c(length(iwat_f_only), length(gwat_f_only), length(f_iwat_only), length(m_iwat_only)),
+    Group2_Only = c(length(iwat_m_only), length(gwat_m_only), length(f_gwat_only), length(m_gwat_only)),
+    Jaccard_Index = round(c(
+      safe_jaccard(iwat_f_degs, iwat_m_degs),
+      safe_jaccard(gwat_f_degs, gwat_m_degs),
+      safe_jaccard(f_iwat_degs, f_gwat_degs),
+      safe_jaccard(m_iwat_degs, m_gwat_degs)
+    ), 3),
+    stringsAsFactors = FALSE
+  )
+
+  comparison_file <- paste0("Cross_contrast_comparison_summary_", run_tag, ".csv")
+  write.csv(comparison_summary, file = file.path(outdir, "tables", comparison_file), row.names = FALSE)
+  cat("[OK] Saved cross-contrast comparison summary:", comparison_file, "\n")
+
+  cat("\n[INFO] Cross-contrast comparison summary:\n")
+  print(comparison_summary)
+
+  cat("\n=== END CROSS-CONTRAST COMPARISONS ===\n")
 
   ## 4.16) save_core bookkeeping ----------------------------
 
