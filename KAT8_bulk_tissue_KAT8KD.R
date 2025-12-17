@@ -87,21 +87,29 @@ if (dir.exists(utils_dir)) {
   source(file.path(utils_dir, "purge.R"))
   source(file.path(utils_dir, "dedupe.R"))
   cat("[OK] save_core utilities loaded\n")
-} else {
-  cat("[INFO] save_core directory not found, using basic output structure\n")
-  ## Create minimal replacements if save_core doesn't exist
+}
+
+## Always define fallback functions if they don't exist after sourcing
+if (!exists("init_run")) {
+  cat("[INFO] Using basic output structure (init_run not found)\n")
   init_run <- function(script_name, species, data_type, keywords, notes) {
     timestamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
-    run_tag <- paste0(script_name, "_", timestamp)
-    outdir <- file.path(getwd(), "output", run_tag)
+    run_tag <- timestamp
+    outdir <- file.path(getwd(), "output", paste0("RUN_", run_tag))
     dir.create(file.path(outdir, "plots"), recursive = TRUE, showWarnings = FALSE)
     dir.create(file.path(outdir, "tables"), recursive = TRUE, showWarnings = FALSE)
     dir.create(file.path(outdir, "logs"), recursive = TRUE, showWarnings = FALSE)
     list(outdir = outdir, run_tag = run_tag)
   }
+}
+
+if (!exists("save_run_file")) {
   save_run_file <- function(file_path, tag = NULL) {
     invisible(NULL)
   }
+}
+
+if (!exists("dedupe")) {
   dedupe <- function(outdir) {
     invisible(NULL)
   }
@@ -765,14 +773,15 @@ tryCatch({
   cat("[INFO] Genes removed:", sum(!keep_tissue), "\n")
   cat("[INFO] Retention rate:", round(sum(keep_tissue)/length(keep_tissue)*100, 1), "%\n")
 
-  ## Typical retention is 40-60% for RNA-seq
+  ## Typical retention is 15-50% for tissue RNA-seq with CPM > 1 in 50% samples
+  ## Lower retention is normal when many genes are tissue-specific or lowly expressed
   retention_rate <- sum(keep_tissue) / length(keep_tissue) * 100
-  if (retention_rate < 30) {
-    cat("[WARN] Very low gene retention rate - check if filter is too stringent\n")
-  } else if (retention_rate > 80) {
-    cat("[WARN] Very high gene retention rate - filter may be too lenient\n")
+  if (retention_rate < 10) {
+    cat("[WARN] Very low gene retention rate (<10%) - check if filter is too stringent\n")
+  } else if (retention_rate > 60) {
+    cat("[WARN] Very high gene retention rate (>60%) - filter may be too lenient\n")
   } else {
-    cat("[PASS] Gene retention rate within expected range (30-80%)\n")
+    cat("[PASS] Gene retention rate within expected range (10-60%)\n")
   }
 
   DGE_tissue_filt <- DGE_tissue[keep_tissue, , keep.lib.sizes = FALSE]
@@ -1410,7 +1419,7 @@ tryCatch({
         size             = 3.5,
         box.padding      = unit(0.25, "lines"),
         segment.color    = "gray25",
-        segment.linewidth = 0.25,
+        segment.size  = 0.25,
         point.padding    = unit(0.2, "lines"),
         max.overlaps     = Inf
       ) +
