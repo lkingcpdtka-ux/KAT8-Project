@@ -9,7 +9,7 @@
 ## - Differential expression: DESeq2 (Wald)
 ## - Volcano plots (viridis), per-contrast heatmaps
 ## - DEG counts summary
-## - Pathway over-representation (Up/Down): GO:BP only (enrichGO, top 500 DEGs)
+## - Pathway over-representation (Up/Down): GO:BP only (enrichGO, all DEGs)
 ## - save_core run folder management + logs
 ## =========================================================
 
@@ -74,7 +74,7 @@ run_info <- list(
   species     = "mouse",
   data_type   = "bulkRNAseq_WAT_tissue",
   keywords    = c("KAT8", "WAT", "iWAT", "gWAT", "bulk RNA-seq", "tissue", "DESeq2"),
-  notes       = "DESeq2-only pipeline: VST QC + per-depot/sex KD vs CTL contrasts + GO:BP enrichment (top 500 DEGs)",
+  notes       = "DESeq2-only pipeline: VST QC + per-depot/sex KD vs CTL contrasts + GO:BP enrichment (all DEGs)",
   message     = "Tissue KAT8KD vs CTL: DESeq2 + VST QC + DEGs + GO:BP enrichment"
 )
 
@@ -94,9 +94,6 @@ cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
 ## Pathway focus controls (optional)
 pathway_focus_depot_sex <- "iWAT_F"
 run_pathway_subset_only <- FALSE  ## Run pathway analysis for ALL contrasts
-
-## Max DEGs for pathway analysis (per direction)
-max_degs_for_pathway <- 500
 
 ## -----------------------------
 ## Sanity check: org.Mm.eg.db
@@ -721,24 +718,18 @@ tryCatch({
       cat("[INFO] Skipping pathway analysis for ", cn, " (focus is ", pathway_focus_depot_sex, ")\n", sep = "")
     } else {
       
-      ## Get up-regulated genes (top 500 by adj.P.Val)
+      ## Get all up-regulated DEGs (FDR < 0.05, logFC > 1)
       up_genes_all <- tt %>%
-        dplyr::filter(adj.P.Val < fdr_cut_tissue, logFC >  logFC_cut_tissue) %>%
-        dplyr::arrange(adj.P.Val) %>%
-        dplyr::slice_head(n = max_degs_for_pathway) %>%
+        dplyr::filter(adj.P.Val < fdr_cut_tissue, logFC > logFC_cut_tissue) %>%
         dplyr::pull(gene_name)
 
-      ## Get down-regulated genes (top 500 by adj.P.Val)
+      ## Get all down-regulated DEGs (FDR < 0.05, logFC < -1)
       down_genes_all <- tt %>%
         dplyr::filter(adj.P.Val < fdr_cut_tissue, logFC < -logFC_cut_tissue) %>%
-        dplyr::arrange(adj.P.Val) %>%
-        dplyr::slice_head(n = max_degs_for_pathway) %>%
         dplyr::pull(gene_name)
 
-      cat("[INFO] Up-regulated DEGs for pathway analysis: ", length(up_genes_all),
-          " (max ", max_degs_for_pathway, ")\n", sep = "")
-      cat("[INFO] Down-regulated DEGs for pathway analysis: ", length(down_genes_all),
-          " (max ", max_degs_for_pathway, ")\n", sep = "")
+      cat("[INFO] Up-regulated DEGs for pathway analysis: ", length(up_genes_all), "\n", sep = "")
+      cat("[INFO] Down-regulated DEGs for pathway analysis: ", length(down_genes_all), "\n", sep = "")
 
       if (length(up_genes_all) >= 5) {
         pathway_results[[paste0(cn, "_Up")]] <- run_pathway_analysis(
