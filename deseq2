@@ -93,7 +93,7 @@ cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
 
 ## Pathway focus controls (optional)
 pathway_focus_depot_sex <- "iWAT_F"
-run_pathway_subset_only <- TRUE
+run_pathway_subset_only <- FALSE  ## Run pathway analysis for ALL contrasts
 
 ## Max DEGs for pathway analysis (per direction)
 max_degs_for_pathway <- 500
@@ -558,26 +558,24 @@ tryCatch({
         write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
         cat("[OK] Saved pathway table: ", table_file, "\n", sep = "")
 
-        ## Plot by p-value (not gene ratio)
+        ## Plot by adjusted p-value
         plot_data <- sig_results %>%
           dplyr::slice_head(n = 15) %>%
           dplyr::mutate(
             Description = factor(Description, levels = rev(Description)),
-            negLogPval = -log10(pvalue)
+            negLogPadj = -log10(p.adjust)
           )
 
-        p_pathway <- ggplot(plot_data, aes(x = negLogPval, y = Description, fill = p.adjust)) +
+        p_pathway <- ggplot(plot_data, aes(x = negLogPadj, y = Description, fill = negLogPadj)) +
           geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
-          scale_fill_viridis(
-            option    = "rocket",
-            direction = -1,
-            name      = "Adjusted\nP-value",
-            limits    = c(0, max(plot_data$p.adjust)),
-            breaks    = pretty_breaks(n = 5)
+          scale_fill_gradient(
+            low   = "#6BAED6",
+            high  = "#08306B",
+            name  = "-log10\n(adj. P)"
           ) +
           labs(
             title = paste0("GO:BP (", direction, ")\n", contrast_name),
-            x     = "-log10(P-value)",
+            x     = "-log10(Adjusted P-value)",
             y     = NULL
           ) +
           theme_classic(base_size = 12) +
