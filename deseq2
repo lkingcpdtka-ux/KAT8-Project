@@ -9,7 +9,7 @@
 ## - Differential expression: DESeq2 (Wald)
 ## - Volcano plots (viridis), per-contrast heatmaps
 ## - DEG counts summary
-## - Pathway over-representation (Up/Down): Hallmark, KEGG, WikiPathways, GO:BP
+## - Pathway over-representation (Up/Down): GO:BP only (enrichGO, top 500 DEGs)
 ## - save_core run folder management + logs
 ## =========================================================
 
@@ -37,8 +37,6 @@ required_bioc_pkgs <- c(
   "org.Mm.eg.db",
   "enrichplot",
   "DOSE",
-  "pathview",
-  "msigdbr",
   "AnnotationDbi"
 )
 
@@ -60,8 +58,6 @@ suppressPackageStartupMessages({
   library(org.Mm.eg.db)
   library(enrichplot)
   library(DOSE)
-  library(pathview)
-  library(msigdbr)
   library(AnnotationDbi)
 })
 
@@ -78,8 +74,8 @@ run_info <- list(
   species     = "mouse",
   data_type   = "bulkRNAseq_WAT_tissue",
   keywords    = c("KAT8", "WAT", "iWAT", "gWAT", "bulk RNA-seq", "tissue", "DESeq2"),
-  notes       = "DESeq2-only pipeline: VST QC + per-depot/sex KD vs CTL contrasts + ORA pathways",
-  message     = "Tissue KAT8KD vs CTL: DESeq2 + VST QC + DEGs + ORA pathways"
+  notes       = "DESeq2-only pipeline: VST QC + per-depot/sex KD vs CTL contrasts + GO:BP enrichment (top 500 DEGs)",
+  message     = "Tissue KAT8KD vs CTL: DESeq2 + VST QC + DEGs + GO:BP enrichment"
 )
 
 ## 3) init_run ----------------------------------------------
@@ -99,68 +95,16 @@ cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
 pathway_focus_depot_sex <- "iWAT_F"
 run_pathway_subset_only <- TRUE
 
+## Max DEGs for pathway analysis (per direction)
+max_degs_for_pathway <- 500
+
 ## -----------------------------
-## Pathway gene sets (msigdbr)
+## Sanity check: org.Mm.eg.db
 ## -----------------------------
-cat("\n=== LOADING PATHWAY GENE SETS ===\n")
-
-msigdb_hallmark <- msigdbr(species = "Mus musculus", category = "H")
-
-msigdb_kegg <- tryCatch({
-  msigdbr(species = "Mus musculus", category = "C2", subcategory = "CP:KEGG")
-}, error = function(e) {
-  cat("[WARN] CP:KEGG subcategory not found, trying KEGG legacy format...\n")
-  tryCatch({
-    msigdbr(species = "Mus musculus", category = "C2", subcategory = "KEGG")
-  }, error = function(e2) {
-    cat("[WARN] Loading all C2 and filtering for KEGG...\n")
-    all_c2 <- msigdbr(species = "Mus musculus", category = "C2")
-    all_c2 %>% dplyr::filter(grepl("KEGG", gs_name, ignore.case = TRUE))
-  })
-})
-
-msigdb_wikipathways <- tryCatch({
-  msigdbr(species = "Mus musculus", category = "C2", subcategory = "CP:WIKIPATHWAYS")
-}, error = function(e) {
-  cat("[WARN] CP:WIKIPATHWAYS subcategory not found, trying WIKIPATHWAYS legacy format...\n")
-  tryCatch({
-    msigdbr(species = "Mus musculus", category = "C2", subcategory = "WIKIPATHWAYS")
-  }, error = function(e2) {
-    cat("[WARN] Loading all C2 and filtering for WIKIPATHWAYS...\n")
-    all_c2 <- msigdbr(species = "Mus musculus", category = "C2")
-    all_c2 %>% dplyr::filter(grepl("WIKIPATHWAYS", gs_name, ignore.case = TRUE))
-  })
-})
-
-msigdb_gobp <- tryCatch({
-  msigdbr(species = "Mus musculus", category = "C5", subcategory = "GO:BP")
-}, error = function(e) {
-  cat("[WARN] GO:BP subcategory syntax issue, trying alternative...\n")
-  tryCatch({
-    msigdbr(species = "Mus musculus", category = "C5", subcategory = "BP")
-  }, error = function(e2) {
-    cat("[WARN] Loading all C5 and filtering for GO:BP...\n")
-    all_c5 <- msigdbr(species = "Mus musculus", category = "C5")
-    all_c5 %>% dplyr::filter(gs_subcat == "GO:BP" | grepl("^GO.*BIOLOGICAL.*PROCESS", gs_name, ignore.case = TRUE))
-  })
-})
-
-cat("[OK] Loaded", length(unique(msigdb_hallmark$gs_name)), "Hallmark pathways\n")
-cat("[OK] Loaded", length(unique(msigdb_kegg$gs_name)), "KEGG pathways\n")
-cat("[OK] Loaded", length(unique(msigdb_wikipathways$gs_name)), "WikiPathways\n")
-cat("[OK] Loaded", length(unique(msigdb_gobp$gs_name)), "GO:BP terms\n")
-
-cat("\n--- SANITY CHECK: PATHWAY DATABASES ---\n")
+cat("\n--- SANITY CHECK: ORGANISM DATABASE ---\n")
 org_species <- AnnotationDbi::species(org.Mm.eg.db)
 if (!identical(org_species, "Mus musculus")) stop("ERROR: org.Mm.eg.db species mismatch: ", org_species)
 cat("[PASS] org.Mm.eg.db species:", org_species, "\n")
-
-required_msigdb_cols <- c("gs_name", "gene_symbol")
-missing_msigdb_cols <- setdiff(required_msigdb_cols, names(msigdb_hallmark))
-missing_msigdb_cols <- union(missing_msigdb_cols, setdiff(required_msigdb_cols, names(msigdb_kegg)))
-missing_msigdb_cols <- union(missing_msigdb_cols, setdiff(required_msigdb_cols, names(msigdb_wikipathways)))
-missing_msigdb_cols <- union(missing_msigdb_cols, setdiff(required_msigdb_cols, names(msigdb_gobp)))
-if (length(missing_msigdb_cols) > 0) stop("ERROR: msigdbr missing columns: ", paste(missing_msigdb_cols, collapse = ", "))
 
 ## 4) Main logic --------------------------------------------
 hero_volcano_file <- NULL
@@ -536,19 +480,18 @@ tryCatch({
   names(tt_list) <- contrast_names
   pathway_results <- list()
   
-  ## 4.14) Pathway analysis function (ORA) -------------------
+  ## 4.14) Pathway analysis function (ORA) - GO:BP only ------
   run_pathway_analysis <- function(gene_list, direction, contrast_name,
-                                   run_tag, outdir, fdr_cutoff = 0.05,
-                                   msigdb_hallmark, msigdb_kegg,
-                                   msigdb_wikipathways, msigdb_gobp) {
-    
-    cat("\n--- Pathway analysis: ", direction, " genes (", contrast_name, ") ---\n", sep = "")
-    
+                                   run_tag, outdir, fdr_cutoff = 0.05) {
+
+    cat("\n--- GO:BP enrichment: ", direction, " genes (", contrast_name, ") ---\n", sep = "")
+    cat("[INFO] Input gene count: ", length(gene_list), " genes\n", sep = "")
+
     if (length(gene_list) < 5) {
       cat("[WARN] Too few genes (", length(gene_list), ") for pathway analysis\n", sep = "")
       return(NULL)
     }
-    
+
     gene_entrez <- tryCatch({
       bitr(
         unique(gene_list),
@@ -561,98 +504,24 @@ tryCatch({
       cat("[WARN] Gene ID conversion failed: ", conditionMessage(e), "\n", sep = "")
       return(data.frame(SYMBOL = character(), ENTREZID = character()))
     })
-    
+
     gene_entrez <- gene_entrez[!is.na(gene_entrez$ENTREZID), , drop = FALSE]
     gene_entrez <- gene_entrez[!duplicated(gene_entrez$ENTREZID), , drop = FALSE]
-    
+
     mapping_rate <- if (length(gene_list) == 0) 0 else nrow(gene_entrez) / length(unique(gene_list))
     cat("[OK] Mapped ", nrow(gene_entrez), " of ", length(unique(gene_list)),
         " genes to Entrez (", round(mapping_rate * 100, 1), "%)\n", sep = "")
-    
+    cat("[INFO] Genes entering enrichGO: ", nrow(gene_entrez), "\n", sep = "")
+
     if (nrow(gene_entrez) < 3) {
       cat("[WARN] Too few genes mapped to Entrez IDs\n")
       return(NULL)
     }
-    
+
     entrez_ids <- gene_entrez$ENTREZID
-    symbol_ids <- gene_entrez$SYMBOL
     results <- list()
-    
-    add_entrez_symbols <- function(pathway_table) {
-      if (!"geneID" %in% names(pathway_table)) return(pathway_table)
-      pathway_table %>%
-        mutate(
-          gene_symbols = vapply(geneID, function(ids) {
-            id_list <- unlist(strsplit(ids, "/"))
-            id_list <- gsub("^mmu:", "", id_list, ignore.case = TRUE)
-            id_list <- gsub("^\\s+|\\s+$", "", id_list)
-            id_list <- id_list[nzchar(id_list)]
-            if (length(id_list) == 0) return("")
-            symbol_list <- AnnotationDbi::mapIds(
-              org.Mm.eg.db,
-              keys      = id_list,
-              column    = "SYMBOL",
-              keytype   = "ENTREZID",
-              multiVals = "first"
-            )
-            symbol_list <- unname(symbol_list)
-            symbol_list <- symbol_list[!is.na(symbol_list)]
-            paste(symbol_list, collapse = "/")
-          }, character(1))
-        )
-    }
-    
-    ## Hallmark (TERM2GENE)
-    tryCatch({
-      hallmark_term2gene <- msigdb_hallmark %>% dplyr::select(gs_name, gene_symbol)
-      enrich_hallmark <- enricher(
-        gene          = symbol_ids,
-        TERM2GENE     = hallmark_term2gene,
-        pvalueCutoff  = 0.1,
-        qvalueCutoff  = 0.2,
-        minGSSize     = 5,
-        maxGSSize     = 500
-      )
-      if (!is.null(enrich_hallmark) && nrow(enrich_hallmark@result) > 0) {
-        results$hallmark <- enrich_hallmark
-        cat("[OK] Hallmark enrichment: ", nrow(enrich_hallmark@result), " pathways\n", sep = "")
-      }
-    }, error = function(e) cat("[WARN] Hallmark enrichment failed: ", conditionMessage(e), "\n", sep = ""))
-    
-    ## WikiPathways (TERM2GENE)
-    tryCatch({
-      wikipathways_term2gene <- msigdb_wikipathways %>% dplyr::select(gs_name, gene_symbol)
-      enrich_wikipathways <- enricher(
-        gene          = symbol_ids,
-        TERM2GENE     = wikipathways_term2gene,
-        pvalueCutoff  = 0.1,
-        qvalueCutoff  = 0.2,
-        minGSSize     = 5,
-        maxGSSize     = 500
-      )
-      if (!is.null(enrich_wikipathways) && nrow(enrich_wikipathways@result) > 0) {
-        results$wikipathways <- enrich_wikipathways
-        cat("[OK] WikiPathways enrichment: ", nrow(enrich_wikipathways@result), " pathways\n", sep = "")
-      }
-    }, error = function(e) cat("[WARN] WikiPathways enrichment failed: ", conditionMessage(e), "\n", sep = ""))
-    
-    ## KEGG (Entrez)
-    tryCatch({
-      enrich_kegg <- enrichKEGG(
-        gene          = entrez_ids,
-        organism      = "mmu",
-        pvalueCutoff  = 0.1,
-        qvalueCutoff  = 0.2,
-        minGSSize     = 5,
-        maxGSSize     = 500
-      )
-      if (!is.null(enrich_kegg) && nrow(enrich_kegg@result) > 0) {
-        results$kegg <- enrich_kegg
-        cat("[OK] KEGG enrichment: ", nrow(enrich_kegg@result), " pathways\n", sep = "")
-      }
-    }, error = function(e) cat("[WARN] KEGG enrichment failed: ", conditionMessage(e), "\n", sep = ""))
-    
-    ## GO:BP (Entrez)
+
+    ## GO:BP (Entrez) - only pathway analysis
     tryCatch({
       enrich_go <- enrichGO(
         gene          = entrez_ids,
@@ -670,39 +539,34 @@ tryCatch({
         cat("[OK] GO:BP enrichment: ", nrow(enrich_go_simp@result), " terms (simplified)\n", sep = "")
       }
     }, error = function(e) cat("[WARN] GO:BP enrichment failed: ", conditionMessage(e), "\n", sep = ""))
-    
-    ## Save results tables + barplots
+
+    ## Save results tables + barplots (plot by p-value)
     if (length(results) > 0) {
       for (db_name in names(results)) {
         enrich_obj <- results[[db_name]]
-        
+
         sig_results <- enrich_obj@result %>%
           dplyr::filter(p.adjust < fdr_cutoff) %>%
           dplyr::arrange(p.adjust)
-        
+
         if (nrow(sig_results) == 0) {
           cat("[INFO] No significant pathways in ", db_name, "\n", sep = "")
           next
         }
-        
-        if (db_name == "kegg") sig_results <- add_entrez_symbols(sig_results)
-        
+
         table_file <- paste0("Pathway_", db_name, "_", contrast_name, "_", direction, "_", run_tag, ".csv")
         write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
         cat("[OK] Saved pathway table: ", table_file, "\n", sep = "")
-        
+
+        ## Plot by p-value (not gene ratio)
         plot_data <- sig_results %>%
           dplyr::slice_head(n = 15) %>%
           dplyr::mutate(
             Description = factor(Description, levels = rev(Description)),
-            GeneRatio_numeric = sapply(strsplit(GeneRatio, "/"), function(x) {
-              num <- as.numeric(x[1]); denom <- as.numeric(x[2])
-              if (is.na(denom) || denom == 0) return(0)
-              num / denom
-            })
+            negLogPval = -log10(pvalue)
           )
-        
-        p_pathway <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description, fill = p.adjust)) +
+
+        p_pathway <- ggplot(plot_data, aes(x = negLogPval, y = Description, fill = p.adjust)) +
           geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
           scale_fill_viridis(
             option    = "rocket",
@@ -712,8 +576,8 @@ tryCatch({
             breaks    = pretty_breaks(n = 5)
           ) +
           labs(
-            title = paste0(toupper(db_name), " Pathways (", direction, ")\n", contrast_name),
-            x     = "Gene Ratio",
+            title = paste0("GO:BP (", direction, ")\n", contrast_name),
+            x     = "-log10(P-value)",
             y     = NULL
           ) +
           theme_classic(base_size = 12) +
@@ -727,7 +591,7 @@ tryCatch({
             legend.position = "right",
             panel.border    = element_rect(color = "black", fill = NA, linewidth = 1)
           )
-        
+
         plot_file <- paste0("Pathway_barplot_", db_name, "_", contrast_name, "_", direction, "_", run_tag, ".png")
         ggsave(
           file.path(outdir, "plots", plot_file),
@@ -740,7 +604,7 @@ tryCatch({
         cat("[OK] Saved pathway bar plot: ", plot_file, "\n", sep = "")
       }
     }
-    
+
     return(results)
   }
   
@@ -859,43 +723,46 @@ tryCatch({
       cat("[INFO] Skipping pathway analysis for ", cn, " (focus is ", pathway_focus_depot_sex, ")\n", sep = "")
     } else {
       
-      up_genes <- tt %>%
+      ## Get up-regulated genes (top 500 by adj.P.Val)
+      up_genes_all <- tt %>%
         dplyr::filter(adj.P.Val < fdr_cut_tissue, logFC >  logFC_cut_tissue) %>%
+        dplyr::arrange(adj.P.Val) %>%
+        dplyr::slice_head(n = max_degs_for_pathway) %>%
         dplyr::pull(gene_name)
-      
-      down_genes <- tt %>%
+
+      ## Get down-regulated genes (top 500 by adj.P.Val)
+      down_genes_all <- tt %>%
         dplyr::filter(adj.P.Val < fdr_cut_tissue, logFC < -logFC_cut_tissue) %>%
+        dplyr::arrange(adj.P.Val) %>%
+        dplyr::slice_head(n = max_degs_for_pathway) %>%
         dplyr::pull(gene_name)
-      
-      if (length(up_genes) >= 5) {
+
+      cat("[INFO] Up-regulated DEGs for pathway analysis: ", length(up_genes_all),
+          " (max ", max_degs_for_pathway, ")\n", sep = "")
+      cat("[INFO] Down-regulated DEGs for pathway analysis: ", length(down_genes_all),
+          " (max ", max_degs_for_pathway, ")\n", sep = "")
+
+      if (length(up_genes_all) >= 5) {
         pathway_results[[paste0(cn, "_Up")]] <- run_pathway_analysis(
-          gene_list       = up_genes,
-          direction       = "Up",
-          contrast_name   = cn,
-          run_tag         = run_tag,
-          outdir          = outdir,
-          fdr_cutoff      = 0.05,
-          msigdb_hallmark = msigdb_hallmark,
-          msigdb_kegg     = msigdb_kegg,
-          msigdb_wikipathways = msigdb_wikipathways,
-          msigdb_gobp     = msigdb_gobp
+          gene_list     = up_genes_all,
+          direction     = "Up",
+          contrast_name = cn,
+          run_tag       = run_tag,
+          outdir        = outdir,
+          fdr_cutoff    = 0.05
         )
       } else {
         cat("[WARN] Too few upregulated genes for pathway analysis (", cn, ")\n", sep = "")
       }
-      
-      if (length(down_genes) >= 5) {
+
+      if (length(down_genes_all) >= 5) {
         pathway_results[[paste0(cn, "_Down")]] <- run_pathway_analysis(
-          gene_list       = down_genes,
-          direction       = "Down",
-          contrast_name   = cn,
-          run_tag         = run_tag,
-          outdir          = outdir,
-          fdr_cutoff      = 0.05,
-          msigdb_hallmark = msigdb_hallmark,
-          msigdb_kegg     = msigdb_kegg,
-          msigdb_wikipathways = msigdb_wikipathways,
-          msigdb_gobp     = msigdb_gobp
+          gene_list     = down_genes_all,
+          direction     = "Down",
+          contrast_name = cn,
+          run_tag       = run_tag,
+          outdir        = outdir,
+          fdr_cutoff    = 0.05
         )
       } else {
         cat("[WARN] Too few downregulated genes for pathway analysis (", cn, ")\n", sep = "")
