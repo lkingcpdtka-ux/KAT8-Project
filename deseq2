@@ -691,39 +691,38 @@ tryCatch({
     
     vol_tissue <- ggplot(
       tt_plot,
-      aes(x = logFC, y = negLogFDR, color = negLogFDR, shape = sig_cat)
+      aes(x = logFC, y = negLogFDR, color = sig_cat)
     ) +
-      geom_point(size = 2, alpha = 0.9) +
-      scale_color_viridis(option = "rocket", direction = 1, name = "-log10(FDR)") +
-      scale_shape_manual(
-        values = c("Up" = 17, "Down" = 25, "NS" = 16),
-        name   = "Direction"
+      geom_point(size = 2, alpha = 0.8) +
+      scale_color_manual(
+        values = c("Up" = "#E69F00", "Down" = "#0072B2", "NS" = "grey70"),
+        name   = "Significance"
       ) +
-      geom_point(data = label_genes, size = 2.8) +
+      geom_point(data = label_genes, aes(color = sig_cat), size = 3) +
       geom_text_repel(
         data          = label_genes,
         aes(label     = gene_name),
         color         = "black",
         size          = 3.5,
         box.padding   = unit(0.25, "lines"),
-        segment.color = "gray25",
-        segment.size  = 0.25,
+        segment.color = "gray40",
+        segment.size  = 0.3,
         point.padding = unit(0.2, "lines"),
         max.overlaps  = Inf
       ) +
-      geom_hline(yintercept = -log10(fdr_cut_tissue), linetype = "dashed") +
-      geom_vline(xintercept = c(logFC_cut_tissue, -logFC_cut_tissue), linetype = "dashed") +
+      geom_hline(yintercept = -log10(fdr_cut_tissue), linetype = "dashed", color = "grey40") +
+      geom_vline(xintercept = c(logFC_cut_tissue, -logFC_cut_tissue), linetype = "dashed", color = "grey40") +
       theme_bw(base_size = 14) +
       theme(
         panel.grid      = element_blank(),
         axis.text       = element_text(size = 10, face = "bold", colour = "black"),
-        axis.title      = element_text(size = 16, face = "bold", colour = "black"),
+        axis.title      = element_text(size = 14, face = "bold", colour = "black"),
         plot.title      = element_text(face = "bold", hjust = 0.5),
-        legend.position = "bottom"
+        legend.position = "right"
       ) +
       ggtitle(paste0("Volcano: ", cn, " (WAT tissue; DESeq2)")) +
-      xlab(paste0("log2FC (", cn, ")")) +
-      ylab("-log10 FDR")
+      xlab(expression(log[2]~Fold~Change)) +
+      ylab(expression(-log[10]~FDR))
     
     volcano_file <- paste0("Volcano_tissue_", cn, "_", run_tag, ".png")
     ggsave(file.path(outdir, "plots", volcano_file), plot = vol_tissue, width = 8, height = 6, dpi = 300)
@@ -778,65 +777,79 @@ tryCatch({
       }
     }
     
-    ## Heatmap (VST) of strongest DEGs
+    ## Heatmap (VST) of strongest DEGs using ComplexHeatmap
     de_sig <- tt %>%
       dplyr::filter(adj.P.Val < fdr_cut_tissue, abs(logFC) > logFC_cut_tissue)
-    
+
     if (nrow(de_sig) >= 2) {
       de_sig <- de_sig[order(de_sig$adj.P.Val), , drop = FALSE]
       if (nrow(de_sig) > params$heatmap_max_genes) de_sig <- de_sig[1:params$heatmap_max_genes, , drop = FALSE]
       gene_set <- de_sig$gene_name
-      
+
       depot <- NA_character_
       sex   <- NA_character_
       if (grepl("^iWAT_F", cn))      { depot <- "iWAT"; sex <- "F" }
       else if (grepl("^iWAT_M", cn)) { depot <- "iWAT"; sex <- "M" }
       else if (grepl("^gWAT_F", cn)) { depot <- "gWAT"; sex <- "F" }
       else if (grepl("^gWAT_M", cn)) { depot <- "gWAT"; sex <- "M" }
-      
+
       if (!is.na(depot) && !is.na(sex)) {
-        
+
         idx_samples <- with(as.data.frame(colData(dds_tissue)), Depot == depot & Sex == sex)
         samples_heat <- rownames(colData(dds_tissue))[idx_samples]
-        
+        heat_meta_deg <- as.data.frame(colData(dds_tissue))[idx_samples, , drop = FALSE]
+
         mat <- vst_mat[gene_set, samples_heat, drop = FALSE]
-        
-        palette_hm <- colorRampPalette(c("blue", "white", "red"))(100)
-        
-        annot_col <- data.frame(
-          Genotype = colData(dds_tissue)$Genotype[idx_samples],
-          Depot    = colData(dds_tissue)$Depot[idx_samples],
-          Sex      = colData(dds_tissue)$Sex[idx_samples]
-        )
-        rownames(annot_col) <- samples_heat
-        
-        annot_colors <- list(
-          Genotype = c(CTL = "#1B9E77", KAT8KD = "#D95F02"),
-          Depot    = c(iWAT = "#377eb8", gWAT = "#e41a1c"),
-          Sex      = c(F = "#984ea3", M = "#ff7f00")
-        )
-        
-        heat_file <- paste0("Heatmap_tissue_", cn, "_", run_tag, ".png")
-        png(file.path(outdir, "plots", heat_file), width = 3000, height = 3500, res = 300)
-        pheatmap(
-          mat,
-          show_rownames     = TRUE,
-          show_colnames     = TRUE,
-          scale             = "row",
-          cluster_cols      = FALSE,
-          cluster_rows      = TRUE,
-          color             = palette_hm,
-          border_color      = NA,
-          fontsize_row      = 6,
-          fontsize_col      = 10,
-          annotation_col    = annot_col,
-          annotation_colors = annot_colors,
-          annotation_legend = TRUE,
-          main              = paste0("Top DEGs ", cn, " (DESeq2; FDR<0.05, |logFC|>", logFC_cut_tissue, ")")
-        )
-        dev.off()
-        cat("Heatmap saved: ", file.path(outdir, "plots", heat_file), "\n", sep = "")
-        
+
+        ## Scale rows (z-score)
+        mat_scaled <- t(scale(t(mat)))
+        mat_scaled <- mat_scaled[!rowSums(is.na(mat_scaled)), , drop = FALSE]
+
+        if (nrow(mat_scaled) >= 2) {
+          ## Colorblind-friendly color scale (purple to orange via white)
+          max_val_deg <- max(abs(mat_scaled), na.rm = TRUE)
+          deg_col_fun <- colorRamp2(c(-max_val_deg, 0, max_val_deg), c("#5E4FA2", "grey96", "#E66101"))
+
+          ## Column annotation
+          deg_ha <- HeatmapAnnotation(
+            Genotype = heat_meta_deg$Genotype,
+            col = list(Genotype = c(CTL = "#1B9E77", KAT8KD = "#D95F02")),
+            annotation_name_side = "left"
+          )
+
+          ## Create heatmap
+          heat_deg <- Heatmap(
+            mat_scaled,
+            col = deg_col_fun,
+            cluster_rows = TRUE,
+            cluster_columns = FALSE,
+            show_column_names = TRUE,
+            show_row_names = (nrow(mat_scaled) <= 50),
+            column_split = heat_meta_deg$Genotype,
+            border = TRUE,
+            column_gap = unit(2, "mm"),
+            row_gap = unit(0, "mm"),
+            top_annotation = deg_ha,
+            column_title = paste0("Top DEGs: ", cn, " (FDR<0.05, |logFC|>", logFC_cut_tissue, ")"),
+            heatmap_legend_param = list(
+              title = "Z-score",
+              title_position = "leftcenter-rot",
+              title_gp = gpar(fontsize = 10)
+            ),
+            row_names_gp = gpar(fontsize = 5),
+            column_names_gp = gpar(fontsize = 8)
+          )
+
+          ## Save
+          heat_file <- paste0("Heatmap_tissue_", cn, "_", run_tag, ".png")
+          png(file.path(outdir, "plots", heat_file), width = 2000, height = 3000, res = 200)
+          draw(heat_deg)
+          dev.off()
+          cat("Heatmap saved: ", file.path(outdir, "plots", heat_file), "\n", sep = "")
+        } else {
+          cat("Not enough valid genes for heatmap after scaling (", cn, ").\n", sep = "")
+        }
+
       } else {
         cat("Could not map contrast ", cn, " to depot/sex for heatmap.\n", sep = "")
       }
@@ -883,9 +896,9 @@ tryCatch({
 
         if (nrow(heat_matrix_scaled) >= 2) {
 
-          ## Color function based on max value, mirrored to negative
+          ## Colorblind-friendly color function (purple to orange via white)
           max_val <- max(abs(heat_matrix_scaled), na.rm = TRUE)
-          heat_col_fun <- colorRamp2(c(-max_val, 0, max_val), c("blue2", "gray96", "red2"))
+          heat_col_fun <- colorRamp2(c(-max_val, 0, max_val), c("#5E4FA2", "grey96", "#E66101"))
 
           ## Column annotation
           heat_ha <- HeatmapAnnotation(
@@ -933,7 +946,7 @@ tryCatch({
     }
 
     ## -------------------------------------------------------
-    ## EnhancedVolcano labeling genes of interest
+    ## EnhancedVolcano labeling genes of interest (only significant ones)
     ## -------------------------------------------------------
     cat("\n--- EnhancedVolcano: Genes of Interest (", cn, ") ---\n", sep = "")
 
@@ -941,20 +954,28 @@ tryCatch({
     volcano_df <- tt %>%
       dplyr::filter(is.finite(logFC), is.finite(adj.P.Val), adj.P.Val > 0)
 
-    ## Which genes of interest to label
-    goi_to_label <- genes_of_interest[genes_of_interest %in% volcano_df$gene_name]
-    cat("[INFO] Genes of interest to label on volcano: ", length(goi_to_label), "\n", sep = "")
+    ## Only label genes of interest that are SIGNIFICANT (pass both thresholds)
+    goi_significant <- volcano_df %>%
+      dplyr::filter(gene_name %in% genes_of_interest,
+                    adj.P.Val < fdr_cut_tissue,
+                    abs(logFC) >= logFC_cut_tissue) %>%
+      dplyr::pull(gene_name)
+
+    cat("[INFO] Genes of interest (total): ", length(genes_of_interest), "\n", sep = "")
+    cat("[INFO] Genes of interest (significant): ", length(goi_significant), "\n", sep = "")
 
     if (nrow(volcano_df) > 0) {
 
+      ## Custom colors: grey NS, orange up, teal down (colorblind-friendly)
+      ## EnhancedVolcano col order: NS, FC only, p only, FC+p
       ev_plot <- EnhancedVolcano(
         volcano_df,
         lab = volcano_df$gene_name,
-        selectLab = goi_to_label,
+        selectLab = goi_significant,
         x = "logFC",
         y = "adj.P.Val",
         title = paste0("Volcano: ", cn),
-        subtitle = "Genes of Interest labeled",
+        subtitle = "ECM/Collagen & DNL genes labeled (significant only)",
         pCutoff = fdr_cut_tissue,
         FCcutoff = logFC_cut_tissue,
         pointSize = 2.0,
@@ -964,8 +985,8 @@ tryCatch({
         boxedLabels = TRUE,
         drawConnectors = TRUE,
         widthConnectors = 0.5,
-        colConnectors = "gray50",
-        col = c("grey70", "forestgreen", "steelblue", "red3"),
+        colConnectors = "gray40",
+        col = c("grey70", "grey70", "grey70", "#7570B3"),
         legendPosition = "right",
         legendLabSize = 10,
         legendIconSize = 3.0,
