@@ -107,14 +107,11 @@ run_pathway_subset_only <- FALSE  ## Run pathway analysis for ALL contrasts
 ## Genes of interest for focused heatmap/volcano
 ## -----------------------------
 genes_of_interest <- c(
-  ## Collagens
+  ## Collagens / ECM
   "Col4a1", "Col4a2", "Col15a1", "Col5a3", "Col6a6", "Col13a1",
   "Col4a5", "Col14a1", "Col27a1", "Col16a1", "Col6a5",
-  ## Adipogenesis / Metabolism
-  "Lep", "Ppargc1a", "Adipoq", "Sorbs1", "Srebf1", "Ppara",
-  "Pparg", "Fabp4", "Cd36", "Pemt", "Angptl3", "Nr1h3",
-  "Plin5", "Ephx2", "Bscl2", "Adra1a", "Plin1", "Fabp5",
-  "Itga7", "Fzd4", "Angptl4", "Insig1", "Cav1"
+  ## De novo lipogenesis (DNL)
+  "Srebf1", "Fasn", "Acaca", "Scd1", "Acly", "Elovl6", "Insig1"
 )
 cat("[INFO] Genes of interest for focused plots: ", length(genes_of_interest), "\n")
 
