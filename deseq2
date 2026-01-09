@@ -37,8 +37,13 @@ required_bioc_pkgs <- c(
   "org.Mm.eg.db",
   "enrichplot",
   "DOSE",
-  "AnnotationDbi"
+  "AnnotationDbi",
+  "ComplexHeatmap",
+  "EnhancedVolcano"
 )
+
+## circlize is on CRAN
+if (!requireNamespace("circlize", quietly = TRUE)) install.packages("circlize")
 
 if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
 to_install_bioc <- setdiff(required_bioc_pkgs, rownames(installed.packages()))
@@ -59,6 +64,9 @@ suppressPackageStartupMessages({
   library(enrichplot)
   library(DOSE)
   library(AnnotationDbi)
+  library(ComplexHeatmap)
+  library(circlize)
+  library(EnhancedVolcano)
 })
 
 ## 2) save_core utilities -----------------------------------
@@ -94,6 +102,21 @@ cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
 ## Pathway focus controls (optional)
 pathway_focus_depot_sex <- "iWAT_F"
 run_pathway_subset_only <- FALSE  ## Run pathway analysis for ALL contrasts
+
+## -----------------------------
+## Genes of interest for focused heatmap/volcano
+## -----------------------------
+genes_of_interest <- c(
+  ## Collagens
+  "Col4a1", "Col4a2", "Col15a1", "Col5a3", "Col6a6", "Col13a1",
+  "Col4a5", "Col14a1", "Col27a1", "Col16a1", "Col6a5",
+  ## Adipogenesis / Metabolism
+  "Lep", "Ppargc1a", "Adipoq", "Sorbs1", "Srebf1", "Ppara",
+  "Pparg", "Fabp4", "Cd36", "Pemt", "Angptl3", "Nr1h3",
+  "Plin5", "Ephx2", "Bscl2", "Adra1a", "Plin1", "Fabp5",
+  "Itga7", "Fzd4", "Angptl4", "Insig1", "Cav1"
+)
+cat("[INFO] Genes of interest for focused plots: ", length(genes_of_interest), "\n")
 
 ## -----------------------------
 ## Sanity check: org.Mm.eg.db
@@ -823,8 +846,144 @@ tryCatch({
     } else {
       cat("Not enough DE genes for heatmap (", cn, ").\n", sep = "")
     }
+
+    ## -------------------------------------------------------
+    ## ComplexHeatmap for genes of interest
+    ## -------------------------------------------------------
+    cat("\n--- ComplexHeatmap: Genes of Interest (", cn, ") ---\n", sep = "")
+
+    ## Find which genes of interest are in our data
+    goi_in_data <- genes_of_interest[genes_of_interest %in% rownames(vst_mat)]
+    cat("[INFO] Genes of interest found in data: ", length(goi_in_data), "/", length(genes_of_interest), "\n", sep = "")
+
+    if (length(goi_in_data) >= 2) {
+
+      ## Get depot/sex for this contrast
+      depot_h <- NA_character_
+      sex_h   <- NA_character_
+      if (grepl("^iWAT_F", cn))      { depot_h <- "iWAT"; sex_h <- "F" }
+      else if (grepl("^iWAT_M", cn)) { depot_h <- "iWAT"; sex_h <- "M" }
+      else if (grepl("^gWAT_F", cn)) { depot_h <- "gWAT"; sex_h <- "F" }
+      else if (grepl("^gWAT_M", cn)) { depot_h <- "gWAT"; sex_h <- "M" }
+
+      if (!is.na(depot_h) && !is.na(sex_h)) {
+
+        ## Get sample indices for this contrast
+        heat_idx <- with(as.data.frame(colData(dds_tissue)), Depot == depot_h & Sex == sex_h)
+        heat_samples <- rownames(colData(dds_tissue))[heat_idx]
+        heat_meta <- as.data.frame(colData(dds_tissue))[heat_idx, , drop = FALSE]
+
+        ## Get control samples for centering
+        heat_ctrls <- heat_meta %>% dplyr::filter(Genotype == "CTL") %>% rownames()
+
+        ## Build matrix
+        heat_matrix <- vst_mat[goi_in_data, heat_samples, drop = FALSE]
+
+        ## Center by control means (z-score relative to controls)
+        heat_ctrl_means <- rowMeans(heat_matrix[, heat_ctrls, drop = FALSE])
+        heat_matrix_scaled <- t(scale(t(heat_matrix), center = heat_ctrl_means, scale = TRUE))
+        heat_matrix_scaled <- heat_matrix_scaled[!rowSums(is.na(heat_matrix_scaled)), , drop = FALSE]
+
+        if (nrow(heat_matrix_scaled) >= 2) {
+
+          ## Color function based on max value, mirrored to negative
+          max_val <- max(abs(heat_matrix_scaled), na.rm = TRUE)
+          heat_col_fun <- colorRamp2(c(-max_val, 0, max_val), c("blue2", "gray96", "red2"))
+
+          ## Column annotation
+          heat_ha <- HeatmapAnnotation(
+            Genotype = heat_meta$Genotype,
+            col = list(Genotype = c(CTL = "#1B9E77", KAT8KD = "#D95F02")),
+            annotation_name_side = "left"
+          )
+
+          ## Create heatmap
+          heat_goi <- Heatmap(
+            heat_matrix_scaled,
+            col = heat_col_fun,
+            cluster_rows = TRUE,
+            cluster_columns = FALSE,
+            show_column_names = TRUE,
+            show_row_names = TRUE,
+            column_split = heat_meta$Genotype,
+            border = TRUE,
+            column_gap = unit(2, "mm"),
+            row_gap = unit(0, "mm"),
+            top_annotation = heat_ha,
+            column_title = paste0("Genes of Interest: ", cn),
+            heatmap_legend_param = list(
+              title = "Z-score\n(vs CTL)",
+              title_position = "leftcenter-rot",
+              title_gp = gpar(fontsize = 10)
+            ),
+            row_names_gp = gpar(fontsize = 8),
+            column_names_gp = gpar(fontsize = 8)
+          )
+
+          ## Save
+          heat_goi_file <- paste0("Heatmap_GOI_", cn, "_", run_tag, ".png")
+          png(file.path(outdir, "plots", heat_goi_file), width = 2000, height = 2500, res = 200)
+          draw(heat_goi)
+          dev.off()
+          cat("[OK] ComplexHeatmap saved: ", heat_goi_file, "\n", sep = "")
+
+        } else {
+          cat("[WARN] Not enough genes of interest with valid values for heatmap\n")
+        }
+      }
+    } else {
+      cat("[WARN] Too few genes of interest found in data for heatmap\n")
+    }
+
+    ## -------------------------------------------------------
+    ## EnhancedVolcano labeling genes of interest
+    ## -------------------------------------------------------
+    cat("\n--- EnhancedVolcano: Genes of Interest (", cn, ") ---\n", sep = "")
+
+    ## Prepare data for EnhancedVolcano
+    volcano_df <- tt %>%
+      dplyr::filter(is.finite(logFC), is.finite(adj.P.Val), adj.P.Val > 0)
+
+    ## Which genes of interest to label
+    goi_to_label <- genes_of_interest[genes_of_interest %in% volcano_df$gene_name]
+    cat("[INFO] Genes of interest to label on volcano: ", length(goi_to_label), "\n", sep = "")
+
+    if (nrow(volcano_df) > 0) {
+
+      ev_plot <- EnhancedVolcano(
+        volcano_df,
+        lab = volcano_df$gene_name,
+        selectLab = goi_to_label,
+        x = "logFC",
+        y = "adj.P.Val",
+        title = paste0("Volcano: ", cn),
+        subtitle = "Genes of Interest labeled",
+        pCutoff = fdr_cut_tissue,
+        FCcutoff = logFC_cut_tissue,
+        pointSize = 2.0,
+        labSize = 4.0,
+        labCol = "black",
+        labFace = "bold",
+        boxedLabels = TRUE,
+        drawConnectors = TRUE,
+        widthConnectors = 0.5,
+        colConnectors = "gray50",
+        col = c("grey70", "forestgreen", "steelblue", "red3"),
+        legendPosition = "right",
+        legendLabSize = 10,
+        legendIconSize = 3.0,
+        max.overlaps = Inf
+      )
+
+      ev_file <- paste0("EnhancedVolcano_GOI_", cn, "_", run_tag, ".png")
+      ggsave(file.path(outdir, "plots", ev_file), plot = ev_plot, width = 10, height = 8, dpi = 300)
+      cat("[OK] EnhancedVolcano saved: ", ev_file, "\n", sep = "")
+
+    } else {
+      cat("[WARN] No valid data for EnhancedVolcano\n")
+    }
   }
-  
+
   ## 4.16) DEG summary table --------------------------------
   deg_summary_file <- paste0("DEG_summary_tissue_", run_tag, ".csv")
   write.csv(deg_summary, file = file.path(outdir, "tables", deg_summary_file), row.names = FALSE)
