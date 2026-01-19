@@ -68,9 +68,17 @@ source("part1_main_analysis.R")
 - Generates sanity check reports
 
 **Key Fixes Applied**:
-- ✅ **Proper universe/background**: Uses all tested genes as background (fixes enrichGO error)
+- ✅ **Optional universe/background**: Toggle between conservative (with universe) or liberal (default) approaches
 - ✅ **Better error handling**: Won't crash if one contrast fails
 - ✅ **Improved logging**: Tracks gene mapping and pathway counts
+
+**Important Setting** - ORA Universe (Line ~112 in `part2_ora.R`):
+```r
+use_universe <- FALSE  ## DEFAULT: standard approach, more hits
+use_universe <- TRUE   ## OPTIONAL: statistically rigorous, fewer hits
+```
+- **FALSE (default)**: Standard approach used in many publications, more liberal
+- **TRUE**: Uses all DESeq2-tested genes as background, more conservative
 
 **Outputs** (added to SAME directory as Part 1):
 - `tables/ORA_*.csv` - Pathway enrichment tables
@@ -101,6 +109,7 @@ source("part2_ora.R")
 - ✅ **Correct msigdbr filtering**: Fixed KEGG subcategory issue
 - ✅ **Wald statistic ranking**: Uses proper DESeq2 test statistic (not p-value-based)
 - ✅ **Fallback for KEGG**: Uses org.Mm.eg.db if msigdbr fails
+- ✅ **List column handling**: Converts leadingEdge to CSV-compatible format
 
 **Outputs** (added to SAME directory as Part 1):
 - `tables/fgsea_*.csv` - fgsea results
@@ -201,6 +210,9 @@ Check that you're using the latest `part2_ora.R` with universe parameter.
 
 ### KEGG pathways not found
 Part 3 will automatically fall back to org.Mm.eg.db if msigdbr fails.
+
+### "unimplemented type 'list' in 'EncodeElement'" in Part 3
+This is now fixed in the latest version. The fgsea `leadingEdge` column is converted to semicolon-separated strings before saving to CSV.
 
 ## Color Scheme
 

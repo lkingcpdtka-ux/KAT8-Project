@@ -351,6 +351,19 @@ tryCatch({
           next
         }
 
+        ## Convert list columns to character (leadingEdge is a list)
+        for (col_name in colnames(sig_results)) {
+          if (is.list(sig_results[[col_name]])) {
+            sig_results[[col_name]] <- sapply(sig_results[[col_name]], function(x) {
+              if (is.null(x) || length(x) == 0) {
+                return(NA_character_)
+              } else {
+                return(paste(x, collapse = ";"))
+              }
+            })
+          }
+        }
+
         ## Save table
         table_file <- paste0("fgsea_", db_name, "_", contrast_name, "_", run_tag, ".csv")
         write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
