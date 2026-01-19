@@ -39,12 +39,14 @@ The split approach provides:
 **What it does NOT do**:
 - Pathway enrichment (ORA or fgsea)
 
-**Outputs**:
-- `savepoints/RUN_YYYYMMDD_HHMMSS/tables/DE_tissue_*.csv` - Differential expression results
-- `savepoints/RUN_YYYYMMDD_HHMMSS/plots/Volcano_*.png` - Volcano plots
-- `savepoints/RUN_YYYYMMDD_HHMMSS/plots/Heatmap_*.png` - Heatmaps
-- `savepoints/RUN_YYYYMMDD_HHMMSS/plots/PCA_*.png` - PCA plot
-- `savepoints/RUN_YYYYMMDD_HHMMSS/plots/MDS_*.png` - MDS plot
+**Outputs** (all in `savepoints/RUN_YYYYMMDD_HHMMSS/`):
+- `tables/DE_tissue_*.csv` - Differential expression results
+- `plots/Volcano_*.png` - Volcano plots (including overall contrast)
+- `plots/Heatmap_*.png` - Heatmaps (including overall contrast)
+- `plots/Heatmap_GOI_*.png` - Genes of interest heatmaps
+- `plots/EnhancedVolcano_GOI_*.png` - Genes of interest volcano plots
+- `plots/PCA_*.png` - PCA plot
+- `plots/MDS_*.png` - MDS plot
 
 **Runtime**: ~5-10 minutes
 
@@ -70,10 +72,10 @@ source("part1_main_analysis.R")
 - ✅ **Better error handling**: Won't crash if one contrast fails
 - ✅ **Improved logging**: Tracks gene mapping and pathway counts
 
-**Outputs**:
-- `results_ora/RUN_YYYYMMDD_HHMMSS/tables/ORA_*.csv` - Pathway enrichment tables
-- `results_ora/RUN_YYYYMMDD_HHMMSS/plots/ORA_barplot_*.png` - Pathway bar plots
-- `results_ora/RUN_YYYYMMDD_HHMMSS/tables/ORA_sanity_check_*.csv` - QC report
+**Outputs** (added to SAME directory as Part 1):
+- `tables/ORA_*.csv` - Pathway enrichment tables
+- `plots/ORA_barplot_*.png` - Pathway bar plots
+- `tables/ORA_sanity_check_*.csv` - QC report
 
 **Runtime**: ~2-5 minutes
 
@@ -100,11 +102,11 @@ source("part2_ora.R")
 - ✅ **Wald statistic ranking**: Uses proper DESeq2 test statistic (not p-value-based)
 - ✅ **Fallback for KEGG**: Uses org.Mm.eg.db if msigdbr fails
 
-**Outputs**:
-- `results_fgsea/RUN_YYYYMMDD_HHMMSS/tables/fgsea_*.csv` - fgsea results
-- `results_fgsea/RUN_YYYYMMDD_HHMMSS/plots/fgsea_plot_*_Up_*.png` - Up-regulated pathways
-- `results_fgsea/RUN_YYYYMMDD_HHMMSS/plots/fgsea_plot_*_Down_*.png` - Down-regulated pathways
-- `results_fgsea/RUN_YYYYMMDD_HHMMSS/tables/fgsea_sanity_check_*.csv` - QC report
+**Outputs** (added to SAME directory as Part 1):
+- `tables/fgsea_*.csv` - fgsea results
+- `plots/fgsea_plot_*_Up_*.png` - Up-regulated pathways
+- `plots/fgsea_plot_*_Down_*.png` - Down-regulated pathways
+- `tables/fgsea_sanity_check_*.csv` - QC report
 
 **Runtime**: ~5-10 minutes
 
@@ -165,6 +167,24 @@ The analysis focuses on:
 - **Adipocyte markers**: Lep, Ppargc1a, Sorbs1, Srebf1, Ppara, Pparg, etc.
 - **Matrix remodeling**: Fn1, Mmp3, Timp4, Mmp12, Mmp14, Mmp16
 
+## Frequently Asked Questions
+
+### Why do we need to re-run DESeq2 for the overall contrast?
+
+**Short answer**: Different design matrices require separate DESeq2 objects.
+
+**Detailed explanation**:
+- **Per-stratum contrasts** use design `~ 0 + GroupFull` where GroupFull has 8 levels (iWAT_F_CTL, iWAT_F_KAT8KD, iWAT_M_CTL, etc.). This allows us to make specific comparisons within each depot/sex combination.
+- **Overall contrast** uses design `~ Depot + Sex + Genotype` to test for the main effect of genotype while controlling for depot and sex as covariates.
+
+These are fundamentally different statistical models, so we need to create a new DESeq2 object with the appropriate design for each analysis. This is standard practice in DESeq2.
+
+### Why does the overall contrast have a heatmap but not genes-of-interest plots?
+
+The overall contrast shows ALL samples across depots and sexes, so:
+- ✅ **Heatmap works**: Shows top DEGs with depot/sex/genotype annotations
+- ❌ **GOI plots would be misleading**: Genes of interest are specific to certain depot/sex combinations, so an "overall" view wouldn't be biologically meaningful
+
 ## Troubleshooting
 
 ### "No Part 1 run directories found"
@@ -172,6 +192,9 @@ Run `part1_main_analysis.R` first. Parts 2 and 3 depend on its outputs.
 
 ### "Cannot find stat column"
 Your Part 1 DE tables may be from an older version. Re-run Part 1.
+
+### "could not find function save_run_file"
+This is now fixed in the latest version. The function is wrapped in error handling.
 
 ### ORA enrichGO error persists
 Check that you're using the latest `part2_ora.R` with universe parameter.
@@ -188,26 +211,30 @@ All visualizations use a consistent color scheme:
 
 ## Output Organization
 
+**All three parts now use the SAME run directory!** This keeps all results from one analysis session together.
+
 ```
 KAT8-Project/
 ├── part1_main_analysis.R
 ├── part2_ora.R
 ├── part3_fgsea.R
-├── savepoints/
-│   └── RUN_YYYYMMDD_HHMMSS/     # Part 1 outputs
-│       ├── tables/
-│       ├── plots/
-│       └── logs/
-├── results_ora/
-│   └── RUN_YYYYMMDD_HHMMSS/     # Part 2 outputs
-│       ├── tables/
-│       ├── plots/
-│       └── logs/
-└── results_fgsea/
-    └── RUN_YYYYMMDD_HHMMSS/     # Part 3 outputs
+└── savepoints/
+    └── RUN_YYYYMMDD_HHMMSS/     # Single directory for all outputs
         ├── tables/
+        │   ├── DE_tissue_*.csv           # Part 1: DE results
+        │   ├── DEG_summary_*.csv         # Part 1: Summary
+        │   ├── ORA_*.csv                 # Part 2: ORA results
+        │   ├── ORA_sanity_check_*.csv    # Part 2: QC
+        │   ├── fgsea_*.csv               # Part 3: fgsea results
+        │   └── fgsea_sanity_check_*.csv  # Part 3: QC
         ├── plots/
+        │   ├── Volcano_*.png             # Part 1: Volcano plots
+        │   ├── Heatmap_*.png             # Part 1: Heatmaps
+        │   ├── ORA_barplot_*.png         # Part 2: ORA bar plots
+        │   └── fgsea_plot_*.png          # Part 3: fgsea plots
         └── logs/
+            ├── outliers_*.txt            # Part 1: Outlier rationale
+            └── params_*.txt              # Part 1: Parameters
 ```
 
 ## Version History

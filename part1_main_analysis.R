@@ -1005,6 +1005,86 @@ tryCatch({
   ggsave(file.path(outdir, "plots", volcano_overall_file), plot = vol_overall, width = 8, height = 6, dpi = 300)
   cat("Volcano saved: ", file.path(outdir, "plots", volcano_overall_file), "\n", sep = "")
 
+  ## Heatmap for overall contrast
+  cat("\n--- Heatmap: OVERALL contrast ---\n")
+  de_sig_overall <- tt_overall %>%
+    dplyr::filter(adj.P.Val < fdr_cut_tissue, abs(logFC) > logFC_cut_tissue)
+
+  if (nrow(de_sig_overall) >= 2) {
+    de_sig_overall <- de_sig_overall[order(de_sig_overall$adj.P.Val), , drop = FALSE]
+    if (nrow(de_sig_overall) > params$heatmap_max_genes) {
+      de_sig_overall <- de_sig_overall[1:params$heatmap_max_genes, , drop = FALSE]
+    }
+    gene_set_overall <- de_sig_overall$gene_name
+
+    ## Get VST matrix for overall (using blind=FALSE VST from the overall dds object)
+    vst_overall_hm <- vst(dds_overall, blind = FALSE)
+    vst_mat_overall_hm <- assay(vst_overall_hm)
+
+    mat_overall <- vst_mat_overall_hm[gene_set_overall, , drop = FALSE]
+
+    ## Scale rows (z-score)
+    mat_overall_scaled <- t(scale(t(mat_overall)))
+    mat_overall_scaled <- mat_overall_scaled[!rowSums(is.na(mat_overall_scaled)), , drop = FALSE]
+
+    if (nrow(mat_overall_scaled) >= 2) {
+      ## Color function
+      max_val_overall <- max(abs(mat_overall_scaled), na.rm = TRUE)
+      overall_col_fun <- colorRamp2(
+        c(-max_val_overall, 0, max_val_overall),
+        c("#0072B2", "white", "#E69F00")
+      )
+
+      ## Column annotation (Depot, Sex, Genotype)
+      heat_meta_overall <- as.data.frame(colData(dds_overall))
+      overall_ha <- HeatmapAnnotation(
+        Depot = heat_meta_overall$Depot,
+        Sex = heat_meta_overall$Sex,
+        Genotype = heat_meta_overall$Genotype,
+        col = list(
+          Depot = c(iWAT = "#1B9E77", gWAT = "#D95F02"),
+          Sex = c(F = "#E7298A", M = "#7570B3"),
+          Genotype = c(CTL = "#1B9E77", KAT8KD = "#D95F02")
+        ),
+        annotation_name_side = "left"
+      )
+
+      ## Create heatmap
+      heat_overall <- Heatmap(
+        mat_overall_scaled,
+        col = overall_col_fun,
+        cluster_rows = TRUE,
+        cluster_columns = TRUE,
+        show_column_names = FALSE,
+        show_row_names = (nrow(mat_overall_scaled) <= 50),
+        column_split = heat_meta_overall$Genotype,
+        border = TRUE,
+        column_gap = unit(2, "mm"),
+        row_gap = unit(0, "mm"),
+        top_annotation = overall_ha,
+        column_title = paste0("Top DEGs: OVERALL KD vs CTL (FDR<0.05, |logFC|>", logFC_cut_tissue, ")"),
+        heatmap_legend_param = list(
+          title = "Z-score",
+          title_position = "leftcenter-rot",
+          title_gp = gpar(fontsize = 10)
+        ),
+        row_names_gp = gpar(fontsize = 5),
+        column_names_gp = gpar(fontsize = 6)
+      )
+
+      ## Save
+      heat_overall_file <- paste0("Heatmap_tissue_OVERALL_KD_vs_CTL_", run_tag, ".png")
+      png(file.path(outdir, "plots", heat_overall_file), width = 2400, height = 3000, res = 200)
+      draw(heat_overall)
+      dev.off()
+      cat("Heatmap saved: ", file.path(outdir, "plots", heat_overall_file), "\n", sep = "")
+    } else {
+      cat("Not enough valid genes for overall heatmap after scaling.\n")
+    }
+  } else {
+    cat("Not enough DE genes for overall heatmap.\n")
+  }
+
   ## 4.16) DEG summary table --------------------------------
   deg_summary_file <- paste0("DEG_summary_tissue_", run_tag, ".csv")
   write.csv(deg_summary, file = file.path(outdir, "tables", deg_summary_file), row.names = FALSE)
@@ -1013,10 +1093,18 @@ tryCatch({
   ## 4.17) save_core bookkeeping ----------------------------
   if (!is.null(hero_volcano_file)) {
     hero_path <- file.path(outdir, "plots", hero_volcano_file)
-    if (file.exists(hero_path)) save_run_file(hero_path, tag = "hero_volcano")
+    if (file.exists(hero_path) && exists("save_run_file")) {
+      tryCatch({
+        save_run_file(hero_path, tag = "hero_volcano")
+      }, error = function(e) {
+        cat("[WARN] save_run_file failed: ", conditionMessage(e), "\n", sep = "")
+      })
+    }
   }
 
-  try(dedupe(outdir), silent = TRUE)
+  if (exists("dedupe")) {
+    try(dedupe(outdir), silent = TRUE)
+  }
   cat("\n======================================\n")
   cat("=== PART 1 COMPLETE ===\n")
   cat("======================================\n")
