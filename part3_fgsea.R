@@ -55,39 +55,41 @@ if (file.exists(file.path(utils_dir, "save.R"))) {
   use_save_core <- FALSE
 }
 
-## 2.5) Run metadata ----------------------------------------
-run_info <- list(
-  script_name = "part3_fgsea.R",
-  species     = "mouse",
-  data_type   = "bulkRNAseq_WAT_tissue_pathway_fgsea",
-  keywords    = c("KAT8", "WAT", "pathway", "fgsea", "GSEA", "GO", "KEGG"),
-  notes       = "Part 3: fgsea pathway analysis with Wald statistic ranking",
-  message     = "fgsea pathway enrichment (GO:BP + KEGG)"
-)
+## 2.5) Find most recent Part 1 run and use same directory ----
+cat("\n=== FINDING PART 1 RESULTS ===\n")
 
-## 3) Setup output directory --------------------------------
-if (use_save_core) {
-  run_ctx <- init_run(
-    script_name = run_info$script_name,
-    species     = run_info$species,
-    data_type   = run_info$data_type,
-    keywords    = run_info$keywords,
-    notes       = run_info$notes
-  )
-  outdir  <- run_ctx$outdir
-  run_tag <- run_ctx$run_tag
-} else {
-  timestamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
-  outdir <- file.path(getwd(), "results_fgsea", paste0("RUN_", timestamp))
-  dir.create(file.path(outdir, "tables"), recursive = TRUE, showWarnings = FALSE)
-  dir.create(file.path(outdir, "plots"), recursive = TRUE, showWarnings = FALSE)
-  dir.create(file.path(outdir, "logs"), recursive = TRUE, showWarnings = FALSE)
-  run_tag <- timestamp
+## Look for run directories in savepoints
+savepoint_dir <- file.path(getwd(), "savepoints")
+if (!dir.exists(savepoint_dir)) {
+  stop("savepoints directory not found. Please run part1_main_analysis.R first.")
 }
 
-cat("Output directory:", normalizePath(outdir, mustWork = FALSE), "\n")
+## Find most recent run directory
+run_dirs <- list.dirs(savepoint_dir, recursive = FALSE, full.names = TRUE)
+run_dirs <- run_dirs[grepl("^RUN_", basename(run_dirs))]
+if (length(run_dirs) == 0) {
+  stop("No Part 1 run directories found in savepoints/")
+}
 
-## 4) Parameters --------------------------------------------
+## Sort by modification time and get most recent
+run_dirs_sorted <- run_dirs[order(file.info(run_dirs)$mtime, decreasing = TRUE)]
+outdir <- run_dirs_sorted[1]
+
+## Extract run tag from directory name
+run_tag <- gsub("^RUN_", "", basename(outdir))
+
+cat("[INFO] Using Part 1 results from: ", outdir, "\n", sep = "")
+cat("[INFO] Run tag: ", run_tag, "\n", sep = "")
+
+## Verify directory structure exists
+if (!dir.exists(file.path(outdir, "tables"))) {
+  stop("tables directory not found in Part 1 run: ", outdir)
+}
+if (!dir.exists(file.path(outdir, "plots"))) {
+  stop("plots directory not found in Part 1 run: ", outdir)
+}
+
+## 3) Parameters --------------------------------------------
 fdr_cut   <- 0.05
 
 ## Sanity check tracker
@@ -100,34 +102,16 @@ fgsea_sanity_tracker <- data.frame(
   stringsAsFactors = FALSE
 )
 
-## 5) Main logic --------------------------------------------
+## 4) Main logic --------------------------------------------
 tryCatch({
 
-  ## 5.1) Find most recent Part 1 run -----------------------
-  cat("\n=== LOADING PART 1 RESULTS ===\n")
-
-  ## Look for DE files in savepoints directory
-  savepoint_dir <- file.path(getwd(), "savepoints")
-  if (!dir.exists(savepoint_dir)) {
-    stop("savepoints directory not found. Please run part1_main_analysis.R first.")
-  }
-
-  ## Find most recent run directory
-  run_dirs <- list.dirs(savepoint_dir, recursive = FALSE, full.names = TRUE)
-  run_dirs <- run_dirs[grepl("^RUN_", basename(run_dirs))]
-  if (length(run_dirs) == 0) {
-    stop("No Part 1 run directories found in savepoints/")
-  }
-
-  ## Sort by modification time and get most recent
-  run_dirs_sorted <- run_dirs[order(file.info(run_dirs)$mtime, decreasing = TRUE)]
-  part1_run_dir <- run_dirs_sorted[1]
-  cat("[INFO] Using Part 1 results from: ", part1_run_dir, "\n")
+  ## 4.1) Load DE tables from Part 1 ------------------------
+  cat("\n=== LOADING DE TABLES FROM PART 1 ===\n")
 
   ## Find all DE tables
-  tables_dir <- file.path(part1_run_dir, "tables")
+  tables_dir <- file.path(outdir, "tables")
   if (!dir.exists(tables_dir)) {
-    stop("tables directory not found in Part 1 run: ", part1_run_dir)
+    stop("tables directory not found in Part 1 run: ", outdir)
   }
 
   de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
@@ -137,7 +121,7 @@ tryCatch({
 
   cat("[INFO] Found ", length(de_files), " DE tables\n")
 
-  ## 5.2) Build gene sets ------------------------------------
+  ## 4.2) Build gene sets ------------------------------------
   cat("\n=== BUILDING GENE SETS FOR fgsea ===\n")
 
   ## GO:BP gene sets
@@ -216,7 +200,7 @@ tryCatch({
     })
   })
 
-  ## 5.3) fgsea analysis function ----------------------------
+  ## 4.3) fgsea analysis function ----------------------------
   run_fgsea_analysis <- function(ranked_genes, contrast_name,
                                  go_bp_list, kegg_list,
                                  run_tag, outdir, fdr_cutoff = 0.05) {
@@ -464,7 +448,7 @@ tryCatch({
     return(results)
   }
 
-  ## 5.4) Process each DE table ------------------------------
+  ## 4.4) Process each DE table ------------------------------
   cat("\n=== RUNNING fgsea FOR ALL CONTRASTS ===\n")
 
   for (de_file in de_files) {
@@ -510,7 +494,7 @@ tryCatch({
     }
   }
 
-  ## 5.5) Save sanity check table ----------------------------
+  ## 4.5) Save sanity check table ----------------------------
   sanity_file <- paste0("fgsea_sanity_check_", run_tag, ".csv")
   write.csv(fgsea_sanity_tracker, file = file.path(outdir, "tables", sanity_file), row.names = FALSE)
   cat("\n[OK] Saved fgsea sanity check table: ", sanity_file, "\n", sep = "")
