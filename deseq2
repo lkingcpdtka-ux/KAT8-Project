@@ -420,7 +420,7 @@ tryCatch({
     design    = ~ 0 + GroupFull
   )
   dds_all_genes <- estimateSizeFactors(dds_all_genes)
-  dds_all_genes <- estimateDispersions(dds_all_genes)
+  dds_all_genes <- estimateDispersions(dds_all_genes, fitType = "local")
   vst_all_genes <- vst(dds_all_genes, blind = TRUE)
   vst_mat_before <- assay(vst_all_genes)
   
@@ -988,14 +988,30 @@ tryCatch({
     tryCatch({
       cat("[INFO] Running fgsea for KEGG...\n")
       
-      ## FIXED: Use msigdbr or org.Mm.eg.db PATH mapping
+      ## FIXED: Use msigdbr (mouse-native) or org.Mm.eg.db PATH mapping
       if (requireNamespace("msigdbr", quietly = TRUE)) {
         cat("[INFO] Using msigdbr for KEGG pathways\n")
-        kegg_msigdb <- msigdbr::msigdbr(species = "Mus musculus", category = "C2", subcategory = "CP:KEGG")
-        kegg_list <- split(kegg_msigdb$gene_symbol, kegg_msigdb$gs_name)
+        kegg_msigdb <- suppressMessages(msigdbr::msigdbr(species = "Mus musculus", category = "C2"))
+        kegg_msigdb <- kegg_msigdb %>% dplyr::filter(gs_subcat == "CP:KEGG")
+        if (nrow(kegg_msigdb) == 0) {
+          cat("[WARN] msigdbr KEGG gene sets not available; falling back to org.Mm.eg.db\n")
+        } else {
+          kegg_list <- split(kegg_msigdb$gene_symbol, kegg_msigdb$gs_name)
+        }
       } else {
         ## Fallback: build from org.Mm.eg.db
         cat("[INFO] Building KEGG pathways from org.Mm.eg.db\n")
+        kegg_genes <- AnnotationDbi::select(
+          org.Mm.eg.db,
+          keys = keys(org.Mm.eg.db, keytype = "PATH"),
+          columns = c("SYMBOL", "PATH"),
+          keytype = "PATH"
+        )
+        kegg_genes <- kegg_genes %>% dplyr::filter(!is.na(SYMBOL), !is.na(PATH))
+        kegg_list <- split(kegg_genes$SYMBOL, paste0("mmu", kegg_genes$PATH))
+      }
+      
+      if (!exists("kegg_list")) {
         kegg_genes <- AnnotationDbi::select(
           org.Mm.eg.db,
           keys = keys(org.Mm.eg.db, keytype = "PATH"),
@@ -1879,8 +1895,16 @@ tryCatch({
   cat(conditionMessage(e), "\n\n")
   
   err_file <- paste0("ERROR_", run_tag, ".txt")
-  writeLines(c("Script error:", conditionMessage(e), "", traceback()), 
-             con = file.path(outdir, "logs", err_file))
+  writeLines(
+    c(
+      "Script error:",
+      conditionMessage(e),
+      "",
+      "Traceback:",
+      capture.output(traceback())
+    ),
+    con = file.path(outdir, "logs", err_file)
+  )
   
   stop(e)
 })
