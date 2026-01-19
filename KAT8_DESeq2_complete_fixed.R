@@ -1,0 +1,1891 @@
+#!/usr/bin/env Rscript
+
+## =========================================================
+## KAT8 bulk RNA-seq (DESeq2-only / typical workflow)
+## COMPLETE VERSION WITH ALL FIXES APPLIED
+## Tissue: iWAT & gWAT, F/M; CTL vs KAT8KD
+##
+## Outputs:
+## - QC: density (before/after VST), PCA (VST), MDS (VST)
+## - Differential expression: DESeq2 (Wald)
+## - Volcano plots (orange/teal), per-contrast heatmaps
+## - DEG counts summary
+## - Pathway over-representation (Up/Down): GO:BP + KEGG only
+## - fgsea (Gene Set Enrichment Analysis): GO:BP + KEGG
+## - ComplexHeatmap for genes of interest
+## - EnhancedVolcano for genes of interest
+## - Overall CTL vs KD contrast (across all depots/sexes)
+## - save_core run folder management + logs
+##
+## FIXES APPLIED:
+## 1. Density plot: before/after filtering with matched colors
+## 2. Pathway bar plots: ordered by gene ratio, direction-specific colors
+## 3. EnhancedVolcano: only colors significant genes by direction
+## 4. fgsea: fixed GO:BP and KEGG errors
+## 5. Consistent colors across all plots
+## =========================================================
+
+## 0) Working dir (optional) --------------------------------
+## setwd("C:/Users/lking/OneDrive - Louisiana State University/PBRC/Bioinformatics/KAT8KD_RNAseq")
+
+## 1) Packages ----------------------------------------------
+required_pkgs <- c(
+  "dplyr",
+  "ggplot2",
+  "RColorBrewer",
+  "ggrepel",
+  "viridis",
+  "pheatmap",
+  "grid",
+  "scales"
+)
+
+to_install <- setdiff(required_pkgs, rownames(installed.packages()))
+if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
+
+required_bioc_pkgs <- c(
+  "DESeq2",
+  "clusterProfiler",
+  "org.Mm.eg.db",
+  "enrichplot",
+  "DOSE",
+  "AnnotationDbi",
+  "ComplexHeatmap",
+  "EnhancedVolcano",
+  "fgsea",
+  "GO.db"
+)
+
+## circlize is on CRAN
+if (!requireNamespace("circlize", quietly = TRUE)) install.packages("circlize")
+
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+to_install_bioc <- setdiff(required_bioc_pkgs, rownames(installed.packages()))
+if (length(to_install_bioc) > 0) BiocManager::install(to_install_bioc, ask = FALSE, update = FALSE)
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(ggplot2)
+  library(RColorBrewer)
+  library(ggrepel)
+  library(viridis)
+  library(pheatmap)
+  library(grid)   ## for unit()
+  library(scales)
+  library(DESeq2)
+  library(clusterProfiler)
+  library(org.Mm.eg.db)
+  library(enrichplot)
+  library(DOSE)
+  library(AnnotationDbi)
+  library(ComplexHeatmap)
+  library(circlize)
+  library(EnhancedVolcano)
+  library(fgsea)
+  library(GO.db)
+})
+
+## 2) save_core utilities -----------------------------------
+utils_dir <- file.path(getwd(), "save_core")
+source(file.path(utils_dir, "save.R"))
+source(file.path(utils_dir, "findsave.R"))
+source(file.path(utils_dir, "purge.R"))
+source(file.path(utils_dir, "dedupe.R"))
+
+## 2.5) Run metadata ----------------------------------------
+run_info <- list(
+  script_name = "KAT8_DESeq2_complete_fixed.R",
+  species     = "mouse",
+  data_type   = "bulkRNAseq_WAT_tissue",
+  keywords    = c("KAT8", "WAT", "iWAT", "gWAT", "bulk RNA-seq", "tissue", "DESeq2", "fgsea"),
+  notes       = "DESeq2 pipeline with all fixes: VST QC + per-depot/sex contrasts + overall + GO:BP/KEGG (ORA + fgsea) + genes of interest",
+  message     = "Tissue KAT8KD vs CTL: DESeq2 + VST QC + DEGs + pathways + fgsea + ComplexHeatmap + EnhancedVolcano"
+)
+
+## 3) init_run ----------------------------------------------
+run_ctx <- init_run(
+  script_name = run_info$script_name,
+  species     = run_info$species,
+  data_type   = run_info$data_type,
+  keywords    = run_info$keywords,
+  notes       = run_info$notes
+)
+
+outdir  <- run_ctx$outdir
+run_tag <- run_ctx$run_tag
+cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
+
+## Pathway focus controls (optional)
+pathway_focus_depot_sex <- "iWAT_F"
+run_pathway_subset_only <- FALSE  ## Run pathway analysis for ALL contrasts
+
+## -----------------------------
+## Genes of interest for focused heatmap/volcano
+## -----------------------------
+genes_of_interest <- c(
+  ## Collagens / ECM
+  "Col4a1", "Col4a2", "Col15a1", "Col5a3", "Col6a6", "Col13a1",
+  "Col4a5", "Col14a1", "Col27a1", "Col16a1", "Col6a5",
+  ## Adipocyte markers & metabolism
+  "Lep", "Ppargc1a", "Sorbs1", "Srebf1", "Ppara", "Pparg",
+  "Fabp4", "Cd36", "Plin1", "Fabp5", "Angptl4", "Cav1",
+  ## Matrix remodeling
+  "Fn1", "Mmp3", "Timp4", "Mmp12", "Mmp14", "Mmp16"
+)
+cat("[INFO] Genes of interest for focused plots: ", length(genes_of_interest), "\n")
+
+## -----------------------------
+## Sanity check: org.Mm.eg.db
+## -----------------------------
+cat("\n--- SANITY CHECK: ORGANISM DATABASE ---\n")
+org_species <- AnnotationDbi::species(org.Mm.eg.db)
+if (!identical(org_species, "Mus musculus")) stop("ERROR: org.Mm.eg.db species mismatch: ", org_species)
+cat("[PASS] org.Mm.eg.db species:", org_species, "\n")
+
+## 4) Main logic --------------------------------------------
+hero_volcano_file <- NULL
+
+## Container for pathway sanity checks (populated during analysis)
+pathway_sanity_tracker <- data.frame(
+  Contrast = character(),
+  Direction = character(),
+  Database = character(),
+  N_Input_Genes = integer(),
+  N_Mapped_Entrez = integer(),
+  N_Sig_Pathways = integer(),
+  stringsAsFactors = FALSE
+)
+
+## Container for fgsea sanity checks
+fgsea_sanity_tracker <- data.frame(
+  Contrast = character(),
+  Database = character(),
+  N_Input_Genes = integer(),
+  N_Pathways_Tested = integer(),
+  N_Sig_Pathways = integer(),
+  stringsAsFactors = FALSE
+)
+
+tryCatch({
+
+  ## 4.1) Load raw counts -----------------------------------
+  cat("\n=== RAW COUNTS MATRIX (FULL) ===\n")
+
+  counts_raw <- read.delim(
+    "counts.txt",
+    header           = TRUE,
+    stringsAsFactors = FALSE,
+    check.names      = FALSE
+  )
+
+  cat("Dimensions (rows x cols):", paste(dim(counts_raw), collapse = " x "), "\n")
+  cat("First 10 column names:\n")
+  print(head(colnames(counts_raw), 10))
+  cat("\nHead of counts (first 5 rows, first 6 cols):\n")
+  print(head(counts_raw[, 1:min(6, ncol(counts_raw))]))
+
+  ## 4.2) Define tissue samples + annotation ----------------
+  sample_ids <- paste0("JS_", sprintf("%02d", 1:40))
+
+  sample_annot_full <- data.frame(
+    Sample   = sample_ids,
+    Depot    = c(rep("iWAT", 10), rep("iWAT", 10), rep("gWAT", 10), rep("gWAT", 10)),
+    Sex      = c(
+      rep("F", 5),  rep("F", 5),
+      rep("M", 5),  rep("M", 5),
+      rep("F", 5),  rep("F", 5),
+      rep("M", 5),  rep("M", 5)
+    ),
+    Genotype = c(
+      rep("CTL", 5),    rep("KAT8KD", 5),
+      rep("CTL", 5),    rep("KAT8KD", 5),
+      rep("CTL", 5),    rep("KAT8KD", 5),
+      rep("CTL", 5),    rep("KAT8KD", 5)
+    ),
+    stringsAsFactors = FALSE
+  )
+
+  ## Outliers (removed before analysis)
+  outlier_samples <- c("JS_08", "JS_28")
+
+  ## 4.2.1) QC evidence log BEFORE outlier removal ----------
+  cat("\n=== QC BEFORE OUTLIER REMOVAL (log only) ===\n")
+
+  all_tissue_samples <- sample_annot_full$Sample
+  missing_all <- setdiff(all_tissue_samples, colnames(counts_raw))
+  if (length(missing_all) > 0) stop("Missing columns for QC: ", paste(missing_all, collapse = ", "))
+
+  counts_all_tissue <- as.matrix(counts_raw[, all_tissue_samples])
+  rownames(counts_all_tissue) <- counts_raw$gene_id
+
+  ## Library sizes from raw counts (simple + transparent)
+  lib_sizes <- colSums(counts_all_tissue, na.rm = TRUE)
+  lib_summary <- summary(lib_sizes)
+  outlier_lib_sizes <- lib_sizes[names(lib_sizes) %in% outlier_samples]
+
+  outlier_log_file <- file.path(outdir, "logs", paste0("outliers_", run_tag, ".txt"))
+  outlier_log_lines <- c(
+    "=== Outlier Removal Rationale ===",
+    paste0("Run tag: ", run_tag),
+    paste0("Generated: ", Sys.time()),
+    "",
+    "--- Outlier Sample IDs ---",
+    paste0("  ", paste(outlier_samples, collapse = ", ")),
+    "",
+    "--- Library Sizes (All Samples; colSums raw counts) ---",
+    paste0("  Min:     ", format(lib_summary["Min."], big.mark = ",")),
+    paste0("  1st Qu:  ", format(lib_summary["1st Qu."], big.mark = ",")),
+    paste0("  Median:  ", format(lib_summary["Median"], big.mark = ",")),
+    paste0("  Mean:    ", format(lib_summary["Mean"], big.mark = ",")),
+    paste0("  3rd Qu:  ", format(lib_summary["3rd Qu."], big.mark = ",")),
+    paste0("  Max:     ", format(lib_summary["Max."], big.mark = ",")),
+    "",
+    "--- Outlier Library Sizes ---",
+    if (length(outlier_lib_sizes) == 0) "  (none matched?)" else paste0("  ", names(outlier_lib_sizes), ": ", format(outlier_lib_sizes, big.mark = ",")),
+    "",
+    "--- Rationale ---",
+    "  Flagged based on prior QC review and consistency across samples."
+  )
+  writeLines(outlier_log_lines, con = outlier_log_file)
+  cat("Saved outlier rationale log to ", outlier_log_file, "\n")
+  cat("=== END QC BEFORE OUTLIER REMOVAL ===\n\n")
+
+  ## Continue with outlier removal
+  sample_annot <- sample_annot_full %>% dplyr::filter(!(Sample %in% outlier_samples))
+  tissue_samples <- sample_annot$Sample
+
+  missing_tissue <- setdiff(tissue_samples, colnames(counts_raw))
+  if (length(missing_tissue) > 0) {
+    stop("These tissue sample columns are missing in counts.txt: ", paste(missing_tissue, collapse = ", "))
+  }
+
+  counts_tissue_raw <- counts_raw[, c("gene_id", "gene", tissue_samples)]
+
+  cat("\n=== TISSUE SUBSET (outliers removed) ===\n")
+  cat("Dimensions (rows x cols):", paste(dim(counts_tissue_raw), collapse = " x "), "\n")
+
+  ## 4.3) Gene cleaning -------------------------------------
+  counts_tissue <- counts_tissue_raw %>%
+    mutate(
+      ensembl_gene_id = gene_id,
+      gene_name       = gene
+    )
+
+  na_or_blank <- is.na(counts_tissue$gene_name) | counts_tissue$gene_name == ""
+  counts_tissue$gene_name[na_or_blank] <- counts_tissue$ensembl_gene_id[na_or_blank]
+
+  ## Handle duplicates robustly
+  if (any(duplicated(counts_tissue$gene_name))) {
+    dup_flag <- duplicated(counts_tissue$gene_name) | duplicated(counts_tissue$gene_name, fromLast = TRUE)
+    counts_tissue$gene_name[dup_flag] <- paste0(counts_tissue$ensembl_gene_id[dup_flag], "_", counts_tissue$gene_name[dup_flag])
+  }
+  ## As a final safety net:
+  counts_tissue$gene_name <- make.unique(counts_tissue$gene_name)
+
+  rownames(counts_tissue) <- counts_tissue$gene_name
+
+  ## 4.4) Build count matrix --------------------------------
+  count_matrix_tissue <- as.matrix(counts_tissue[, tissue_samples])
+  rownames(count_matrix_tissue) <- counts_tissue$gene_name
+
+  ## 4.5) Attach sample annotation --------------------------
+  sample_annot <- sample_annot[match(colnames(count_matrix_tissue), sample_annot$Sample), ]
+  if (any(is.na(sample_annot$Sample))) stop("Sample annotation failed to match count matrix columns.")
+
+  sample_annot$Genotype <- factor(sample_annot$Genotype, levels = c("CTL", "KAT8KD"))
+  sample_annot$DepotSex <- factor(paste(sample_annot$Depot, sample_annot$Sex, sep = "_"),
+                                  levels = c("iWAT_F", "iWAT_M", "gWAT_F", "gWAT_M"))
+  sample_annot$GroupFull <- factor(
+    paste(sample_annot$Depot, sample_annot$Sex, sample_annot$Genotype, sep = "_"),
+    levels = c(
+      "iWAT_F_CTL",   "iWAT_F_KAT8KD",
+      "iWAT_M_CTL",   "iWAT_M_KAT8KD",
+      "gWAT_F_CTL",   "gWAT_F_KAT8KD",
+      "gWAT_M_CTL",   "gWAT_M_KAT8KD"
+    )
+  )
+  rownames(sample_annot) <- sample_annot$Sample
+
+  cat("\n=== BASIC QC (TISSUE) ===\n")
+  cat("Number of genes:   ", nrow(count_matrix_tissue), "\n")
+  cat("Number of samples: ", ncol(count_matrix_tissue), "\n")
+  cat("Library sizes (colSums raw counts):\n")
+  print(colSums(count_matrix_tissue))
+
+  ## 4.6) DESeq2 object + typical prefilter ------------------
+  ## Typical DESeq2 prefilter is count-based (not CPM-based).
+  ## This reduces memory + improves stability without mixing frameworks.
+  min_count <- 10
+  min_samples <- ceiling(ncol(count_matrix_tissue) * 0.5)  ## at least 50% of samples
+
+  keep <- rowSums(count_matrix_tissue >= min_count) >= min_samples
+  cat("\nPrefilter rule: keep genes with counts >= ", min_count,
+      " in at least ", min_samples, " samples.\n", sep = "")
+  cat("Genes before filter: ", nrow(count_matrix_tissue), "\n", sep = "")
+  cat("Genes after  filter: ", sum(keep), "\n", sep = "")
+
+  count_matrix_filt <- count_matrix_tissue[keep, , drop = FALSE]
+
+  dds_tissue <- DESeqDataSetFromMatrix(
+    countData = round(count_matrix_filt),
+    colData   = sample_annot,
+    design    = ~ 0 + GroupFull
+  )
+
+  ## Save centralized parameters
+  logFC_cut_tissue <- 1
+  fdr_cut_tissue   <- 0.05
+
+  params <- list(
+    outlier_samples   = outlier_samples,
+    prefilter_rule    = list(
+      min_count       = min_count,
+      min_samples     = min_samples,
+      description     = "Keep genes with counts >= min_count in at least min_samples"
+    ),
+    de_thresholds     = list(
+      logFC_cutoff    = logFC_cut_tissue,
+      fdr_cutoff      = fdr_cut_tissue
+    ),
+    vst              = list(
+      blind           = TRUE,
+      description     = "VST used for QC and heatmaps"
+    ),
+    volcano_labels   = list(
+      top_n_by_fdr    = 10,
+      top_n_by_fc     = 10
+    ),
+    heatmap_max_genes = 300
+  )
+
+  params_file <- file.path(outdir, "logs", paste0("params_", run_tag, ".txt"))
+  params_lines <- c(
+    "=== RNA-seq Pipeline Parameters (DESeq2-only) ===",
+    paste0("Run tag: ", run_tag),
+    paste0("Generated: ", Sys.time()),
+    "",
+    "--- Outlier Samples ---",
+    paste0("  IDs: ", paste(params$outlier_samples, collapse = ", ")),
+    "",
+    "--- Prefilter Rule (count-based) ---",
+    paste0("  min_count: ", params$prefilter_rule$min_count),
+    paste0("  min_samples: ", params$prefilter_rule$min_samples),
+    paste0("  Description: ", params$prefilter_rule$description),
+    "",
+    "--- DE Thresholds ---",
+    paste0("  |log2FC| cutoff: ", params$de_thresholds$logFC_cutoff),
+    paste0("  FDR cutoff: ", params$de_thresholds$fdr_cutoff),
+    "",
+    "--- VST ---",
+    paste0("  blind: ", params$vst$blind),
+    paste0("  Description: ", params$vst$description),
+    "",
+    "--- Volcano Plot Labels ---",
+    paste0("  Top N by FDR (per direction): ", params$volcano_labels$top_n_by_fdr),
+    paste0("  Top N by |logFC| (per direction): ", params$volcano_labels$top_n_by_fc),
+    "",
+    "--- Heatmap ---",
+    paste0("  Max genes displayed: ", params$heatmap_max_genes)
+  )
+  writeLines(params_lines, con = params_file)
+  cat("Saved params to ", params_file, "\n")
+
+  ## 4.7) Run DESeq2 ----------------------------------------
+  cat("\n=== RUNNING DESeq2 ===\n")
+  dds_tissue <- DESeq(dds_tissue)
+  cat("[OK] DESeq2 complete.\n")
+
+  cat("\nDESeq2 design matrix (first rows):\n")
+  print(head(model.matrix(design(dds_tissue), colData(dds_tissue))))
+
+  ## 4.8) VST transform for QC ------------------------------
+  cat("\n=== VST FOR QC ===\n")
+  vst_tissue <- vst(dds_tissue, blind = TRUE)
+  vst_mat <- assay(vst_tissue)  ## genes x samples (log2-ish stabilized)
+
+  ## 4.9) Density plots (VST before/after filtering) --------
+  ## FIXED: Side-by-side before/after filtering comparison with matched colors
+  cat("\n=== Creating before/after filtering density plots ===\n")
+
+  ## Get VST for all genes (before filtering) for comparison
+  dds_all_genes <- DESeqDataSetFromMatrix(
+    countData = round(count_matrix_tissue),
+    colData   = sample_annot,
+    design    = ~ 0 + GroupFull
+  )
+  dds_all_genes <- estimateSizeFactors(dds_all_genes)
+  dds_all_genes <- estimateDispersions(dds_all_genes)
+  vst_all_genes <- vst(dds_all_genes, blind = TRUE)
+  vst_mat_before <- assay(vst_all_genes)
+
+  plot_density_vst_comparison <- function(vst_before, vst_after) {
+    dens_before <- apply(vst_before, 2, density)
+    dens_after  <- apply(vst_after, 2, density)
+
+    xlim_before <- range(sapply(dens_before, function(d) range(d$x)))
+    xlim_after  <- range(sapply(dens_after, function(d) range(d$x)))
+    xlim_global <- range(c(xlim_before, xlim_after))
+
+    max_y_before <- max(sapply(dens_before, function(d) max(d$y)))
+    max_y_after  <- max(sapply(dens_after, function(d) max(d$y)))
+
+    par(mfrow = c(1, 2), mar = c(5, 5, 5, 2), oma = c(0, 0, 2, 0))
+
+    ## Define consistent colors for each sample across both plots
+    depot_sex <- colData(dds_tissue)$DepotSex
+    color_map <- c("iWAT_F" = "#1b9e77", "iWAT_M" = "#d95f02",
+                   "gWAT_F" = "#7570b3", "gWAT_M" = "#e7298a")
+    sample_colors <- color_map[as.character(depot_sex)]
+
+    ## BEFORE filter
+    plot(dens_before[[1]],
+         main = "Before Filtering",
+         sub  = paste0("n=", nrow(vst_before), " genes, ", ncol(vst_before), " samples"),
+         xlab = "VST value",
+         lwd  = 2,
+         col  = sample_colors[1],
+         xlim = xlim_global,
+         ylim = c(0, max_y_before * 1.15))
+    if (ncol(vst_before) > 1) {
+      for (i in 2:ncol(vst_before)) {
+        lines(dens_before[[i]], lwd = 2, col = sample_colors[i])
+      }
+    }
+
+    ## AFTER filter
+    plot(dens_after[[1]],
+         main = "After Filtering",
+         sub  = paste0("n=", nrow(vst_after), " genes, ", ncol(vst_after), " samples"),
+         xlab = "VST value",
+         lwd  = 2,
+         col  = sample_colors[1],
+         xlim = xlim_global,
+         ylim = c(0, max_y_after * 1.15))
+    if (ncol(vst_after) > 1) {
+      for (i in 2:ncol(vst_after)) {
+        lines(dens_after[[i]], lwd = 2, col = sample_colors[i])
+      }
+    }
+  }
+
+  density_file <- paste0("VST_density_tissue_before_after_", run_tag, ".png")
+  png(file.path(outdir, "plots", density_file), width = 1600, height = 900, res = 150)
+  plot_density_vst_comparison(vst_mat_before, vst_mat)
+  dev.off()
+  cat("Saved VST density plot (before/after filtering) to ", file.path(outdir, "plots", density_file), "\n")
+
+  ## 4.10) PCA (VST) ----------------------------------------
+  pca_tissue <- prcomp(t(vst_mat), scale. = TRUE)
+  pca_var <- summary(pca_tissue)$importance[2, 1:2] * 100
+
+  pca_df <- data.frame(
+    Sample   = colnames(vst_mat),
+    Genotype = colData(dds_tissue)$Genotype,
+    DepotSex = colData(dds_tissue)$DepotSex,
+    Depot    = colData(dds_tissue)$Depot,
+    Sex      = colData(dds_tissue)$Sex,
+    PC1      = pca_tissue$x[, 1],
+    PC2      = pca_tissue$x[, 2],
+    stringsAsFactors = FALSE
+  )
+
+  p_pca <- ggplot(
+    pca_df,
+    aes(x = PC1, y = PC2, color = DepotSex, shape = Genotype, label = Sample)
+  ) +
+    geom_point(size = 3) +
+    geom_text_repel(size = 3, max.overlaps = 60) +
+    scale_color_manual(
+      values = c(
+        "iWAT_F" = "#1b9e77",
+        "iWAT_M" = "#d95f02",
+        "gWAT_F" = "#7570b3",
+        "gWAT_M" = "#e7298a"
+      ),
+      name = "Depot/Sex"
+    ) +
+    scale_shape_manual(values = c("CTL" = 16, "KAT8KD" = 17), name = "Genotype") +
+    labs(
+      title = "Tissue PCA (VST, DESeq2)",
+      x = paste0("PC1 (", round(pca_var[1], 1), "%)"),
+      y = paste0("PC2 (", round(pca_var[2], 1), "%)")
+    ) +
+    theme_bw(base_size = 14) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+          legend.position = "right")
+
+  pca_file <- paste0("PCA_tissue_VST_", run_tag, ".png")
+  ggsave(file.path(outdir, "plots", pca_file), plot = p_pca, width = 8, height = 6, dpi = 300)
+  cat("Saved PCA plot to ", file.path(outdir, "plots", pca_file), "\n")
+
+  ## 4.11) MDS (VST) ----------------------------------------
+  dist_mat <- dist(t(vst_mat))
+  mds_coords <- cmdscale(dist_mat, k = 2)
+
+  mds_df <- data.frame(
+    Sample   = colnames(vst_mat),
+    Genotype = colData(dds_tissue)$Genotype,
+    DepotSex = colData(dds_tissue)$DepotSex,
+    Depot    = colData(dds_tissue)$Depot,
+    Sex      = colData(dds_tissue)$Sex,
+    MDS1     = mds_coords[, 1],
+    MDS2     = mds_coords[, 2],
+    stringsAsFactors = FALSE
+  )
+
+  p_mds <- ggplot(
+    mds_df,
+    aes(x = MDS1, y = MDS2, color = DepotSex, shape = Genotype, label = Sample)
+  ) +
+    geom_point(size = 3) +
+    geom_text_repel(size = 3, max.overlaps = 60) +
+    scale_color_manual(
+      values = c(
+        "iWAT_F" = "#1b9e77",
+        "iWAT_M" = "#d95f02",
+        "gWAT_F" = "#7570b3",
+        "gWAT_M" = "#e7298a"
+      ),
+      name = "Depot/Sex"
+    ) +
+    scale_shape_manual(values = c("CTL" = 16, "KAT8KD" = 17), name = "Genotype") +
+    labs(title = "Tissue MDS (VST, DESeq2)", x = "MDS1", y = "MDS2") +
+    theme_bw(base_size = 14) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+          legend.position = "right")
+
+  mds_file <- paste0("MDS_tissue_VST_", run_tag, ".png")
+  ggsave(file.path(outdir, "plots", mds_file), plot = p_mds, width = 8, height = 6, dpi = 300)
+  cat("Saved MDS plot to ", file.path(outdir, "plots", mds_file), "\n")
+
+  ## 4.12) Contrasts ----------------------------------------
+  contrast_definitions <- list(
+    iWAT_F_KD_vs_CTL = c("GroupFull", "iWAT_F_KAT8KD", "iWAT_F_CTL"),
+    iWAT_M_KD_vs_CTL = c("GroupFull", "iWAT_M_KAT8KD", "iWAT_M_CTL"),
+    gWAT_F_KD_vs_CTL = c("GroupFull", "gWAT_F_KAT8KD", "gWAT_F_CTL"),
+    gWAT_M_KD_vs_CTL = c("GroupFull", "gWAT_M_KAT8KD", "gWAT_M_CTL")
+  )
+  contrast_names <- names(contrast_definitions)
+
+  ## 4.13) Containers ---------------------------------------
+  deg_summary <- data.frame(
+    Contrast          = contrast_names,
+    N_DEG_FDR_lt_0_05 = NA_integer_,
+    N_Up              = NA_integer_,
+    N_Down            = NA_integer_,
+    stringsAsFactors  = FALSE
+  )
+
+  tt_list <- vector("list", length(contrast_names))
+  names(tt_list) <- contrast_names
+  pathway_results <- list()
+  fgsea_results <- list()
+
+  ## 4.14) Pathway analysis function (ORA) - GO:BP + KEGG ----
+  run_pathway_analysis <- function(gene_list, direction, contrast_name,
+                                   run_tag, outdir, fdr_cutoff = 0.05) {
+
+    cat("\n--- Pathway enrichment (ORA): ", direction, " genes (", contrast_name, ") ---\n", sep = "")
+    cat("[INFO] Input gene count: ", length(gene_list), " genes\n", sep = "")
+
+    if (length(gene_list) < 5) {
+      cat("[WARN] Too few genes (", length(gene_list), ") for pathway analysis\n", sep = "")
+      return(NULL)
+    }
+
+    gene_entrez <- tryCatch({
+      bitr(
+        unique(gene_list),
+        fromType = "SYMBOL",
+        toType   = "ENTREZID",
+        OrgDb    = org.Mm.eg.db,
+        drop     = TRUE
+      )
+    }, error = function(e) {
+      cat("[WARN] Gene ID conversion failed: ", conditionMessage(e), "\n", sep = "")
+      return(data.frame(SYMBOL = character(), ENTREZID = character()))
+    })
+
+    gene_entrez <- gene_entrez[!is.na(gene_entrez$ENTREZID), , drop = FALSE]
+    gene_entrez <- gene_entrez[!duplicated(gene_entrez$ENTREZID), , drop = FALSE]
+
+    mapping_rate <- if (length(gene_list) == 0) 0 else nrow(gene_entrez) / length(unique(gene_list))
+    cat("[OK] Mapped ", nrow(gene_entrez), " of ", length(unique(gene_list)),
+        " genes to Entrez (", round(mapping_rate * 100, 1), "%)\n", sep = "")
+    cat("[INFO] Genes entering pathway enrichment: ", nrow(gene_entrez), "\n", sep = "")
+
+    if (nrow(gene_entrez) < 3) {
+      cat("[WARN] Too few genes mapped to Entrez IDs\n")
+      ## Track in sanity checker
+      pathway_sanity_tracker <<- rbind(
+        pathway_sanity_tracker,
+        data.frame(
+          Contrast = contrast_name,
+          Direction = direction,
+          Database = "GO:BP",
+          N_Input_Genes = length(gene_list),
+          N_Mapped_Entrez = nrow(gene_entrez),
+          N_Sig_Pathways = 0,
+          stringsAsFactors = FALSE
+        )
+      )
+      pathway_sanity_tracker <<- rbind(
+        pathway_sanity_tracker,
+        data.frame(
+          Contrast = contrast_name,
+          Direction = direction,
+          Database = "KEGG",
+          N_Input_Genes = length(gene_list),
+          N_Mapped_Entrez = nrow(gene_entrez),
+          N_Sig_Pathways = 0,
+          stringsAsFactors = FALSE
+        )
+      )
+      return(NULL)
+    }
+
+    entrez_ids <- gene_entrez$ENTREZID
+    results <- list()
+
+    ## GO:BP (Entrez)
+    tryCatch({
+      enrich_go <- enrichGO(
+        gene          = entrez_ids,
+        OrgDb         = org.Mm.eg.db,
+        ont           = "BP",
+        pvalueCutoff  = 0.1,
+        qvalueCutoff  = 0.2,
+        readable      = TRUE,
+        minGSSize     = 5,
+        maxGSSize     = 500
+      )
+      if (!is.null(enrich_go) && nrow(enrich_go@result) > 0) {
+        enrich_go_simp <- simplify(enrich_go, cutoff = 0.7, by = "p.adjust", select_fun = min)
+        results$gobp <- enrich_go_simp
+        n_sig <- sum(enrich_go_simp@result$p.adjust < fdr_cutoff, na.rm = TRUE)
+        cat("[OK] GO:BP enrichment: ", nrow(enrich_go_simp@result), " terms (simplified), ",
+            n_sig, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
+
+        ## Track in sanity checker
+        pathway_sanity_tracker <<- rbind(
+          pathway_sanity_tracker,
+          data.frame(
+            Contrast = contrast_name,
+            Direction = direction,
+            Database = "GO:BP",
+            N_Input_Genes = length(gene_list),
+            N_Mapped_Entrez = nrow(gene_entrez),
+            N_Sig_Pathways = n_sig,
+            stringsAsFactors = FALSE
+          )
+        )
+      } else {
+        cat("[INFO] No GO:BP terms found\n")
+        pathway_sanity_tracker <<- rbind(
+          pathway_sanity_tracker,
+          data.frame(
+            Contrast = contrast_name,
+            Direction = direction,
+            Database = "GO:BP",
+            N_Input_Genes = length(gene_list),
+            N_Mapped_Entrez = nrow(gene_entrez),
+            N_Sig_Pathways = 0,
+            stringsAsFactors = FALSE
+          )
+        )
+      }
+    }, error = function(e) {
+      cat("[WARN] GO:BP enrichment failed: ", conditionMessage(e), "\n", sep = "")
+      pathway_sanity_tracker <<- rbind(
+        pathway_sanity_tracker,
+        data.frame(
+          Contrast = contrast_name,
+          Direction = direction,
+          Database = "GO:BP",
+          N_Input_Genes = length(gene_list),
+          N_Mapped_Entrez = nrow(gene_entrez),
+          N_Sig_Pathways = 0,
+          stringsAsFactors = FALSE
+        )
+      )
+    })
+
+    ## KEGG (Entrez)
+    tryCatch({
+      enrich_kegg <- enrichKEGG(
+        gene         = entrez_ids,
+        organism     = "mmu",
+        pvalueCutoff = 0.1,
+        qvalueCutoff = 0.2,
+        minGSSize    = 5,
+        maxGSSize    = 500
+      )
+
+      if (!is.null(enrich_kegg) && nrow(enrich_kegg@result) > 0) {
+        ## Convert Entrez IDs back to gene symbols for KEGG results
+        kegg_result <- enrich_kegg@result
+
+        ## Parse geneID column (format: "entrez1/entrez2/entrez3")
+        ## and convert to gene symbols
+        if ("geneID" %in% colnames(kegg_result)) {
+          kegg_result$geneID_symbols <- sapply(kegg_result$geneID, function(gene_str) {
+            entrez_vec <- unlist(strsplit(gene_str, "/"))
+            symbol_vec <- gene_entrez$SYMBOL[match(entrez_vec, gene_entrez$ENTREZID)]
+            symbol_vec <- symbol_vec[!is.na(symbol_vec)]
+            paste(symbol_vec, collapse = "/")
+          })
+        }
+
+        ## Store modified result back
+        enrich_kegg@result <- kegg_result
+
+        results$kegg <- enrich_kegg
+        n_sig <- sum(enrich_kegg@result$p.adjust < fdr_cutoff, na.rm = TRUE)
+        cat("[OK] KEGG enrichment: ", nrow(enrich_kegg@result), " pathways, ",
+            n_sig, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
+
+        ## Track in sanity checker
+        pathway_sanity_tracker <<- rbind(
+          pathway_sanity_tracker,
+          data.frame(
+            Contrast = contrast_name,
+            Direction = direction,
+            Database = "KEGG",
+            N_Input_Genes = length(gene_list),
+            N_Mapped_Entrez = nrow(gene_entrez),
+            N_Sig_Pathways = n_sig,
+            stringsAsFactors = FALSE
+          )
+        )
+      } else {
+        cat("[INFO] No KEGG pathways found\n")
+        pathway_sanity_tracker <<- rbind(
+          pathway_sanity_tracker,
+          data.frame(
+            Contrast = contrast_name,
+            Direction = direction,
+            Database = "KEGG",
+            N_Input_Genes = length(gene_list),
+            N_Mapped_Entrez = nrow(gene_entrez),
+            N_Sig_Pathways = 0,
+            stringsAsFactors = FALSE
+          )
+        )
+      }
+    }, error = function(e) {
+      cat("[WARN] KEGG enrichment failed: ", conditionMessage(e), "\n", sep = "")
+      pathway_sanity_tracker <<- rbind(
+        pathway_sanity_tracker,
+        data.frame(
+          Contrast = contrast_name,
+          Direction = direction,
+          Database = "KEGG",
+          N_Input_Genes = length(gene_list),
+          N_Mapped_Entrez = nrow(gene_entrez),
+          N_Sig_Pathways = 0,
+          stringsAsFactors = FALSE
+        )
+      )
+    })
+
+    ## Save results tables + barplots
+    ## FIXED: Ordered by gene ratio, direction-specific colors
+    if (length(results) > 0) {
+      for (db_name in names(results)) {
+        enrich_obj <- results[[db_name]]
+
+        sig_results <- enrich_obj@result %>%
+          dplyr::filter(p.adjust < fdr_cutoff) %>%
+          dplyr::arrange(p.adjust)
+
+        if (nrow(sig_results) == 0) {
+          cat("[INFO] No significant pathways in ", db_name, "\n", sep = "")
+          next
+        }
+
+        ## Remove duplicate columns before saving
+        sig_results <- sig_results[, !duplicated(colnames(sig_results)), drop = FALSE]
+
+        ## Save table
+        table_file <- paste0("Pathway_", db_name, "_", contrast_name, "_", direction, "_", run_tag, ".csv")
+        write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
+        cat("[OK] Saved pathway table: ", table_file, " (", nrow(sig_results), " terms)\n", sep = "")
+
+        ## Create bar plot (top 15 terms) - FIXED: ordered by gene ratio, direction-specific colors
+        plot_data <- sig_results %>%
+          dplyr::slice_head(n = 15)
+
+        ## Parse GeneRatio to numeric
+        plot_data$GeneRatio_numeric <- sapply(strsplit(plot_data$GeneRatio, "/"), function(x) {
+          num <- as.numeric(x[1]); denom <- as.numeric(x[2])
+          if (is.na(denom) || denom == 0) return(0)
+          num / denom
+        })
+
+        ## Order by gene ratio ascending, then reverse for plotting (largest at top)
+        plot_data <- plot_data %>%
+          dplyr::arrange(GeneRatio_numeric) %>%
+          dplyr::mutate(Description = factor(Description, levels = Description))
+
+        ## Direction-specific color gradient (orange for Up, blue for Down matching volcano)
+        if (direction == "Up") {
+          fill_scale <- scale_fill_gradient(
+            low   = "#FDD49E",  ## Light orange
+            high  = "#E69F00",  ## Dark orange (matches volcano up color)
+            name  = "Adj.\nP-value"
+          )
+        } else {
+          fill_scale <- scale_fill_gradient(
+            low   = "#9ECAE1",  ## Light blue
+            high  = "#0072B2",  ## Dark blue/teal (matches volcano down color)
+            name  = "Adj.\nP-value"
+          )
+        }
+
+        p_pathway <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description, fill = p.adjust)) +
+          geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
+          fill_scale +
+          labs(
+            title = paste0(toupper(db_name), " Pathways (", direction, ")\n", contrast_name),
+            x     = "Gene Ratio",
+            y     = NULL
+          ) +
+          theme_classic(base_size = 12) +
+          theme(
+            plot.title      = element_text(face = "bold", hjust = 0.5, size = 14),
+            axis.text.y     = element_text(size = 10, color = "black"),
+            axis.text.x     = element_text(size = 10, color = "black", face = "bold"),
+            axis.title.x    = element_text(size = 12, face = "bold"),
+            legend.title    = element_text(size = 10, face = "bold"),
+            legend.text     = element_text(size = 9),
+            legend.position = "right",
+            panel.border    = element_rect(color = "black", fill = NA, linewidth = 1)
+          )
+
+        plot_file <- paste0("Pathway_barplot_", db_name, "_", contrast_name, "_", direction, "_", run_tag, ".png")
+        ggsave(
+          file.path(outdir, "plots", plot_file),
+          plot   = p_pathway,
+          width  = 10,
+          height = max(6, nrow(plot_data) * 0.3),
+          dpi    = 300,
+          bg     = "white"
+        )
+        cat("[OK] Saved pathway bar plot: ", plot_file, "\n", sep = "")
+      }
+    }
+
+    return(results)
+  }
+
+  ## 4.14b) fgsea analysis function (FIXED - GO:BP and KEGG errors) ----
+  run_fgsea_analysis <- function(ranked_genes, contrast_name, run_tag, outdir, fdr_cutoff = 0.05) {
+
+    cat("\n--- fgsea (GSEA): ", contrast_name, " ---\n", sep = "")
+    cat("[INFO] Ranked gene list size: ", length(ranked_genes), " genes\n", sep = "")
+
+    if (length(ranked_genes) < 10) {
+      cat("[WARN] Too few genes for fgsea\n")
+      return(NULL)
+    }
+
+    results <- list()
+
+    ## ===================
+    ## GO:BP gene sets (FIXED)
+    ## ===================
+    tryCatch({
+      cat("[INFO] Running fgsea for GO:BP...\n")
+
+      ## Get GO:BP gene sets from org.Mm.eg.db
+      go_bp_genes <- AnnotationDbi::select(
+        org.Mm.eg.db,
+        keys = keys(org.Mm.eg.db, keytype = "GOALL"),
+        columns = c("SYMBOL", "GOALL", "ONTOLOGYALL"),
+        keytype = "GOALL"
+      )
+
+      ## Filter for BP ontology and remove NA symbols
+      go_bp_genes <- go_bp_genes %>%
+        dplyr::filter(ONTOLOGYALL == "BP", !is.na(SYMBOL)) %>%
+        dplyr::select(GOALL, SYMBOL)
+
+      ## Convert to named list (pathway name -> gene vector)
+      go_bp_list <- split(go_bp_genes$SYMBOL, go_bp_genes$GOALL)
+
+      ## Filter for minimum gene set size
+      go_bp_list <- go_bp_list[sapply(go_bp_list, length) >= 5 & sapply(go_bp_list, length) <= 500]
+
+      cat("[INFO] Testing ", length(go_bp_list), " GO:BP gene sets\n", sep = "")
+
+      ## Run fgsea
+      fgsea_go <- fgsea(
+        pathways = go_bp_list,
+        stats    = ranked_genes,
+        minSize  = 5,
+        maxSize  = 500,
+        nPermSimple = 10000
+      )
+
+      if (!is.null(fgsea_go) && nrow(fgsea_go) > 0) {
+        ## FIXED: Get GO term descriptions from GO.db instead of org.Mm.eg.db
+        go_terms <- AnnotationDbi::select(
+          GO.db,
+          keys = fgsea_go$pathway,
+          columns = "TERM",
+          keytype = "GOID"
+        )
+
+        fgsea_go <- fgsea_go %>%
+          dplyr::left_join(
+            go_terms %>% dplyr::rename(pathway = GOID, Description = TERM),
+            by = "pathway"
+          ) %>%
+          dplyr::arrange(padj)
+
+        results$gobp <- fgsea_go
+        n_sig <- sum(fgsea_go$padj < fdr_cutoff, na.rm = TRUE)
+        cat("[OK] fgsea GO:BP: ", nrow(fgsea_go), " pathways tested, ",
+            n_sig, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
+
+        ## Track in sanity checker
+        fgsea_sanity_tracker <<- rbind(
+          fgsea_sanity_tracker,
+          data.frame(
+            Contrast = contrast_name,
+            Database = "GO:BP",
+            N_Input_Genes = length(ranked_genes),
+            N_Pathways_Tested = nrow(fgsea_go),
+            N_Sig_Pathways = n_sig,
+            stringsAsFactors = FALSE
+          )
+        )
+      }
+    }, error = function(e) {
+      cat("[WARN] fgsea GO:BP failed: ", conditionMessage(e), "\n", sep = "")
+      fgsea_sanity_tracker <<- rbind(
+        fgsea_sanity_tracker,
+        data.frame(
+          Contrast = contrast_name,
+          Database = "GO:BP",
+          N_Input_Genes = length(ranked_genes),
+          N_Pathways_Tested = 0,
+          N_Sig_Pathways = 0,
+          stringsAsFactors = FALSE
+        )
+      )
+    })
+
+    ## ===================
+    ## KEGG gene sets (FIXED - alternative approach)
+    ## ===================
+    tryCatch({
+      cat("[INFO] Running fgsea for KEGG...\n")
+
+      ## FIXED: Use msigdbr or org.Mm.eg.db PATH mapping
+      if (requireNamespace("msigdbr", quietly = TRUE)) {
+        cat("[INFO] Using msigdbr for KEGG pathways\n")
+        kegg_msigdb <- msigdbr::msigdbr(species = "Mus musculus", category = "C2", subcategory = "CP:KEGG")
+        kegg_list <- split(kegg_msigdb$gene_symbol, kegg_msigdb$gs_name)
+      } else {
+        ## Fallback: build from org.Mm.eg.db
+        cat("[INFO] Building KEGG pathways from org.Mm.eg.db\n")
+        kegg_genes <- AnnotationDbi::select(
+          org.Mm.eg.db,
+          keys = keys(org.Mm.eg.db, keytype = "PATH"),
+          columns = c("SYMBOL", "PATH"),
+          keytype = "PATH"
+        )
+        kegg_genes <- kegg_genes %>% dplyr::filter(!is.na(SYMBOL), !is.na(PATH))
+        kegg_list <- split(kegg_genes$SYMBOL, paste0("mmu", kegg_genes$PATH))
+      }
+
+      ## Filter for gene set size
+      kegg_list <- kegg_list[sapply(kegg_list, length) >= 5 & sapply(kegg_list, length) <= 500]
+
+      cat("[INFO] Testing ", length(kegg_list), " KEGG pathways\n", sep = "")
+
+      if (length(kegg_list) > 0) {
+        ## Run fgsea
+        fgsea_kegg <- fgsea(
+          pathways = kegg_list,
+          stats    = ranked_genes,
+          minSize  = 5,
+          maxSize  = 500,
+          nPermSimple = 10000
+        )
+
+        if (!is.null(fgsea_kegg) && nrow(fgsea_kegg) > 0) {
+          ## Add pathway descriptions
+          fgsea_kegg <- fgsea_kegg %>%
+            dplyr::mutate(
+              Description = gsub("^KEGG_|^mmu", "", pathway),  ## Clean up pathway names
+              Description = gsub("_", " ", Description)
+            ) %>%
+            dplyr::arrange(padj)
+
+          results$kegg <- fgsea_kegg
+          n_sig <- sum(fgsea_kegg$padj < fdr_cutoff, na.rm = TRUE)
+          cat("[OK] fgsea KEGG: ", nrow(fgsea_kegg), " pathways tested, ",
+              n_sig, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
+
+          fgsea_sanity_tracker <<- rbind(
+            fgsea_sanity_tracker,
+            data.frame(
+              Contrast = contrast_name,
+              Database = "KEGG",
+              N_Input_Genes = length(ranked_genes),
+              N_Pathways_Tested = nrow(fgsea_kegg),
+              N_Sig_Pathways = n_sig,
+              stringsAsFactors = FALSE
+            )
+          )
+        }
+      }
+    }, error = function(e) {
+      cat("[WARN] fgsea KEGG failed: ", conditionMessage(e), "\n", sep = "")
+      fgsea_sanity_tracker <<- rbind(
+        fgsea_sanity_tracker,
+        data.frame(
+          Contrast = contrast_name,
+          Database = "KEGG",
+          N_Input_Genes = length(ranked_genes),
+          N_Pathways_Tested = 0,
+          N_Sig_Pathways = 0,
+          stringsAsFactors = FALSE
+        )
+      )
+    })
+
+    ## ===================
+    ## Save results with DIRECTION-SPECIFIC COLORS (matching pathway bar plots)
+    ## ===================
+    if (length(results) > 0) {
+      for (db_name in names(results)) {
+        fgsea_obj <- results[[db_name]]
+
+        sig_results <- fgsea_obj %>%
+          dplyr::filter(padj < fdr_cutoff) %>%
+          dplyr::arrange(padj)
+
+        if (nrow(sig_results) == 0) {
+          cat("[INFO] No significant fgsea pathways in ", db_name, "\n", sep = "")
+          next
+        }
+
+        ## Save table
+        table_file <- paste0("fgsea_", db_name, "_", contrast_name, "_", run_tag, ".csv")
+        write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
+        cat("[OK] Saved fgsea table: ", table_file, "\n", sep = "")
+
+        ## Create plot - separate by direction (NES > 0 = Up, NES < 0 = Down)
+        plot_data_up <- sig_results %>%
+          dplyr::filter(NES > 0) %>%
+          dplyr::slice_head(n = 10) %>%
+          dplyr::arrange(NES)
+
+        plot_data_down <- sig_results %>%
+          dplyr::filter(NES < 0) %>%
+          dplyr::slice_head(n = 10) %>%
+          dplyr::arrange(desc(NES))
+
+        ## Plot UP-regulated pathways
+        if (nrow(plot_data_up) > 0) {
+          plot_data_up <- plot_data_up %>%
+            dplyr::mutate(
+              pathway_label = ifelse(!is.na(Description) & Description != "", Description, pathway),
+              pathway_label = factor(pathway_label, levels = pathway_label)
+            )
+
+          p_fgsea_up <- ggplot(plot_data_up, aes(x = NES, y = pathway_label, fill = padj)) +
+            geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
+            scale_fill_gradient(
+              low  = "#FDD49E",  ## Light orange
+              high = "#E69F00",  ## Dark orange
+              name = "Adj.\nP-value"
+            ) +
+            labs(
+              title = paste0("fgsea ", toupper(db_name), " (Up-regulated): ", contrast_name),
+              x = "Normalized Enrichment Score (NES)",
+              y = NULL
+            ) +
+            theme_classic(base_size = 12) +
+            theme(
+              plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
+              axis.text.y = element_text(size = 10, color = "black"),
+              axis.text.x = element_text(size = 10, color = "black", face = "bold"),
+              axis.title.x = element_text(size = 12, face = "bold"),
+              legend.title = element_text(size = 10, face = "bold"),
+              legend.text = element_text(size = 9),
+              legend.position = "right",
+              panel.border = element_rect(color = "black", fill = NA, linewidth = 1)
+            )
+
+          plot_file_up <- paste0("fgsea_plot_", db_name, "_", contrast_name, "_Up_", run_tag, ".png")
+          ggsave(file.path(outdir, "plots", plot_file_up), plot = p_fgsea_up, width = 12,
+                 height = max(6, nrow(plot_data_up) * 0.4), dpi = 300, bg = "white")
+          cat("[OK] Saved fgsea UP plot: ", plot_file_up, "\n", sep = "")
+        }
+
+        ## Plot DOWN-regulated pathways
+        if (nrow(plot_data_down) > 0) {
+          plot_data_down <- plot_data_down %>%
+            dplyr::mutate(
+              pathway_label = ifelse(!is.na(Description) & Description != "", Description, pathway),
+              pathway_label = factor(pathway_label, levels = pathway_label)
+            )
+
+          p_fgsea_down <- ggplot(plot_data_down, aes(x = NES, y = pathway_label, fill = padj)) +
+            geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
+            scale_fill_gradient(
+              low  = "#9ECAE1",  ## Light blue
+              high = "#0072B2",  ## Dark blue/teal
+              name = "Adj.\nP-value"
+            ) +
+            labs(
+              title = paste0("fgsea ", toupper(db_name), " (Down-regulated): ", contrast_name),
+              x = "Normalized Enrichment Score (NES)",
+              y = NULL
+            ) +
+            theme_classic(base_size = 12) +
+            theme(
+              plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
+              axis.text.y = element_text(size = 10, color = "black"),
+              axis.text.x = element_text(size = 10, color = "black", face = "bold"),
+              axis.title.x = element_text(size = 12, face = "bold"),
+              legend.title = element_text(size = 10, face = "bold"),
+              legend.text = element_text(size = 9),
+              legend.position = "right",
+              panel.border = element_rect(color = "black", fill = NA, linewidth = 1)
+            )
+
+          plot_file_down <- paste0("fgsea_plot_", db_name, "_", contrast_name, "_Down_", run_tag, ".png")
+          ggsave(file.path(outdir, "plots", plot_file_down), plot = p_fgsea_down, width = 12,
+                 height = max(6, nrow(plot_data_down) * 0.4), dpi = 300, bg = "white")
+          cat("[OK] Saved fgsea DOWN plot: ", plot_file_down, "\n", sep = "")
+        }
+      }
+    }
+
+    return(results)
+  }
+
+  ## NOTE: Continuing in next message due to length...
+  ## This is part 1 of the complete script
+
+}, error = function(e) {
+  cat("\nERROR in script setup:\n")
+  cat(conditionMessage(e), "\n")
+  stop(e)
+})
+
+  ## 4.15) Per-contrast DE + volcano + heatmap + pathways + fgsea + genes of interest ----
+  for (cn in contrast_names) {
+
+    cat("\n=== Contrast: ", cn, " ===\n", sep = "")
+
+    res <- results(dds_tissue, contrast = contrast_definitions[[cn]])
+    res <- res[order(res$pvalue), , drop = FALSE]
+
+    tt <- as.data.frame(res)
+    tt$logFC     <- tt$log2FoldChange
+    tt$P.Value   <- tt$pvalue
+    tt$adj.P.Val <- tt$padj
+    tt$gene_name <- rownames(tt)
+
+    ## Remove duplicate columns
+    tt <- tt[, !duplicated(colnames(tt)), drop = FALSE]
+
+    tt_list[[cn]] <- tt
+
+    de_file <- paste0("DE_tissue_", cn, "_", run_tag, ".csv")
+    write.csv(tt, file = file.path(outdir, "tables", de_file), row.names = TRUE)
+
+    n_sig <- sum(tt$adj.P.Val < fdr_cut_tissue, na.rm = TRUE)
+    cat("DE table written: ", file.path(outdir, "tables", de_file), "\n", sep = "")
+    cat("Number of genes with FDR < 0.05 (", cn, "): ", n_sig, "\n", sep = "")
+
+    deg_summary$N_DEG_FDR_lt_0_05[deg_summary$Contrast == cn] <- n_sig
+    deg_summary$N_Up[deg_summary$Contrast == cn] <- sum(
+      tt$adj.P.Val < fdr_cut_tissue & tt$logFC >  logFC_cut_tissue, na.rm = TRUE
+    )
+    deg_summary$N_Down[deg_summary$Contrast == cn] <- sum(
+      tt$adj.P.Val < fdr_cut_tissue & tt$logFC < -logFC_cut_tissue, na.rm = TRUE
+    )
+
+    ## Volcano
+    tt_plot <- tt %>%
+      dplyr::filter(is.finite(logFC), is.finite(adj.P.Val), adj.P.Val > 0) %>%
+      mutate(negLogFDR = -log10(adj.P.Val))
+
+    tt_plot <- tt_plot %>%
+      mutate(
+        sig_cat = dplyr::case_when(
+          adj.P.Val < fdr_cut_tissue & logFC >=  logFC_cut_tissue ~ "Up",
+          adj.P.Val < fdr_cut_tissue & logFC <= -logFC_cut_tissue ~ "Down",
+          TRUE                                                    ~ "NS"
+        ),
+        sig_cat = factor(sig_cat, levels = c("Up", "Down", "NS"))
+      )
+
+    tt_sig <- tt_plot %>%
+      dplyr::filter(adj.P.Val < fdr_cut_tissue,
+                    abs(logFC) >= logFC_cut_tissue,
+                    sig_cat != "NS")
+
+    top_n_fdr <- params$volcano_labels$top_n_by_fdr
+    top_n_fc  <- params$volcano_labels$top_n_by_fc
+
+    up_sig <- tt_sig %>% dplyr::filter(sig_cat == "Up")
+    down_sig <- tt_sig %>% dplyr::filter(sig_cat == "Down")
+
+    up_top_fdr <- up_sig %>% dplyr::arrange(adj.P.Val) %>% dplyr::slice_head(n = top_n_fdr)
+    up_top_fc  <- up_sig %>% dplyr::arrange(dplyr::desc(logFC)) %>% dplyr::slice_head(n = top_n_fc)
+
+    down_top_fdr <- down_sig %>% dplyr::arrange(adj.P.Val) %>% dplyr::slice_head(n = top_n_fdr)
+    down_top_fc  <- down_sig %>% dplyr::arrange(logFC) %>% dplyr::slice_head(n = top_n_fc)
+
+    label_genes <- dplyr::bind_rows(up_top_fdr, up_top_fc, down_top_fdr, down_top_fc) %>%
+      dplyr::distinct(gene_name, .keep_all = TRUE)
+
+    vol_tissue <- ggplot(
+      tt_plot,
+      aes(x = logFC, y = negLogFDR, color = sig_cat)
+    ) +
+      geom_point(size = 2, alpha = 0.8) +
+      scale_color_manual(
+        values = c("Up" = "#E69F00", "Down" = "#0072B2", "NS" = "grey70"),
+        name   = "Significance"
+      ) +
+      geom_point(data = label_genes, aes(color = sig_cat), size = 3) +
+      geom_text_repel(
+        data          = label_genes,
+        aes(label     = gene_name),
+        color         = "black",
+        size          = 3.5,
+        box.padding   = unit(0.25, "lines"),
+        segment.color = "gray40",
+        segment.size  = 0.3,
+        point.padding = unit(0.2, "lines"),
+        max.overlaps  = Inf
+      ) +
+      geom_hline(yintercept = -log10(fdr_cut_tissue), linetype = "dashed", color = "grey40") +
+      geom_vline(xintercept = c(logFC_cut_tissue, -logFC_cut_tissue), linetype = "dashed", color = "grey40") +
+      theme_bw(base_size = 14) +
+      theme(
+        panel.grid      = element_blank(),
+        axis.text       = element_text(size = 10, face = "bold", colour = "black"),
+        axis.title      = element_text(size = 14, face = "bold", colour = "black"),
+        plot.title      = element_text(face = "bold", hjust = 0.5),
+        legend.position = "right"
+      ) +
+      ggtitle(paste0("Volcano: ", cn, " (WAT tissue; DESeq2)")) +
+      xlab(expression(log[2]~Fold~Change)) +
+      ylab(expression(-log[10]~FDR))
+
+    volcano_file <- paste0("Volcano_tissue_", cn, "_", run_tag, ".png")
+    ggsave(file.path(outdir, "plots", volcano_file), plot = vol_tissue, width = 8, height = 6, dpi = 300)
+    cat("Volcano saved: ", file.path(outdir, "plots", volcano_file), "\n", sep = "")
+
+    if (is.null(hero_volcano_file)) hero_volcano_file <- volcano_file
+
+    ## Pathway analysis (subset optional)
+    run_pathway_for_contrast <- if (run_pathway_subset_only) grepl(paste0("^", pathway_focus_depot_sex), cn) else TRUE
+
+    if (!run_pathway_for_contrast) {
+      cat("[INFO] Skipping pathway analysis for ", cn, " (focus is ", pathway_focus_depot_sex, ")\n", sep = "")
+    } else {
+
+      ## Get all up-regulated DEGs (FDR < 0.05, logFC > 1)
+      up_genes_all <- tt %>%
+        dplyr::filter(adj.P.Val < fdr_cut_tissue, logFC > logFC_cut_tissue) %>%
+        dplyr::pull(gene_name)
+
+      ## Get all down-regulated DEGs (FDR < 0.05, logFC < -1)
+      down_genes_all <- tt %>%
+        dplyr::filter(adj.P.Val < fdr_cut_tissue, logFC < -logFC_cut_tissue) %>%
+        dplyr::pull(gene_name)
+
+      cat("[INFO] Up-regulated DEGs for pathway analysis: ", length(up_genes_all), "\n", sep = "")
+      cat("[INFO] Down-regulated DEGs for pathway analysis: ", length(down_genes_all), "\n", sep = "")
+
+      if (length(up_genes_all) >= 5) {
+        pathway_results[[paste0(cn, "_Up")]] <- run_pathway_analysis(
+          gene_list     = up_genes_all,
+          direction     = "Up",
+          contrast_name = cn,
+          run_tag       = run_tag,
+          outdir        = outdir,
+          fdr_cutoff    = 0.05
+        )
+      } else {
+        cat("[WARN] Too few upregulated genes for pathway analysis (", cn, ")\n", sep = "")
+      }
+
+      if (length(down_genes_all) >= 5) {
+        pathway_results[[paste0(cn, "_Down")]] <- run_pathway_analysis(
+          gene_list     = down_genes_all,
+          direction     = "Down",
+          contrast_name = cn,
+          run_tag       = run_tag,
+          outdir        = outdir,
+          fdr_cutoff    = 0.05
+        )
+      } else {
+        cat("[WARN] Too few downregulated genes for pathway analysis (", cn, ")\n", sep = "")
+      }
+
+      ## fgsea (Gene Set Enrichment Analysis) - NOT split by up/down
+      cat("\n--- Preparing ranked gene list for fgsea ---\n")
+
+      ## Rank genes by sign(logFC) * -log10(pvalue)
+      ranked_genes <- tt %>%
+        dplyr::filter(is.finite(logFC), is.finite(P.Value), P.Value > 0) %>%
+        dplyr::mutate(rank_stat = sign(logFC) * -log10(P.Value)) %>%
+        dplyr::arrange(dplyr::desc(rank_stat))
+
+      ## Create named vector
+      ranked_vec <- setNames(ranked_genes$rank_stat, ranked_genes$gene_name)
+
+      cat("[INFO] Ranked gene list for fgsea: ", length(ranked_vec), " genes\n", sep = "")
+
+      if (length(ranked_vec) >= 10) {
+        fgsea_results[[cn]] <- run_fgsea_analysis(
+          ranked_genes  = ranked_vec,
+          contrast_name = cn,
+          run_tag       = run_tag,
+          outdir        = outdir,
+          fdr_cutoff    = 0.05
+        )
+      } else {
+        cat("[WARN] Too few genes for fgsea (", cn, ")\n", sep = "")
+      }
+    }
+
+    ## Heatmap (VST) of strongest DEGs using ComplexHeatmap
+    de_sig <- tt %>%
+      dplyr::filter(adj.P.Val < fdr_cut_tissue, abs(logFC) > logFC_cut_tissue)
+
+    if (nrow(de_sig) >= 2) {
+      de_sig <- de_sig[order(de_sig$adj.P.Val), , drop = FALSE]
+      if (nrow(de_sig) > params$heatmap_max_genes) de_sig <- de_sig[1:params$heatmap_max_genes, , drop = FALSE]
+      gene_set <- de_sig$gene_name
+
+      depot <- NA_character_
+      sex   <- NA_character_
+      if (grepl("^iWAT_F", cn))      { depot <- "iWAT"; sex <- "F" }
+      else if (grepl("^iWAT_M", cn)) { depot <- "iWAT"; sex <- "M" }
+      else if (grepl("^gWAT_F", cn)) { depot <- "gWAT"; sex <- "F" }
+      else if (grepl("^gWAT_M", cn)) { depot <- "gWAT"; sex <- "M" }
+
+      if (!is.na(depot) && !is.na(sex)) {
+
+        idx_samples <- with(as.data.frame(colData(dds_tissue)), Depot == depot & Sex == sex)
+        samples_heat <- rownames(colData(dds_tissue))[idx_samples]
+        heat_meta_deg <- as.data.frame(colData(dds_tissue))[idx_samples, , drop = FALSE]
+
+        mat <- vst_mat[gene_set, samples_heat, drop = FALSE]
+
+        ## Scale rows (z-score)
+        mat_scaled <- t(scale(t(mat)))
+        mat_scaled <- mat_scaled[!rowSums(is.na(mat_scaled)), , drop = FALSE]
+
+        if (nrow(mat_scaled) >= 2) {
+          ## Use volcano colors (teal to white to orange)
+          max_val_deg <- max(abs(mat_scaled), na.rm = TRUE)
+          deg_col_fun <- colorRamp2(
+            c(-max_val_deg, 0, max_val_deg),
+            c("#0072B2", "white", "#E69F00")  ## Teal (down) -> white -> orange (up)
+          )
+
+          ## Column annotation
+          deg_ha <- HeatmapAnnotation(
+            Genotype = heat_meta_deg$Genotype,
+            col = list(Genotype = c(CTL = "#1B9E77", KAT8KD = "#D95F02")),
+            annotation_name_side = "left"
+          )
+
+          ## Create heatmap
+          heat_deg <- Heatmap(
+            mat_scaled,
+            col = deg_col_fun,
+            cluster_rows = TRUE,
+            cluster_columns = FALSE,
+            show_column_names = TRUE,
+            show_row_names = (nrow(mat_scaled) <= 50),
+            column_split = heat_meta_deg$Genotype,
+            border = TRUE,
+            column_gap = unit(2, "mm"),
+            row_gap = unit(0, "mm"),
+            top_annotation = deg_ha,
+            column_title = paste0("Top DEGs: ", cn, " (FDR<0.05, |logFC|>", logFC_cut_tissue, ")"),
+            heatmap_legend_param = list(
+              title = "Z-score",
+              title_position = "leftcenter-rot",
+              title_gp = gpar(fontsize = 10)
+            ),
+            row_names_gp = gpar(fontsize = 5),
+            column_names_gp = gpar(fontsize = 8)
+          )
+
+          ## Save
+          heat_file <- paste0("Heatmap_tissue_", cn, "_", run_tag, ".png")
+          png(file.path(outdir, "plots", heat_file), width = 2000, height = 3000, res = 200)
+          draw(heat_deg)
+          dev.off()
+          cat("Heatmap saved: ", file.path(outdir, "plots", heat_file), "\n", sep = "")
+        } else {
+          cat("Not enough valid genes for heatmap after scaling (", cn, ").\n", sep = "")
+        }
+
+      } else {
+        cat("Could not map contrast ", cn, " to depot/sex for heatmap.\n", sep = "")
+      }
+    } else {
+      cat("Not enough DE genes for heatmap (", cn, ").\n", sep = "")
+    }
+
+    ## -------------------------------------------------------
+    ## ComplexHeatmap for genes of interest
+    ## -------------------------------------------------------
+    cat("\n--- ComplexHeatmap: Genes of Interest (", cn, ") ---\n", sep = "")
+
+    ## Find which genes of interest are in our data
+    goi_in_data <- genes_of_interest[genes_of_interest %in% rownames(vst_mat)]
+    cat("[INFO] Genes of interest found in data: ", length(goi_in_data), "/", length(genes_of_interest), "\n", sep = "")
+
+    if (length(goi_in_data) >= 2) {
+
+      ## Get depot/sex for this contrast
+      depot_h <- NA_character_
+      sex_h   <- NA_character_
+      if (grepl("^iWAT_F", cn))      { depot_h <- "iWAT"; sex_h <- "F" }
+      else if (grepl("^iWAT_M", cn)) { depot_h <- "iWAT"; sex_h <- "M" }
+      else if (grepl("^gWAT_F", cn)) { depot_h <- "gWAT"; sex_h <- "F" }
+      else if (grepl("^gWAT_M", cn)) { depot_h <- "gWAT"; sex_h <- "M" }
+
+      if (!is.na(depot_h) && !is.na(sex_h)) {
+
+        ## Get sample indices for this contrast
+        heat_idx <- with(as.data.frame(colData(dds_tissue)), Depot == depot_h & Sex == sex_h)
+        heat_samples <- rownames(colData(dds_tissue))[heat_idx]
+        heat_meta <- as.data.frame(colData(dds_tissue))[heat_idx, , drop = FALSE]
+
+        ## Get control samples for centering
+        heat_ctrls <- heat_meta %>% dplyr::filter(Genotype == "CTL") %>% rownames()
+
+        ## Build matrix
+        heat_matrix <- vst_mat[goi_in_data, heat_samples, drop = FALSE]
+
+        ## Center by control means (z-score relative to controls)
+        heat_ctrl_means <- rowMeans(heat_matrix[, heat_ctrls, drop = FALSE])
+        heat_matrix_scaled <- t(scale(t(heat_matrix), center = heat_ctrl_means, scale = TRUE))
+        heat_matrix_scaled <- heat_matrix_scaled[!rowSums(is.na(heat_matrix_scaled)), , drop = FALSE]
+
+        if (nrow(heat_matrix_scaled) >= 2) {
+
+          ## Use volcano colors (teal to white to orange)
+          max_val <- max(abs(heat_matrix_scaled), na.rm = TRUE)
+          heat_col_fun <- colorRamp2(
+            c(-max_val, 0, max_val),
+            c("#0072B2", "white", "#E69F00")  ## Teal (down) -> white -> orange (up)
+          )
+
+          ## Column annotation
+          heat_ha <- HeatmapAnnotation(
+            Genotype = heat_meta$Genotype,
+            col = list(Genotype = c(CTL = "#1B9E77", KAT8KD = "#D95F02")),
+            annotation_name_side = "left"
+          )
+
+          ## Create heatmap
+          heat_goi <- Heatmap(
+            heat_matrix_scaled,
+            col = heat_col_fun,
+            cluster_rows = TRUE,
+            cluster_columns = FALSE,
+            show_column_names = TRUE,
+            show_row_names = TRUE,
+            column_split = heat_meta$Genotype,
+            border = TRUE,
+            column_gap = unit(2, "mm"),
+            row_gap = unit(0, "mm"),
+            top_annotation = heat_ha,
+            column_title = paste0("Genes of Interest: ", cn),
+            heatmap_legend_param = list(
+              title = "Z-score\n(vs CTL)",
+              title_position = "leftcenter-rot",
+              title_gp = gpar(fontsize = 10)
+            ),
+            row_names_gp = gpar(fontsize = 8),
+            column_names_gp = gpar(fontsize = 8)
+          )
+
+          ## Save
+          heat_goi_file <- paste0("Heatmap_GOI_", cn, "_", run_tag, ".png")
+          png(file.path(outdir, "plots", heat_goi_file), width = 2000, height = 2500, res = 200)
+          draw(heat_goi)
+          dev.off()
+          cat("[OK] ComplexHeatmap saved: ", heat_goi_file, "\n", sep = "")
+
+        } else {
+          cat("[WARN] Not enough genes of interest with valid values for heatmap\n")
+        }
+      }
+    } else {
+      cat("[WARN] Too few genes of interest found in data for heatmap\n")
+    }
+
+    ## -------------------------------------------------------
+    ## EnhancedVolcano labeling genes of interest (FIXED COLORS)
+    ## -------------------------------------------------------
+    cat("\n--- EnhancedVolcano: Genes of Interest (", cn, ") ---\n", sep = "")
+
+    ## Prepare data for EnhancedVolcano
+    volcano_df <- tt %>%
+      dplyr::filter(is.finite(logFC), is.finite(adj.P.Val), adj.P.Val > 0)
+
+    ## Only label genes of interest that are SIGNIFICANT (pass both thresholds)
+    goi_significant <- volcano_df %>%
+      dplyr::filter(gene_name %in% genes_of_interest,
+                    adj.P.Val < fdr_cut_tissue,
+                    abs(logFC) >= logFC_cut_tissue) %>%
+      dplyr::pull(gene_name)
+
+    cat("[INFO] Genes of interest (total): ", length(genes_of_interest), "\n", sep = "")
+    cat("[INFO] Genes of interest (significant): ", length(goi_significant), "\n", sep = "")
+
+    if (nrow(volcano_df) > 0) {
+
+      ## FIXED: Create custom color scheme using keyvals
+      ## Only color significant genes (both thresholds met), split by direction
+      ## All others (NS, FC-only, P-only) are grey
+
+      keyvals_color <- rep("grey70", nrow(volcano_df))
+      names(keyvals_color) <- rep("NS", nrow(volcano_df))
+
+      ## Significant UP (orange)
+      sig_up_idx <- which(volcano_df$adj.P.Val < fdr_cut_tissue &
+                          volcano_df$logFC >= logFC_cut_tissue)
+      keyvals_color[sig_up_idx] <- "#E69F00"
+      names(keyvals_color)[sig_up_idx] <- "Significant Up"
+
+      ## Significant DOWN (teal/blue)
+      sig_down_idx <- which(volcano_df$adj.P.Val < fdr_cut_tissue &
+                            volcano_df$logFC <= -logFC_cut_tissue)
+      keyvals_color[sig_down_idx] <- "#0072B2"
+      names(keyvals_color)[sig_down_idx] <- "Significant Down"
+
+      ev_plot <- EnhancedVolcano(
+        volcano_df,
+        lab = volcano_df$gene_name,
+        selectLab = goi_significant,
+        x = "logFC",
+        y = "adj.P.Val",
+        title = paste0("Volcano: ", cn),
+        subtitle = "ECM, metabolism, and remodeling genes labeled (significant only)",
+        pCutoff = fdr_cut_tissue,
+        FCcutoff = logFC_cut_tissue,
+        pointSize = 2.0,
+        labSize = 4.0,
+        labCol = "black",
+        labFace = "bold",
+        boxedLabels = TRUE,
+        drawConnectors = TRUE,
+        widthConnectors = 0.5,
+        colConnectors = "gray40",
+        colCustom = keyvals_color,  ## Use custom colors
+        colAlpha = 0.8,
+        legendPosition = "right",
+        legendLabSize = 10,
+        legendIconSize = 3.0,
+        max.overlaps = Inf,
+        gridlines.major = FALSE,
+        gridlines.minor = FALSE
+      )
+
+      ev_file <- paste0("EnhancedVolcano_GOI_", cn, "_", run_tag, ".png")
+      ggsave(file.path(outdir, "plots", ev_file), plot = ev_plot, width = 10, height = 8, dpi = 300)
+      cat("[OK] EnhancedVolcano saved: ", ev_file, "\n", sep = "")
+
+    } else {
+      cat("[WARN] No valid data for EnhancedVolcano\n")
+    }
+  }
+
+
+  ## 4.16) OVERALL CTL vs KD contrast (all depots/sexes combined) ----
+  cat("\n\n=================================================================\n")
+  cat("=== OVERALL CONTRAST: CTL vs KD (all depots/sexes combined) ===\n")
+  cat("=================================================================\n\n")
+
+  ## Rebuild DESeq2 object with simpler design: just Genotype
+  dds_overall <- DESeqDataSetFromMatrix(
+    countData = round(count_matrix_filt),
+    colData   = sample_annot,
+    design    = ~ Genotype
+  )
+
+  cat("[INFO] Running DESeq2 for overall contrast...\n")
+  dds_overall <- DESeq(dds_overall)
+  cat("[OK] DESeq2 complete for overall contrast.\n")
+
+  ## Extract results: KAT8KD vs CTL
+  res_overall <- results(dds_overall, contrast = c("Genotype", "KAT8KD", "CTL"))
+  res_overall <- res_overall[order(res_overall$pvalue), , drop = FALSE]
+
+  tt_overall <- as.data.frame(res_overall)
+  tt_overall$logFC     <- tt_overall$log2FoldChange
+  tt_overall$P.Value   <- tt_overall$pvalue
+  tt_overall$adj.P.Val <- tt_overall$padj
+  tt_overall$gene_name <- rownames(tt_overall)
+
+  ## Remove duplicate columns
+  tt_overall <- tt_overall[, !duplicated(colnames(tt_overall)), drop = FALSE]
+
+  ## Save DE table
+  de_overall_file <- paste0("DE_tissue_OVERALL_KD_vs_CTL_", run_tag, ".csv")
+  write.csv(tt_overall, file = file.path(outdir, "tables", de_overall_file), row.names = TRUE)
+
+  n_sig_overall <- sum(tt_overall$adj.P.Val < fdr_cut_tissue, na.rm = TRUE)
+  n_up_overall <- sum(tt_overall$adj.P.Val < fdr_cut_tissue & tt_overall$logFC > logFC_cut_tissue, na.rm = TRUE)
+  n_down_overall <- sum(tt_overall$adj.P.Val < fdr_cut_tissue & tt_overall$logFC < -logFC_cut_tissue, na.rm = TRUE)
+
+  cat("DE table written: ", file.path(outdir, "tables", de_overall_file), "\n", sep = "")
+  cat("Number of genes with FDR < 0.05: ", n_sig_overall, "\n", sep = "")
+  cat("Up-regulated (|logFC| > ", logFC_cut_tissue, "): ", n_up_overall, "\n", sep = "")
+  cat("Down-regulated (|logFC| > ", logFC_cut_tissue, "): ", n_down_overall, "\n", sep = "")
+
+  ## Add to summary table
+  deg_summary <- rbind(
+    deg_summary,
+    data.frame(
+      Contrast          = "OVERALL_KD_vs_CTL",
+      N_DEG_FDR_lt_0_05 = n_sig_overall,
+      N_Up              = n_up_overall,
+      N_Down            = n_down_overall,
+      stringsAsFactors  = FALSE
+    )
+  )
+
+  ## Volcano plot for overall contrast
+  tt_overall_plot <- tt_overall %>%
+    dplyr::filter(is.finite(logFC), is.finite(adj.P.Val), adj.P.Val > 0) %>%
+    mutate(negLogFDR = -log10(adj.P.Val))
+
+  tt_overall_plot <- tt_overall_plot %>%
+    mutate(
+      sig_cat = dplyr::case_when(
+        adj.P.Val < fdr_cut_tissue & logFC >=  logFC_cut_tissue ~ "Up",
+        adj.P.Val < fdr_cut_tissue & logFC <= -logFC_cut_tissue ~ "Down",
+        TRUE                                                    ~ "NS"
+      ),
+      sig_cat = factor(sig_cat, levels = c("Up", "Down", "NS"))
+    )
+
+  ## Label top genes
+  tt_overall_sig <- tt_overall_plot %>%
+    dplyr::filter(adj.P.Val < fdr_cut_tissue, abs(logFC) >= logFC_cut_tissue, sig_cat != "NS")
+
+  overall_up_sig <- tt_overall_sig %>% dplyr::filter(sig_cat == "Up")
+  overall_down_sig <- tt_overall_sig %>% dplyr::filter(sig_cat == "Down")
+
+  overall_up_top_fdr <- overall_up_sig %>% dplyr::arrange(adj.P.Val) %>% dplyr::slice_head(n = 10)
+  overall_up_top_fc  <- overall_up_sig %>% dplyr::arrange(dplyr::desc(logFC)) %>% dplyr::slice_head(n = 10)
+
+  overall_down_top_fdr <- overall_down_sig %>% dplyr::arrange(adj.P.Val) %>% dplyr::slice_head(n = 10)
+  overall_down_top_fc  <- overall_down_sig %>% dplyr::arrange(logFC) %>% dplyr::slice_head(n = 10)
+
+  overall_label_genes <- dplyr::bind_rows(
+    overall_up_top_fdr, overall_up_top_fc, overall_down_top_fdr, overall_down_top_fc
+  ) %>% dplyr::distinct(gene_name, .keep_all = TRUE)
+
+  vol_overall <- ggplot(
+    tt_overall_plot,
+    aes(x = logFC, y = negLogFDR, color = sig_cat)
+  ) +
+    geom_point(size = 2, alpha = 0.8) +
+    scale_color_manual(
+      values = c("Up" = "#E69F00", "Down" = "#0072B2", "NS" = "grey70"),
+      name   = "Significance"
+    ) +
+    geom_point(data = overall_label_genes, aes(color = sig_cat), size = 3) +
+    geom_text_repel(
+      data          = overall_label_genes,
+      aes(label     = gene_name),
+      color         = "black",
+      size          = 3.5,
+      box.padding   = unit(0.25, "lines"),
+      segment.color = "gray40",
+      segment.size  = 0.3,
+      point.padding = unit(0.2, "lines"),
+      max.overlaps  = Inf
+    ) +
+    geom_hline(yintercept = -log10(fdr_cut_tissue), linetype = "dashed", color = "grey40") +
+    geom_vline(xintercept = c(logFC_cut_tissue, -logFC_cut_tissue), linetype = "dashed", color = "grey40") +
+    theme_bw(base_size = 14) +
+    theme(
+      panel.grid      = element_blank(),
+      axis.text       = element_text(size = 10, face = "bold", colour = "black"),
+      axis.title      = element_text(size = 14, face = "bold", colour = "black"),
+      plot.title      = element_text(face = "bold", hjust = 0.5),
+      legend.position = "right"
+    ) +
+    ggtitle("Volcano: OVERALL KD vs CTL (all depots/sexes combined)") +
+    xlab(expression(log[2]~Fold~Change)) +
+    ylab(expression(-log[10]~FDR))
+
+  volcano_overall_file <- paste0("Volcano_tissue_OVERALL_KD_vs_CTL_", run_tag, ".png")
+  ggsave(file.path(outdir, "plots", volcano_overall_file), plot = vol_overall, width = 8, height = 6, dpi = 300)
+  cat("Volcano saved: ", file.path(outdir, "plots", volcano_overall_file), "\n", sep = "")
+
+  ## Pathway analysis for overall contrast
+  up_genes_overall <- tt_overall %>%
+    dplyr::filter(adj.P.Val < fdr_cut_tissue, logFC > logFC_cut_tissue) %>%
+    dplyr::pull(gene_name)
+
+  down_genes_overall <- tt_overall %>%
+    dplyr::filter(adj.P.Val < fdr_cut_tissue, logFC < -logFC_cut_tissue) %>%
+    dplyr::pull(gene_name)
+
+  cat("[INFO] Up-regulated DEGs for pathway analysis (OVERALL): ", length(up_genes_overall), "\n", sep = "")
+  cat("[INFO] Down-regulated DEGs for pathway analysis (OVERALL): ", length(down_genes_overall), "\n", sep = "")
+
+  if (length(up_genes_overall) >= 5) {
+    pathway_results[["OVERALL_KD_vs_CTL_Up"]] <- run_pathway_analysis(
+      gene_list     = up_genes_overall,
+      direction     = "Up",
+      contrast_name = "OVERALL_KD_vs_CTL",
+      run_tag       = run_tag,
+      outdir        = outdir,
+      fdr_cutoff    = 0.05
+    )
+  } else {
+    cat("[WARN] Too few upregulated genes for pathway analysis (OVERALL)\n")
+  }
+
+  if (length(down_genes_overall) >= 5) {
+    pathway_results[["OVERALL_KD_vs_CTL_Down"]] <- run_pathway_analysis(
+      gene_list     = down_genes_overall,
+      direction     = "Down",
+      contrast_name = "OVERALL_KD_vs_CTL",
+      run_tag       = run_tag,
+      outdir        = outdir,
+      fdr_cutoff    = 0.05
+    )
+  } else {
+    cat("[WARN] Too few downregulated genes for pathway analysis (OVERALL)\n")
+  }
+
+  ## fgsea for overall contrast
+  ranked_genes_overall <- tt_overall %>%
+    dplyr::filter(is.finite(logFC), is.finite(P.Value), P.Value > 0) %>%
+    dplyr::mutate(rank_stat = sign(logFC) * -log10(P.Value)) %>%
+    dplyr::arrange(dplyr::desc(rank_stat))
+
+  ranked_vec_overall <- setNames(ranked_genes_overall$rank_stat, ranked_genes_overall$gene_name)
+
+  cat("[INFO] Ranked gene list for fgsea (OVERALL): ", length(ranked_vec_overall), " genes\n", sep = "")
+
+  if (length(ranked_vec_overall) >= 10) {
+    fgsea_results[["OVERALL_KD_vs_CTL"]] <- run_fgsea_analysis(
+      ranked_genes  = ranked_vec_overall,
+      contrast_name = "OVERALL_KD_vs_CTL",
+      run_tag       = run_tag,
+      outdir        = outdir,
+      fdr_cutoff    = 0.05
+    )
+  }
+
+  ## 4.17) DEG summary table --------------------------------
+  deg_summary_file <- paste0("DEG_summary_tissue_", run_tag, ".csv")
+  write.csv(deg_summary, file = file.path(outdir, "tables", deg_summary_file), row.names = FALSE)
+  cat("\nDEG summary written: ", file.path(outdir, "tables", deg_summary_file), "\n", sep = "")
+
+  ## =======================================================
+  ## PATHWAY SANITY CHECKS (at end with gene counts)
+  ## =======================================================
+  cat("\n\n=================================================================\n")
+  cat("=== PATHWAY SANITY CHECKS (Summary with Gene Counts) ===\n")
+  cat("=================================================================\n\n")
+
+  ## Save pathway sanity tracker to file
+  sanity_file <- paste0("Pathway_sanity_checks_", run_tag, ".csv")
+  write.csv(pathway_sanity_tracker, file = file.path(outdir, "tables", sanity_file), row.names = FALSE)
+  cat("[OK] Saved pathway sanity checks to: ", file.path(outdir, "tables", sanity_file), "\n\n", sep = "")
+
+  ## Print summary by contrast and direction
+  cat("--- PATHWAY SANITY CHECK SUMMARY ---\n\n")
+  for (cn_check in unique(pathway_sanity_tracker$Contrast)) {
+    cat("Contrast: ", cn_check, "\n", sep = "")
+    for (dir_check in c("Up", "Down")) {
+      sub_tracker <- pathway_sanity_tracker %>%
+        dplyr::filter(Contrast == cn_check, Direction == dir_check)
+
+      if (nrow(sub_tracker) > 0) {
+        cat("  Direction: ", dir_check, "\n", sep = "")
+        for (i in 1:nrow(sub_tracker)) {
+          row <- sub_tracker[i, ]
+          cat("    Database: ", row$Database, "\n", sep = "")
+          cat("      Input genes: ", row$N_Input_Genes, "\n", sep = "")
+          cat("      Mapped to Entrez: ", row$N_Mapped_Entrez, "\n", sep = "")
+          cat("      Significant pathways (FDR<0.05): ", row$N_Sig_Pathways, "\n", sep = "")
+        }
+      }
+    }
+    cat("\n")
+  }
+
+  ## fgsea sanity checks
+  if (nrow(fgsea_sanity_tracker) > 0) {
+    fgsea_sanity_file <- paste0("fgsea_sanity_checks_", run_tag, ".csv")
+    write.csv(fgsea_sanity_tracker, file = file.path(outdir, "tables", fgsea_sanity_file), row.names = FALSE)
+    cat("[OK] Saved fgsea sanity checks to: ", file.path(outdir, "tables", fgsea_sanity_file), "\n\n", sep = "")
+
+    cat("--- fgsea SANITY CHECK SUMMARY ---\n\n")
+    for (cn_check in unique(fgsea_sanity_tracker$Contrast)) {
+      cat("Contrast: ", cn_check, "\n", sep = "")
+      sub_tracker <- fgsea_sanity_tracker %>%
+        dplyr::filter(Contrast == cn_check)
+
+      if (nrow(sub_tracker) > 0) {
+        for (i in 1:nrow(sub_tracker)) {
+          row <- sub_tracker[i, ]
+          cat("  Database: ", row$Database, "\n", sep = "")
+          cat("    Input genes: ", row$N_Input_Genes, "\n", sep = "")
+          cat("    Pathways tested: ", row$N_Pathways_Tested, "\n", sep = "")
+          cat("    Significant pathways (FDR<0.05): ", row$N_Sig_Pathways, "\n", sep = "")
+        }
+      }
+      cat("\n")
+    }
+  }
+
+  cat("\n=================================================================\n\n")
+
+  ## 4.18) save_core bookkeeping ----------------------------
+  if (!is.null(hero_volcano_file)) {
+    hero_path <- file.path(outdir, "plots", hero_volcano_file)
+    if (file.exists(hero_path)) save_run_file(hero_path, tag = "hero_volcano")
+  }
+
+  try(dedupe(outdir), silent = TRUE)
+  cat("\n======================================\n")
+  cat("=== PIPELINE COMPLETE ===\n")
+  cat("======================================\n\n")
+
+}, error = function(e) {
+
+  cat("\n======================================\n")
+  cat("=== ERROR IN PIPELINE ===\n")
+  cat("======================================\n")
+  cat(conditionMessage(e), "\n\n")
+
+  err_file <- paste0("ERROR_", run_tag, ".txt")
+  writeLines(c("Script error:", conditionMessage(e), "", traceback()), 
+             con = file.path(outdir, "logs", err_file))
+
+  stop(e)
+})
+
+cat("\n=== Script finished ===\n")
