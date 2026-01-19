@@ -128,11 +128,11 @@ source("part2_ora.R")
 - ✅ **Wald statistic ranking**: Uses proper DESeq2 test statistic (not p-value-based)
 - ✅ **Fallback for KEGG**: Uses org.Mm.eg.db if msigdbr fails
 - ✅ **List column handling**: Converts leadingEdge to CSV-compatible format
+- ✅ **Standard fgsea plots**: Combined visualization showing top pathways ranked by |NES|
 
 **Outputs** (added to SAME directory as Part 1):
 - `tables/fgsea_*.csv` - fgsea results
-- `plots/fgsea_plot_*_Up_*.png` - Up-regulated pathways
-- `plots/fgsea_plot_*_Down_*.png` - Down-regulated pathways
+- `plots/fgsea_plot_*.png` - Combined pathway plots (standard fgsea visualization)
 - `tables/fgsea_sanity_check_*.csv` - QC report with pathway statistics
 
 **Sanity Checks Included**:
@@ -142,6 +142,12 @@ source("part2_ora.R")
 - ✅ Up/down-regulated pathway breakdown (by NES sign)
 - ✅ Full summary displayed in console + saved to CSV
 - ✅ Note: fgsea uses ranked list as universe (no separate background needed)
+
+**Plotting Approach**:
+- Standard fgsea visualization: All pathways on one plot
+- Top 20 pathways ranked by absolute NES
+- Color-coded by direction (orange = up-regulated, blue = down-regulated)
+- Vertical line at NES = 0 for reference
 
 **Runtime**: ~5-10 minutes
 

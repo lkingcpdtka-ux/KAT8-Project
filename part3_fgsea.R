@@ -369,34 +369,29 @@ tryCatch({
         write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
         cat("[OK] Saved fgsea table: ", table_file, "\n", sep = "")
 
-        ## Create plots - separate by direction (NES > 0 = Up, NES < 0 = Down)
-        plot_data_up <- sig_results %>%
-          dplyr::filter(NES > 0) %>%
-          dplyr::slice_head(n = 10) %>%
-          dplyr::arrange(NES)
+        ## Create combined plot (standard fgsea visualization)
+        ## Show top pathways from both directions together, ranked by absolute NES
+        plot_data <- sig_results %>%
+          dplyr::mutate(abs_NES = abs(NES)) %>%
+          dplyr::arrange(desc(abs_NES)) %>%
+          dplyr::slice_head(n = 20) %>%  ## Top 20 pathways by |NES|
+          dplyr::arrange(NES) %>%  ## Order by NES so negative at bottom, positive at top
+          dplyr::mutate(
+            pathway_label = ifelse(!is.na(Description) & Description != "", Description, pathway),
+            pathway_label = factor(pathway_label, levels = pathway_label),
+            Direction = ifelse(NES > 0, "Up-regulated", "Down-regulated")
+          )
 
-        plot_data_down <- sig_results %>%
-          dplyr::filter(NES < 0) %>%
-          dplyr::slice_head(n = 10) %>%
-          dplyr::arrange(desc(NES))
-
-        ## Plot UP-regulated pathways
-        if (nrow(plot_data_up) > 0) {
-          plot_data_up <- plot_data_up %>%
-            dplyr::mutate(
-              pathway_label = ifelse(!is.na(Description) & Description != "", Description, pathway),
-              pathway_label = factor(pathway_label, levels = pathway_label)
-            )
-
-          p_fgsea_up <- ggplot(plot_data_up, aes(x = NES, y = pathway_label, fill = padj)) +
+        if (nrow(plot_data) > 0) {
+          ## Use consistent colors: orange for up, blue for down
+          p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = Direction)) +
             geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
-            scale_fill_gradient(
-              low  = "#FDD49E",  ## Light orange
-              high = "#E69F00",  ## Dark orange
-              name = "Adj.\nP-value"
+            scale_fill_manual(
+              values = c("Up-regulated" = "#E69F00", "Down-regulated" = "#0072B2"),
+              name = "Direction"
             ) +
             labs(
-              title = paste0("fgsea ", toupper(db_name), " (Up-regulated): ", contrast_name),
+              title = paste0("fgsea ", toupper(db_name), ": ", contrast_name),
               x = "Normalized Enrichment Score (NES)",
               y = NULL
             ) +
@@ -410,50 +405,13 @@ tryCatch({
               legend.text = element_text(size = 9),
               legend.position = "right",
               panel.border = element_rect(color = "black", fill = NA, linewidth = 1)
-            )
-
-          plot_file_up <- paste0("fgsea_plot_", db_name, "_", contrast_name, "_Up_", run_tag, ".png")
-          ggsave(file.path(outdir, "plots", plot_file_up), plot = p_fgsea_up, width = 12,
-                 height = max(6, nrow(plot_data_up) * 0.4), dpi = 300, bg = "white")
-          cat("[OK] Saved fgsea UP plot: ", plot_file_up, "\n", sep = "")
-        }
-
-        ## Plot DOWN-regulated pathways
-        if (nrow(plot_data_down) > 0) {
-          plot_data_down <- plot_data_down %>%
-            dplyr::mutate(
-              pathway_label = ifelse(!is.na(Description) & Description != "", Description, pathway),
-              pathway_label = factor(pathway_label, levels = pathway_label)
-            )
-
-          p_fgsea_down <- ggplot(plot_data_down, aes(x = NES, y = pathway_label, fill = padj)) +
-            geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
-            scale_fill_gradient(
-              low  = "#9ECAE1",  ## Light blue
-              high = "#0072B2",  ## Dark blue/teal
-              name = "Adj.\nP-value"
             ) +
-            labs(
-              title = paste0("fgsea ", toupper(db_name), " (Down-regulated): ", contrast_name),
-              x = "Normalized Enrichment Score (NES)",
-              y = NULL
-            ) +
-            theme_classic(base_size = 12) +
-            theme(
-              plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
-              axis.text.y = element_text(size = 10, color = "black"),
-              axis.text.x = element_text(size = 10, color = "black", face = "bold"),
-              axis.title.x = element_text(size = 12, face = "bold"),
-              legend.title = element_text(size = 10, face = "bold"),
-              legend.text = element_text(size = 9),
-              legend.position = "right",
-              panel.border = element_rect(color = "black", fill = NA, linewidth = 1)
-            )
+            geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5)
 
-          plot_file_down <- paste0("fgsea_plot_", db_name, "_", contrast_name, "_Down_", run_tag, ".png")
-          ggsave(file.path(outdir, "plots", plot_file_down), plot = p_fgsea_down, width = 12,
-                 height = max(6, nrow(plot_data_down) * 0.4), dpi = 300, bg = "white")
-          cat("[OK] Saved fgsea DOWN plot: ", plot_file_down, "\n", sep = "")
+          plot_file <- paste0("fgsea_plot_", db_name, "_", contrast_name, "_", run_tag, ".png")
+          ggsave(file.path(outdir, "plots", plot_file), plot = p_fgsea, width = 12,
+                 height = max(6, nrow(plot_data) * 0.35), dpi = 300, bg = "white")
+          cat("[OK] Saved fgsea plot: ", plot_file, "\n", sep = "")
         }
       }
     }
