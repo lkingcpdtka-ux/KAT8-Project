@@ -597,6 +597,38 @@ tryCatch({
   write.csv(pathway_sanity_tracker, file = file.path(outdir, "tables", sanity_file), row.names = FALSE)
   cat("\n[OK] Saved ORA sanity check table: ", sanity_file, "\n", sep = "")
 
+  ## 4.6) Print comprehensive sanity check summary -----------
+  cat("\n==========================================================\n")
+  cat("=== SANITY CHECK SUMMARY: ORA PATHWAY ANALYSIS ===\n")
+  cat("==========================================================\n")
+  cat("Universe setting: use_universe = ", use_universe, "\n", sep = "")
+  if (use_universe) {
+    cat("  (Conservative: uses all DESeq2-tested genes as background)\n")
+  } else {
+    cat("  (Liberal: uses all genes in database as background)\n")
+  }
+  cat("\n")
+
+  ## Summarize across all contrasts
+  for (cn_name in unique(pathway_sanity_tracker$Contrast)) {
+    cat("--- ", cn_name, " ---\n", sep = "")
+    subset_data <- pathway_sanity_tracker[pathway_sanity_tracker$Contrast == cn_name, ]
+
+    for (i in seq_len(nrow(subset_data))) {
+      row <- subset_data[i, ]
+      cat("  ", row$Direction, " | ", row$Database, ":\n", sep = "")
+      cat("    Input genes: ", row$N_Input_Genes, "\n", sep = "")
+      cat("    Mapped to Entrez: ", row$N_Mapped_Entrez,
+          " (", round(100 * row$N_Mapped_Entrez / row$N_Input_Genes, 1), "%)\n", sep = "")
+      if (!is.na(row$N_Universe_Entrez)) {
+        cat("    Universe size: ", row$N_Universe_Entrez, "\n", sep = "")
+      }
+      cat("    Significant pathways (padj<0.05): ", row$N_Sig_Pathways, "\n", sep = "")
+    }
+    cat("\n")
+  }
+  cat("==========================================================\n\n")
+
   cat("\n======================================\n")
   cat("=== PART 2 (ORA) COMPLETE ===\n")
   cat("======================================\n\n")

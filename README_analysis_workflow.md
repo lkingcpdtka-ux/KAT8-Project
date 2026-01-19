@@ -35,9 +35,19 @@ The split approach provides:
 - Heatmaps of top DEGs (ComplexHeatmap)
 - Genes of interest analysis (focused heatmaps and volcanos)
 - Overall contrast (all depots/sexes combined)
+- **Comprehensive sanity checks** showing filtering and DEG statistics
 
 **What it does NOT do**:
 - Pathway enrichment (ORA or fgsea)
+
+**Sanity Checks Included**:
+- ✅ Gene prefiltering statistics (before/after counts, percent retained)
+- ✅ Per-contrast DEG counts at different thresholds:
+  - Total genes tested
+  - DEGs with FDR < 0.05 only
+  - DEGs with FDR < 0.05 AND |logFC| > 1 (up/down breakdown)
+  - Percent of genes that are DEGs
+- ✅ All statistics displayed in console for easy assessment
 
 **Outputs** (all in `savepoints/RUN_YYYYMMDD_HHMMSS/`):
 - `tables/DE_tissue_*.csv` - Differential expression results
@@ -65,7 +75,7 @@ source("part1_main_analysis.R")
   - GO Biological Processes (GO:BP)
   - KEGG pathways
 - Creates pathway bar plots (direction-specific colors)
-- Generates sanity check reports
+- Generates comprehensive sanity check reports (CSV + console output)
 
 **Key Fixes Applied**:
 - ✅ **Optional universe/background**: Toggle between conservative (with universe) or liberal (default) approaches
@@ -83,7 +93,14 @@ use_universe <- TRUE   ## OPTIONAL: statistically rigorous, fewer hits
 **Outputs** (added to SAME directory as Part 1):
 - `tables/ORA_*.csv` - Pathway enrichment tables
 - `plots/ORA_barplot_*.png` - Pathway bar plots
-- `tables/ORA_sanity_check_*.csv` - QC report
+- `tables/ORA_sanity_check_*.csv` - QC report with gene mapping and pathway counts
+
+**Sanity Checks Included**:
+- ✅ Universe setting displayed (conservative vs liberal)
+- ✅ Gene ID mapping statistics (input genes → Entrez IDs, mapping rate)
+- ✅ Universe size (if using universe parameter)
+- ✅ Significant pathway counts per contrast/direction/database
+- ✅ Full summary displayed in console + saved to CSV
 
 **Runtime**: ~2-5 minutes
 
@@ -104,6 +121,7 @@ source("part2_ora.R")
   - KEGG pathways
 - Uses DESeq2 Wald statistic for gene ranking
 - Creates direction-specific pathway plots (NES-based)
+- Generates comprehensive sanity check reports (CSV + console output)
 
 **Key Fixes Applied**:
 - ✅ **Correct msigdbr filtering**: Fixed KEGG subcategory issue
@@ -115,7 +133,15 @@ source("part2_ora.R")
 - `tables/fgsea_*.csv` - fgsea results
 - `plots/fgsea_plot_*_Up_*.png` - Up-regulated pathways
 - `plots/fgsea_plot_*_Down_*.png` - Down-regulated pathways
-- `tables/fgsea_sanity_check_*.csv` - QC report
+- `tables/fgsea_sanity_check_*.csv` - QC report with pathway statistics
+
+**Sanity Checks Included**:
+- ✅ Ranked gene list size per contrast
+- ✅ Number of pathways tested per database
+- ✅ Significant pathway counts (padj < 0.05)
+- ✅ Up/down-regulated pathway breakdown (by NES sign)
+- ✅ Full summary displayed in console + saved to CSV
+- ✅ Note: fgsea uses ranked list as universe (no separate background needed)
 
 **Runtime**: ~5-10 minutes
 

@@ -258,10 +258,23 @@ tryCatch({
   min_samples <- min(table(sample_annot$GroupFull))
 
   keep <- rowSums(count_matrix_tissue >= min_count) >= min_samples
-  cat("\nPrefilter rule: keep genes with counts >= ", min_count,
-      " in at least ", min_samples, " samples.\n", sep = "")
-  cat("Genes before filter: ", nrow(count_matrix_tissue), "\n", sep = "")
-  cat("Genes after  filter: ", sum(keep), "\n", sep = "")
+
+  ## Comprehensive filtering sanity check
+  n_before <- nrow(count_matrix_tissue)
+  n_after <- sum(keep)
+  n_removed <- n_before - n_after
+  pct_retained <- round(100 * n_after / n_before, 1)
+
+  cat("\n==========================================================\n")
+  cat("=== SANITY CHECK: GENE PREFILTERING ===\n")
+  cat("==========================================================\n")
+  cat("Prefilter rule: counts >= ", min_count, " in >= ", min_samples, " samples\n", sep = "")
+  cat("  (min_samples = smallest group size for per-stratum contrasts)\n\n")
+  cat("Genes BEFORE prefiltering:  ", n_before, "\n", sep = "")
+  cat("Genes AFTER prefiltering:   ", n_after, "\n", sep = "")
+  cat("Genes REMOVED:              ", n_removed, " (", 100 - pct_retained, "%)\n", sep = "")
+  cat("Genes RETAINED:             ", pct_retained, "%\n", sep = "")
+  cat("==========================================================\n\n")
 
   count_matrix_filt <- count_matrix_tissue[keep, , drop = FALSE]
 
@@ -543,17 +556,34 @@ tryCatch({
     de_file <- paste0("DE_tissue_", cn, "_", run_tag, ".csv")
     write.csv(tt, file = file.path(outdir, "tables", de_file), row.names = TRUE)
 
-    n_sig <- sum(tt$adj.P.Val < fdr_cut_tissue, na.rm = TRUE)
-    cat("DE table written: ", file.path(outdir, "tables", de_file), "\n", sep = "")
-    cat("Number of genes with FDR < 0.05 (", cn, "): ", n_sig, "\n", sep = "")
+    ## Calculate comprehensive DEG statistics
+    n_total <- nrow(tt)
+    n_valid_pval <- sum(!is.na(tt$adj.P.Val))
+    n_fdr_only <- sum(tt$adj.P.Val < fdr_cut_tissue, na.rm = TRUE)
+    n_up_both <- sum(tt$adj.P.Val < fdr_cut_tissue & tt$logFC > logFC_cut_tissue, na.rm = TRUE)
+    n_down_both <- sum(tt$adj.P.Val < fdr_cut_tissue & tt$logFC < -logFC_cut_tissue, na.rm = TRUE)
+    n_both <- n_up_both + n_down_both
 
-    deg_summary$N_DEG_FDR_lt_0_05[deg_summary$Contrast == cn] <- n_sig
-    deg_summary$N_Up[deg_summary$Contrast == cn] <- sum(
-      tt$adj.P.Val < fdr_cut_tissue & tt$logFC >  logFC_cut_tissue, na.rm = TRUE
-    )
-    deg_summary$N_Down[deg_summary$Contrast == cn] <- sum(
-      tt$adj.P.Val < fdr_cut_tissue & tt$logFC < -logFC_cut_tissue, na.rm = TRUE
-    )
+    cat("\n==========================================================\n")
+    cat("=== SANITY CHECK: ", cn, " ===\n", sep = "")
+    cat("==========================================================\n")
+    cat("Total genes tested by DESeq2:           ", n_total, "\n", sep = "")
+    cat("Genes with valid adjusted p-value:      ", n_valid_pval, "\n", sep = "")
+    cat("\n--- DEG Counts at Different Thresholds ---\n")
+    cat("DEGs (FDR < ", fdr_cut_tissue, " only):               ", n_fdr_only, "\n", sep = "")
+    cat("DEGs (FDR < ", fdr_cut_tissue, " AND |logFC| > ", logFC_cut_tissue, "):  ", n_both, "\n", sep = "")
+    cat("  - Up-regulated (logFC > ", logFC_cut_tissue, "):       ", n_up_both, "\n", sep = "")
+    cat("  - Down-regulated (logFC < -", logFC_cut_tissue, "):    ", n_down_both, "\n", sep = "")
+    cat("\nPercent of tested genes that are DEGs:\n")
+    cat("  - FDR-only threshold:                 ", round(100 * n_fdr_only / n_total, 2), "%\n", sep = "")
+    cat("  - FDR + logFC threshold:              ", round(100 * n_both / n_total, 2), "%\n", sep = "")
+    cat("==========================================================\n")
+    cat("DE table written: ", file.path(outdir, "tables", de_file), "\n", sep = "")
+    cat("==========================================================\n\n")
+
+    deg_summary$N_DEG_FDR_lt_0_05[deg_summary$Contrast == cn] <- n_fdr_only
+    deg_summary$N_Up[deg_summary$Contrast == cn] <- n_up_both
+    deg_summary$N_Down[deg_summary$Contrast == cn] <- n_down_both
 
     ## Volcano
     tt_plot <- tt %>%
@@ -913,14 +943,30 @@ tryCatch({
   de_overall_file <- paste0("DE_tissue_OVERALL_KD_vs_CTL_", run_tag, ".csv")
   write.csv(tt_overall, file = file.path(outdir, "tables", de_overall_file), row.names = TRUE)
 
+  ## Calculate comprehensive DEG statistics for overall contrast
+  n_total_overall <- nrow(tt_overall)
+  n_valid_pval_overall <- sum(!is.na(tt_overall$adj.P.Val))
   n_sig_overall <- sum(tt_overall$adj.P.Val < fdr_cut_tissue, na.rm = TRUE)
   n_up_overall <- sum(tt_overall$adj.P.Val < fdr_cut_tissue & tt_overall$logFC > logFC_cut_tissue, na.rm = TRUE)
   n_down_overall <- sum(tt_overall$adj.P.Val < fdr_cut_tissue & tt_overall$logFC < -logFC_cut_tissue, na.rm = TRUE)
+  n_both_overall <- n_up_overall + n_down_overall
 
+  cat("\n==========================================================\n")
+  cat("=== SANITY CHECK: OVERALL_KD_vs_CTL ===\n")
+  cat("==========================================================\n")
+  cat("Total genes tested by DESeq2:           ", n_total_overall, "\n", sep = "")
+  cat("Genes with valid adjusted p-value:      ", n_valid_pval_overall, "\n", sep = "")
+  cat("\n--- DEG Counts at Different Thresholds ---\n")
+  cat("DEGs (FDR < ", fdr_cut_tissue, " only):               ", n_sig_overall, "\n", sep = "")
+  cat("DEGs (FDR < ", fdr_cut_tissue, " AND |logFC| > ", logFC_cut_tissue, "):  ", n_both_overall, "\n", sep = "")
+  cat("  - Up-regulated (logFC > ", logFC_cut_tissue, "):       ", n_up_overall, "\n", sep = "")
+  cat("  - Down-regulated (logFC < -", logFC_cut_tissue, "):    ", n_down_overall, "\n", sep = "")
+  cat("\nPercent of tested genes that are DEGs:\n")
+  cat("  - FDR-only threshold:                 ", round(100 * n_sig_overall / n_total_overall, 2), "%\n", sep = "")
+  cat("  - FDR + logFC threshold:              ", round(100 * n_both_overall / n_total_overall, 2), "%\n", sep = "")
+  cat("==========================================================\n")
   cat("DE table written: ", file.path(outdir, "tables", de_overall_file), "\n", sep = "")
-  cat("Number of genes with FDR < 0.05: ", n_sig_overall, "\n", sep = "")
-  cat("Up-regulated (|logFC| > ", logFC_cut_tissue, "): ", n_up_overall, "\n", sep = "")
-  cat("Down-regulated (|logFC| > ", logFC_cut_tissue, "): ", n_down_overall, "\n", sep = "")
+  cat("==========================================================\n\n")
 
   ## Add to summary table
   deg_summary <- rbind(

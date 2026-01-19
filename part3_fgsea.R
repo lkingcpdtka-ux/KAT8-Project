@@ -512,6 +512,33 @@ tryCatch({
   write.csv(fgsea_sanity_tracker, file = file.path(outdir, "tables", sanity_file), row.names = FALSE)
   cat("\n[OK] Saved fgsea sanity check table: ", sanity_file, "\n", sep = "")
 
+  ## 4.6) Print comprehensive sanity check summary -----------
+  cat("\n==========================================================\n")
+  cat("=== SANITY CHECK SUMMARY: fgsea PATHWAY ANALYSIS ===\n")
+  cat("==========================================================\n")
+  cat("Note: fgsea uses ranked gene list as universe (no separate background needed)\n")
+  cat("Ranking metric: DESeq2 Wald statistic\n\n")
+
+  ## Summarize across all contrasts
+  for (cn_name in unique(fgsea_sanity_tracker$Contrast)) {
+    cat("--- ", cn_name, " ---\n", sep = "")
+    subset_data <- fgsea_sanity_tracker[fgsea_sanity_tracker$Contrast == cn_name, ]
+
+    for (i in seq_len(nrow(subset_data))) {
+      row <- subset_data[i, ]
+      cat("  ", row$Database, ":\n", sep = "")
+      cat("    Ranked gene list size: ", row$N_Input_Genes, "\n", sep = "")
+      cat("    Pathways tested: ", row$N_Pathways_Tested, "\n", sep = "")
+      cat("    Significant pathways (padj<0.05): ", row$N_Sig_Pathways, "\n", sep = "")
+      if (row$N_Sig_Pathways > 0) {
+        cat("      Up-regulated (NES>0): ", row$N_Sig_Up, "\n", sep = "")
+        cat("      Down-regulated (NES<0): ", row$N_Sig_Down, "\n", sep = "")
+      }
+    }
+    cat("\n")
+  }
+  cat("==========================================================\n\n")
+
   cat("\n======================================\n")
   cat("=== PART 3 (fgsea) COMPLETE ===\n")
   cat("======================================\n\n")
