@@ -94,7 +94,7 @@ if (!dir.exists(file.path(outdir, "plots"))) {
 
 ## 3) Parameters --------------------------------------------
 fdr_cut   <- 0.05
-simplify_go_bp <- TRUE
+simplify_go_bp <- FALSE
 simplify_go_cutoff <- 0.7
 top_n_per_direction <- 10
 
@@ -345,43 +345,8 @@ tryCatch({
             )
           )
 
-          if (simplify_go && !is.null(go_bp_term2gene)) {
-            cat("[INFO] Simplifying GO:BP results (cutoff=", simplify_cutoff, ")...\n", sep = "")
-            tryCatch({
-              gsea_obj <- clusterProfiler::gseGO(
-                geneList = ranked_genes,
-                OrgDb = org.Mm.eg.db,
-                keyType = "SYMBOL",
-                ont = "BP",
-                minGSSize = 5,
-                maxGSSize = 500,
-                pvalueCutoff = 1,
-                verbose = FALSE
-              )
-              gsea_simplified <- clusterProfiler::simplify(
-                gsea_obj,
-                cutoff = simplify_cutoff,
-                by = "p.adjust",
-                select_fun = min
-              )
-              if (!is.null(gsea_simplified) && nrow(as.data.frame(gsea_simplified)) > 0) {
-                simplified_df <- as.data.frame(gsea_simplified) %>%
-                  dplyr::arrange(p.adjust) %>%
-                  dplyr::rename(
-                    pathway = ID,
-                    padj = p.adjust,
-                    pval = pvalue,
-                    NES = NES,
-                    Description = Description
-                  )
-                results$gobp_simplified <- simplified_df
-                cat("[OK] Simplified GO:BP results: ", nrow(simplified_df), " pathways\n", sep = "")
-              } else {
-                cat("[INFO] Simplified GO:BP returned no pathways\n")
-              }
-            }, error = function(e) {
-              cat("[WARN] GO:BP simplification failed: ", conditionMessage(e), "\n", sep = "")
-            })
+          if (simplify_go) {
+            cat("[INFO] GO:BP simplification skipped (fgsea-only logic enabled)\n")
           }
         }
       }, error = function(e) {
