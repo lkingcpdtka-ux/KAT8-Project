@@ -210,6 +210,28 @@ tryCatch({
     })
   })
 
+  ## WikiPathways gene sets
+  cat("[INFO] Building WikiPathways gene sets from msigdbr...\n")
+  wikipathways_list <- NULL
+  tryCatch({
+    msigdb_wp <- msigdbr(
+      species = "Mus musculus",
+      collection = "C2",
+      subcollection = "CP:WIKIPATHWAYS"
+    )
+    if (nrow(msigdb_wp) == 0) {
+      cat("[WARN] No WikiPathways gene sets found in msigdbr\n")
+    } else {
+      wikipathways_list <- split(msigdb_wp$gene_symbol, msigdb_wp$gs_name)
+      wikipathways_list <- wikipathways_list[
+        sapply(wikipathways_list, length) >= 5 & sapply(wikipathways_list, length) <= 500
+      ]
+      cat("[OK] WikiPathways gene sets: ", length(wikipathways_list), " pathways\n", sep = "")
+    }
+  }, error = function(e) {
+    cat("[WARN] msigdbr WikiPathways failed: ", conditionMessage(e), "\n")
+  })
+
   ## Hallmark gene sets
   cat("[INFO] Building Hallmark gene sets from msigdbr...\n")
   hallmark_list <- NULL
@@ -228,7 +250,7 @@ tryCatch({
 
   ## 4.3) fgsea analysis function ----------------------------
   run_fgsea_analysis <- function(ranked_genes, contrast_name,
-                                 go_bp_list, go_bp_term2gene, kegg_list, hallmark_list,
+                                 go_bp_list, go_bp_term2gene, kegg_list, wikipathways_list, hallmark_list,
                                  run_tag, outdir, fdr_cutoff = 0.05,
                                  simplify_go = FALSE, simplify_cutoff = 0.7,
                                  top_n_per_direction = 10) {
@@ -414,6 +436,64 @@ tryCatch({
       })
     } else {
       cat("[WARN] KEGG gene sets not available\n")
+    }
+
+    ## WikiPathways fgsea
+    if (!is.null(wikipathways_list) && length(wikipathways_list) > 0) {
+      tryCatch({
+        cat("[INFO] Running fgsea for WikiPathways (", length(wikipathways_list), " gene sets)...\n", sep = "")
+
+        fgsea_wp <- fgsea(
+          pathways = wikipathways_list,
+          stats    = ranked_genes,
+          minSize  = 5,
+          maxSize  = 500,
+          nPermSimple = 10000
+        )
+
+        if (!is.null(fgsea_wp) && nrow(fgsea_wp) > 0) {
+          fgsea_wp <- fgsea_wp %>%
+            dplyr::arrange(padj)
+
+          results$wikipathways <- fgsea_wp
+          n_sig <- sum(fgsea_wp$padj < fdr_cutoff, na.rm = TRUE)
+          n_sig_up <- sum(fgsea_wp$padj < fdr_cutoff & fgsea_wp$NES > 0, na.rm = TRUE)
+          n_sig_down <- sum(fgsea_wp$padj < fdr_cutoff & fgsea_wp$NES < 0, na.rm = TRUE)
+          cat("[OK] fgsea WikiPathways: ", nrow(fgsea_wp), " pathways tested, ",
+              n_sig, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
+
+          fgsea_sanity_tracker <<- rbind(
+            fgsea_sanity_tracker,
+            data.frame(
+              Contrast = contrast_name,
+              Database = "WikiPathways",
+              N_Input_Genes = length(ranked_genes),
+              N_Pathways_Tested = nrow(fgsea_wp),
+              N_Sig_Pathways = n_sig,
+              N_Sig_Up = n_sig_up,
+              N_Sig_Down = n_sig_down,
+              stringsAsFactors = FALSE
+            )
+          )
+        }
+      }, error = function(e) {
+        cat("[WARN] fgsea WikiPathways failed: ", conditionMessage(e), "\n", sep = "")
+        fgsea_sanity_tracker <<- rbind(
+          fgsea_sanity_tracker,
+          data.frame(
+            Contrast = contrast_name,
+            Database = "WikiPathways",
+            N_Input_Genes = length(ranked_genes),
+            N_Pathways_Tested = 0,
+            N_Sig_Pathways = 0,
+            N_Sig_Up = 0,
+            N_Sig_Down = 0,
+            stringsAsFactors = FALSE
+          )
+        )
+      })
+    } else {
+      cat("[WARN] WikiPathways gene sets not available\n")
     }
 
     ## Hallmark fgsea
@@ -608,6 +688,7 @@ tryCatch({
         go_bp_list    = go_bp_list,
         go_bp_term2gene = go_bp_term2gene,
         kegg_list     = kegg_list,
+        wikipathways_list = wikipathways_list,
         hallmark_list = hallmark_list,
         run_tag       = run_tag,
         outdir        = outdir,
