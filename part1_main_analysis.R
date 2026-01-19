@@ -464,11 +464,11 @@ tryCatch({
 
   p_pca <- ggplot(
     pca_df,
-    aes(x = PC1, y = PC2, color = Genotype, fill = DepotSex, shape = Genotype, label = Sample)
+    aes(x = PC1, y = PC2, color = DepotSex, fill = DepotSex, shape = Genotype, label = Sample)
   ) +
     geom_point(size = 3, stroke = 1) +
     geom_text_repel(size = 3, max.overlaps = 60, color = "black") +
-    scale_color_manual(values = genotype_colors, name = "Genotype") +
+    scale_color_manual(values = depot_sex_fill, name = "Depot/Sex") +
     scale_fill_manual(values = depot_sex_fill, name = "Depot/Sex") +
     scale_shape_manual(values = c("CTL" = 21, "KAT8KD" = 24), name = "Genotype") +
     labs(
@@ -479,7 +479,7 @@ tryCatch({
     theme_bw(base_size = 14) +
     theme(plot.title = element_text(hjust = 0.5, face = "bold"),
           legend.position = "right") +
-    guides(shape = "none")
+    guides(color = "none")
 
   pca_file <- paste0("PCA_tissue_VST_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", pca_file), plot = p_pca, width = 8, height = 6, dpi = 300)
@@ -502,18 +502,18 @@ tryCatch({
 
   p_mds <- ggplot(
     mds_df,
-    aes(x = MDS1, y = MDS2, color = Genotype, fill = DepotSex, shape = Genotype, label = Sample)
+    aes(x = MDS1, y = MDS2, color = DepotSex, fill = DepotSex, shape = Genotype, label = Sample)
   ) +
     geom_point(size = 3, stroke = 1) +
     geom_text_repel(size = 3, max.overlaps = 60, color = "black") +
-    scale_color_manual(values = genotype_colors, name = "Genotype") +
+    scale_color_manual(values = depot_sex_fill, name = "Depot/Sex") +
     scale_fill_manual(values = depot_sex_fill, name = "Depot/Sex") +
     scale_shape_manual(values = c("CTL" = 21, "KAT8KD" = 24), name = "Genotype") +
     labs(title = "Tissue MDS (VST, DESeq2)", x = "MDS1", y = "MDS2") +
     theme_bw(base_size = 14) +
     theme(plot.title = element_text(hjust = 0.5, face = "bold"),
           legend.position = "right") +
-    guides(shape = "none")
+    guides(color = "none")
 
   mds_file <- paste0("MDS_tissue_VST_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", mds_file), plot = p_mds, width = 8, height = 6, dpi = 300)
@@ -1126,8 +1126,8 @@ tryCatch({
 
       ## Save (increased height to prevent sample name cutoff)
       heat_overall_file <- paste0("Heatmap_tissue_OVERALL_KD_vs_CTL_", run_tag, ".png")
-      png(file.path(outdir, "plots", heat_overall_file), width = 2400, height = 3800, res = 200)
-      draw(heat_overall, padding = unit(c(2, 2, 25, 2), "mm"))  ## Extra bottom padding for sample names
+      png(file.path(outdir, "plots", heat_overall_file), width = 2400, height = 4200, res = 200)
+      draw(heat_overall, padding = unit(c(2, 2, 40, 2), "mm"))  ## Extra bottom padding for sample names
       dev.off()
       cat("Heatmap saved: ", file.path(outdir, "plots", heat_overall_file), "\n", sep = "")
     } else {
