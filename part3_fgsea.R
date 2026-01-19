@@ -677,6 +677,18 @@ tryCatch({
 
     ## Create named vector (gene names -> Wald statistic)
     ranked_vec <- setNames(ranked_genes$stat, rownames(ranked_genes))
+    n_pos <- sum(ranked_vec > 0, na.rm = TRUE)
+    n_neg <- sum(ranked_vec < 0, na.rm = TRUE)
+    n_zero <- sum(ranked_vec == 0, na.rm = TRUE)
+    n_total <- length(ranked_vec)
+    pct_pos <- if (n_total == 0) 0 else round(100 * n_pos / n_total, 1)
+    pct_neg <- if (n_total == 0) 0 else round(100 * n_neg / n_total, 1)
+    pct_zero <- if (n_total == 0) 0 else round(100 * n_zero / n_total, 1)
+    cat("[INFO] Ranked stats distribution: +", n_pos, " (", pct_pos, "%), -",
+        n_neg, " (", pct_neg, "%), 0=", n_zero, " (", pct_zero, "%)\n", sep = "")
+    if (pct_neg < 5) {
+      cat("[WARN] Low fraction of negative stats; down-regulated pathways may be scarce.\n")
+    }
 
     cat("[INFO] Ranked gene list for fgsea: ", length(ranked_vec), " genes\n", sep = "")
 
