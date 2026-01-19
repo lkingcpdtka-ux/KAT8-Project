@@ -234,6 +234,8 @@ tryCatch({
   if (any(is.na(sample_annot$Sample))) stop("Sample annotation failed to match count matrix columns.")
 
   sample_annot$Genotype <- factor(sample_annot$Genotype, levels = c("CTL", "KAT8KD"))
+  sample_annot$Depot <- factor(sample_annot$Depot, levels = c("iWAT", "gWAT"))
+  sample_annot$Sex <- factor(sample_annot$Sex, levels = c("F", "M"))
   sample_annot$DepotSex <- factor(paste(sample_annot$Depot, sample_annot$Sex, sep = "_"),
                                   levels = c("iWAT_F", "iWAT_M", "gWAT_F", "gWAT_M"))
   sample_annot$GroupFull <- factor(

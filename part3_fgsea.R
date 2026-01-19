@@ -486,6 +486,10 @@ tryCatch({
 
         if (!is.null(fgsea_wp) && nrow(fgsea_wp) > 0) {
           fgsea_wp <- fgsea_wp %>%
+            dplyr::mutate(
+              Description = gsub("^WIKIPATHWAYS_|^WP", "", pathway),
+              Description = gsub("_", " ", Description)
+            ) %>%
             dplyr::arrange(padj)
 
           results$wikipathways <- fgsea_wp
@@ -606,6 +610,9 @@ tryCatch({
         if (nrow(sig_results) == 0) {
           cat("[INFO] No significant fgsea pathways in ", db_name, "\n", sep = "")
           next
+        }
+        if (!"Description" %in% colnames(sig_results)) {
+          sig_results$Description <- sig_results$pathway
         }
 
         ## Convert list columns to character (leadingEdge is a list)
