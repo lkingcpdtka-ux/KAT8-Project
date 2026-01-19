@@ -188,12 +188,6 @@ run_fgsea <- function(ranked_vec, contrast_name, run_tag, outdir, fdr_cutoff) {
       next
     }
 
-    list_cols <- vapply(sig_results, is.list, logical(1))
-    if (any(list_cols)) {
-      sig_results[list_cols] <- lapply(sig_results[list_cols], function(x) {
-        vapply(x, function(item) paste(item, collapse = ","), character(1))
-      })
-    }
     table_file <- paste0("fgsea_", db_name, "_", contrast_name, "_", run_tag, ".csv")
     write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
     cat("[OK] Saved fgsea table: ", table_file, "\n", sep = "")
