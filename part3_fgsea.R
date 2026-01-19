@@ -25,7 +25,9 @@ required_bioc_pkgs <- c(
   "fgsea",
   "org.Mm.eg.db",
   "AnnotationDbi",
-  "GO.db"
+  "GO.db",
+  "clusterProfiler",
+  "GOSemSim"
 )
 
 if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
@@ -39,6 +41,7 @@ suppressPackageStartupMessages({
   library(org.Mm.eg.db)
   library(AnnotationDbi)
   library(GO.db)
+  library(clusterProfiler)
   library(msigdbr)
 })
 
@@ -91,6 +94,9 @@ if (!dir.exists(file.path(outdir, "plots"))) {
 
 ## 3) Parameters --------------------------------------------
 fdr_cut   <- 0.05
+simplify_go_bp <- TRUE
+simplify_go_cutoff <- 0.7
+top_n_per_direction <- 10
 
 ## Sanity check tracker
 fgsea_sanity_tracker <- data.frame(
@@ -99,6 +105,8 @@ fgsea_sanity_tracker <- data.frame(
   N_Input_Genes = integer(),
   N_Pathways_Tested = integer(),
   N_Sig_Pathways = integer(),
+  N_Sig_Up = integer(),
+  N_Sig_Down = integer(),
   stringsAsFactors = FALSE
 )
 
@@ -139,6 +147,7 @@ tryCatch({
   })
 
   go_bp_list <- NULL
+  go_bp_term2gene <- NULL
   if (!is.null(go_bp_genes)) {
     ## Filter for BP ontology and remove NA symbols
     go_bp_genes <- go_bp_genes %>%
@@ -147,6 +156,7 @@ tryCatch({
 
     ## Convert to named list (pathway name -> gene vector)
     go_bp_list <- split(go_bp_genes$SYMBOL, go_bp_genes$GOALL)
+    go_bp_term2gene <- go_bp_genes %>% dplyr::select(GOALL, SYMBOL)
 
     ## Filter for gene set size
     go_bp_list <- go_bp_list[sapply(go_bp_list, length) >= 5 & sapply(go_bp_list, length) <= 500]
@@ -200,10 +210,28 @@ tryCatch({
     })
   })
 
+  ## Hallmark gene sets
+  cat("[INFO] Building Hallmark gene sets from msigdbr...\n")
+  hallmark_list <- NULL
+  tryCatch({
+    msigdb_hallmark <- msigdbr(species = "Mus musculus", category = "H")
+    if (nrow(msigdb_hallmark) == 0) {
+      cat("[WARN] No Hallmark gene sets found in msigdbr\n")
+    } else {
+      hallmark_list <- split(msigdb_hallmark$gene_symbol, msigdb_hallmark$gs_name)
+      hallmark_list <- hallmark_list[sapply(hallmark_list, length) >= 5 & sapply(hallmark_list, length) <= 500]
+      cat("[OK] Hallmark gene sets: ", length(hallmark_list), " pathways\n", sep = "")
+    }
+  }, error = function(e) {
+    cat("[WARN] msigdbr Hallmark failed: ", conditionMessage(e), "\n")
+  })
+
   ## 4.3) fgsea analysis function ----------------------------
   run_fgsea_analysis <- function(ranked_genes, contrast_name,
-                                 go_bp_list, kegg_list,
-                                 run_tag, outdir, fdr_cutoff = 0.05) {
+                                 go_bp_list, go_bp_term2gene, kegg_list, hallmark_list,
+                                 run_tag, outdir, fdr_cutoff = 0.05,
+                                 simplify_go = FALSE, simplify_cutoff = 0.7,
+                                 top_n_per_direction = 10) {
 
     cat("\n--- fgsea (GSEA): ", contrast_name, " ---\n", sep = "")
     cat("[INFO] Ranked gene list size: ", length(ranked_genes), " genes\n", sep = "")
@@ -246,6 +274,8 @@ tryCatch({
 
           results$gobp <- fgsea_go
           n_sig <- sum(fgsea_go$padj < fdr_cutoff, na.rm = TRUE)
+          n_sig_up <- sum(fgsea_go$padj < fdr_cutoff & fgsea_go$NES > 0, na.rm = TRUE)
+          n_sig_down <- sum(fgsea_go$padj < fdr_cutoff & fgsea_go$NES < 0, na.rm = TRUE)
           cat("[OK] fgsea GO:BP: ", nrow(fgsea_go), " pathways tested, ",
               n_sig, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
 
@@ -258,9 +288,48 @@ tryCatch({
               N_Input_Genes = length(ranked_genes),
               N_Pathways_Tested = nrow(fgsea_go),
               N_Sig_Pathways = n_sig,
+              N_Sig_Up = n_sig_up,
+              N_Sig_Down = n_sig_down,
               stringsAsFactors = FALSE
             )
           )
+
+          if (simplify_go && !is.null(go_bp_term2gene)) {
+            cat("[INFO] Simplifying GO:BP results (cutoff=", simplify_cutoff, ")...\n", sep = "")
+            tryCatch({
+              gsea_obj <- clusterProfiler::GSEA(
+                ranked_genes,
+                TERM2GENE = go_bp_term2gene,
+                minGSSize = 5,
+                maxGSSize = 500,
+                pvalueCutoff = 1,
+                verbose = FALSE
+              )
+              gsea_simplified <- clusterProfiler::simplify(
+                gsea_obj,
+                cutoff = simplify_cutoff,
+                by = "p.adjust",
+                select_fun = min
+              )
+              if (!is.null(gsea_simplified) && nrow(as.data.frame(gsea_simplified)) > 0) {
+                simplified_df <- as.data.frame(gsea_simplified) %>%
+                  dplyr::arrange(p.adjust) %>%
+                  dplyr::rename(
+                    pathway = ID,
+                    padj = p.adjust,
+                    pval = pvalue,
+                    NES = NES,
+                    Description = Description
+                  )
+                results$gobp_simplified <- simplified_df
+                cat("[OK] Simplified GO:BP results: ", nrow(simplified_df), " pathways\n", sep = "")
+              } else {
+                cat("[INFO] Simplified GO:BP returned no pathways\n")
+              }
+            }, error = function(e) {
+              cat("[WARN] GO:BP simplification failed: ", conditionMessage(e), "\n", sep = "")
+            })
+          }
         }
       }, error = function(e) {
         cat("[WARN] fgsea GO:BP failed: ", conditionMessage(e), "\n", sep = "")
@@ -272,6 +341,8 @@ tryCatch({
             N_Input_Genes = length(ranked_genes),
             N_Pathways_Tested = 0,
             N_Sig_Pathways = 0,
+            N_Sig_Up = 0,
+            N_Sig_Down = 0,
             stringsAsFactors = FALSE
           )
         )
@@ -304,6 +375,8 @@ tryCatch({
 
           results$kegg <- fgsea_kegg
           n_sig <- sum(fgsea_kegg$padj < fdr_cutoff, na.rm = TRUE)
+          n_sig_up <- sum(fgsea_kegg$padj < fdr_cutoff & fgsea_kegg$NES > 0, na.rm = TRUE)
+          n_sig_down <- sum(fgsea_kegg$padj < fdr_cutoff & fgsea_kegg$NES < 0, na.rm = TRUE)
           cat("[OK] fgsea KEGG: ", nrow(fgsea_kegg), " pathways tested, ",
               n_sig, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
 
@@ -315,6 +388,8 @@ tryCatch({
               N_Input_Genes = length(ranked_genes),
               N_Pathways_Tested = nrow(fgsea_kegg),
               N_Sig_Pathways = n_sig,
+              N_Sig_Up = n_sig_up,
+              N_Sig_Down = n_sig_down,
               stringsAsFactors = FALSE
             )
           )
@@ -329,12 +404,76 @@ tryCatch({
             N_Input_Genes = length(ranked_genes),
             N_Pathways_Tested = 0,
             N_Sig_Pathways = 0,
+            N_Sig_Up = 0,
+            N_Sig_Down = 0,
             stringsAsFactors = FALSE
           )
         )
       })
     } else {
       cat("[WARN] KEGG gene sets not available\n")
+    }
+
+    ## Hallmark fgsea
+    if (!is.null(hallmark_list) && length(hallmark_list) > 0) {
+      tryCatch({
+        cat("[INFO] Running fgsea for Hallmark (", length(hallmark_list), " gene sets)...\n", sep = "")
+
+        fgsea_hallmark <- fgsea(
+          pathways = hallmark_list,
+          stats    = ranked_genes,
+          minSize  = 5,
+          maxSize  = 500,
+          nPermSimple = 10000
+        )
+
+        if (!is.null(fgsea_hallmark) && nrow(fgsea_hallmark) > 0) {
+          fgsea_hallmark <- fgsea_hallmark %>%
+            dplyr::mutate(
+              Description = gsub("^HALLMARK_", "", pathway),
+              Description = gsub("_", " ", Description)
+            ) %>%
+            dplyr::arrange(padj)
+
+          results$hallmark <- fgsea_hallmark
+          n_sig <- sum(fgsea_hallmark$padj < fdr_cutoff, na.rm = TRUE)
+          n_sig_up <- sum(fgsea_hallmark$padj < fdr_cutoff & fgsea_hallmark$NES > 0, na.rm = TRUE)
+          n_sig_down <- sum(fgsea_hallmark$padj < fdr_cutoff & fgsea_hallmark$NES < 0, na.rm = TRUE)
+          cat("[OK] fgsea Hallmark: ", nrow(fgsea_hallmark), " pathways tested, ",
+              n_sig, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
+
+          fgsea_sanity_tracker <<- rbind(
+            fgsea_sanity_tracker,
+            data.frame(
+              Contrast = contrast_name,
+              Database = "Hallmark",
+              N_Input_Genes = length(ranked_genes),
+              N_Pathways_Tested = nrow(fgsea_hallmark),
+              N_Sig_Pathways = n_sig,
+              N_Sig_Up = n_sig_up,
+              N_Sig_Down = n_sig_down,
+              stringsAsFactors = FALSE
+            )
+          )
+        }
+      }, error = function(e) {
+        cat("[WARN] fgsea Hallmark failed: ", conditionMessage(e), "\n", sep = "")
+        fgsea_sanity_tracker <<- rbind(
+          fgsea_sanity_tracker,
+          data.frame(
+            Contrast = contrast_name,
+            Database = "Hallmark",
+            N_Input_Genes = length(ranked_genes),
+            N_Pathways_Tested = 0,
+            N_Sig_Pathways = 0,
+            N_Sig_Up = 0,
+            N_Sig_Down = 0,
+            stringsAsFactors = FALSE
+          )
+        )
+      })
+    } else {
+      cat("[WARN] Hallmark gene sets not available\n")
     }
 
     ## Save results with direction-specific colors
@@ -369,13 +508,23 @@ tryCatch({
         write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
         cat("[OK] Saved fgsea table: ", table_file, "\n", sep = "")
 
-        ## Create combined plot (standard fgsea visualization)
-        ## Show top pathways from both directions together, ranked by absolute NES
-        plot_data <- sig_results %>%
-          dplyr::mutate(abs_NES = abs(NES)) %>%
-          dplyr::arrange(desc(abs_NES)) %>%
-          dplyr::slice_head(n = 20) %>%  ## Top 20 pathways by |NES|
-          dplyr::arrange(NES) %>%  ## Order by NES so negative at bottom, positive at top
+        if (db_name == "gobp_simplified") {
+          next
+        }
+
+        ## Create combined plot (balanced up/down)
+        top_up <- sig_results %>%
+          dplyr::filter(NES > 0) %>%
+          dplyr::arrange(padj, dplyr::desc(NES)) %>%
+          dplyr::slice_head(n = top_n_per_direction)
+
+        top_down <- sig_results %>%
+          dplyr::filter(NES < 0) %>%
+          dplyr::arrange(padj, NES) %>%
+          dplyr::slice_head(n = top_n_per_direction)
+
+        plot_data <- dplyr::bind_rows(top_down, top_up) %>%
+          dplyr::arrange(NES) %>%
           dplyr::mutate(
             pathway_label = ifelse(!is.na(Description) & Description != "", Description, pathway),
             pathway_label = factor(pathway_label, levels = pathway_label),
@@ -455,10 +604,15 @@ tryCatch({
         ranked_genes  = ranked_vec,
         contrast_name = contrast_name,
         go_bp_list    = go_bp_list,
+        go_bp_term2gene = go_bp_term2gene,
         kegg_list     = kegg_list,
+        hallmark_list = hallmark_list,
         run_tag       = run_tag,
         outdir        = outdir,
-        fdr_cutoff    = fdr_cut
+        fdr_cutoff    = fdr_cut,
+        simplify_go = simplify_go_bp,
+        simplify_cutoff = simplify_go_cutoff,
+        top_n_per_direction = top_n_per_direction
       )
     } else {
       cat("[WARN] Too few genes for fgsea\n")
