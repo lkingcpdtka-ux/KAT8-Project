@@ -104,6 +104,12 @@ genes_of_interest <- c(
 )
 cat("[INFO] Genes of interest for focused plots: ", length(genes_of_interest), "\n")
 
+## -----------------------------
+## Prefilter parameters (tune as needed)
+## -----------------------------
+prefilter_min_count <- 5
+prefilter_min_samples_per_group <- 2
+
 ## 4) Main logic --------------------------------------------
 hero_volcano_file <- NULL
 
@@ -234,6 +240,8 @@ tryCatch({
   if (any(is.na(sample_annot$Sample))) stop("Sample annotation failed to match count matrix columns.")
 
   sample_annot$Genotype <- factor(sample_annot$Genotype, levels = c("CTL", "KAT8KD"))
+  sample_annot$Depot <- factor(sample_annot$Depot, levels = c("iWAT", "gWAT"))
+  sample_annot$Sex <- factor(sample_annot$Sex, levels = c("F", "M"))
   sample_annot$DepotSex <- factor(paste(sample_annot$Depot, sample_annot$Sex, sep = "_"),
                                   levels = c("iWAT_F", "iWAT_M", "gWAT_F", "gWAT_M"))
   sample_annot$GroupFull <- factor(
@@ -254,10 +262,18 @@ tryCatch({
   print(colSums(count_matrix_tissue))
 
   ## 4.6) DESeq2 object + typical prefilter ------------------
-  min_count <- 10
-  min_samples <- min(table(sample_annot$GroupFull))
+  min_count <- prefilter_min_count
+  min_samples_per_group <- prefilter_min_samples_per_group
 
-  keep <- rowSums(count_matrix_tissue >= min_count) >= min_samples
+  group_levels <- levels(sample_annot$GroupFull)
+  keep <- vapply(group_levels, function(group_name) {
+    group_samples <- sample_annot$Sample[sample_annot$GroupFull == group_name]
+    if (length(group_samples) == 0) {
+      return(rep(FALSE, nrow(count_matrix_tissue)))
+    }
+    rowSums(count_matrix_tissue[, group_samples, drop = FALSE] >= min_count) >= min_samples_per_group
+  }, logical(nrow(count_matrix_tissue)))
+  keep <- rowSums(keep) > 0
 
   ## Comprehensive filtering sanity check
   n_before <- nrow(count_matrix_tissue)
@@ -268,8 +284,9 @@ tryCatch({
   cat("\n==========================================================\n")
   cat("=== SANITY CHECK: GENE PREFILTERING ===\n")
   cat("==========================================================\n")
-  cat("Prefilter rule: counts >= ", min_count, " in >= ", min_samples, " samples\n", sep = "")
-  cat("  (min_samples = smallest group size for per-stratum contrasts)\n\n")
+  cat("Prefilter rule: counts >= ", min_count, " in >= ", min_samples_per_group,
+      " samples within any GroupFull stratum\n", sep = "")
+  cat("  (keeps genes expressed in at least one depot/sex/genotype group)\n\n")
   cat("Genes BEFORE prefiltering:  ", n_before, "\n", sep = "")
   cat("Genes AFTER prefiltering:   ", n_after, "\n", sep = "")
   cat("Genes REMOVED:              ", n_removed, " (", 100 - pct_retained, "%)\n", sep = "")
@@ -292,8 +309,8 @@ tryCatch({
     outlier_samples   = outlier_samples,
     prefilter_rule    = list(
       min_count       = min_count,
-      min_samples     = min_samples,
-      description     = "Keep genes with counts >= min_count in at least min_samples (smallest group size)"
+      min_samples     = min_samples_per_group,
+      description     = "Keep genes with counts >= min_count in at least min_samples_per_group within any GroupFull stratum"
     ),
     de_thresholds     = list(
       logFC_cutoff    = logFC_cut_tissue,
@@ -359,6 +376,14 @@ tryCatch({
   vst_tissue_hm <- vst(dds_tissue, blind = FALSE)
   vst_mat_hm <- assay(vst_tissue_hm)
 
+  genotype_colors <- c("CTL" = "#0072B2", "KAT8KD" = "#E69F00")
+  depot_sex_fill <- c(
+    "iWAT_F" = "#56B4E9",
+    "iWAT_M" = "#0072B2",
+    "gWAT_F" = "#F0E442",
+    "gWAT_M" = "#E69F00"
+  )
+
   ## 4.9) Density plots (VST before/after filtering) --------
   cat("\n=== Creating before/after filtering density plots ===\n")
 
@@ -388,9 +413,7 @@ tryCatch({
 
     ## Define consistent colors for each sample across both plots
     depot_sex <- colData(dds_tissue)$DepotSex
-    color_map <- c("iWAT_F" = "#1b9e77", "iWAT_M" = "#d95f02",
-                   "gWAT_F" = "#7570b3", "gWAT_M" = "#e7298a")
-    sample_colors <- color_map[as.character(depot_sex)]
+    sample_colors <- depot_sex_fill[depot_sex]
 
     ## BEFORE filter
     plot(dens_before[[1]],
@@ -446,20 +469,13 @@ tryCatch({
 
   p_pca <- ggplot(
     pca_df,
-    aes(x = PC1, y = PC2, color = DepotSex, shape = Genotype, label = Sample)
+    aes(x = PC1, y = PC2, color = DepotSex, fill = DepotSex, shape = Genotype, label = Sample)
   ) +
-    geom_point(size = 3) +
-    geom_text_repel(size = 3, max.overlaps = 60) +
-    scale_color_manual(
-      values = c(
-        "iWAT_F" = "#1b9e77",
-        "iWAT_M" = "#d95f02",
-        "gWAT_F" = "#7570b3",
-        "gWAT_M" = "#e7298a"
-      ),
-      name = "Depot/Sex"
-    ) +
-    scale_shape_manual(values = c("CTL" = 16, "KAT8KD" = 17), name = "Genotype") +
+    geom_point(size = 3, stroke = 1) +
+    geom_text_repel(size = 3, max.overlaps = 60, color = "black") +
+    scale_color_manual(values = depot_sex_fill, name = "Depot/Sex") +
+    scale_fill_manual(values = depot_sex_fill, name = "Depot/Sex") +
+    scale_shape_manual(values = c("CTL" = 21, "KAT8KD" = 24), name = "Genotype") +
     labs(
       title = "Tissue PCA (VST, DESeq2)",
       x = paste0("PC1 (", round(pca_var[1], 1), "%)"),
@@ -467,7 +483,12 @@ tryCatch({
     ) +
     theme_bw(base_size = 14) +
     theme(plot.title = element_text(hjust = 0.5, face = "bold"),
-          legend.position = "right")
+          legend.position = "right") +
+    guides(
+      color = "none",
+      fill = guide_legend(override.aes = list(shape = 21, color = depot_sex_fill, fill = depot_sex_fill)),
+      shape = guide_legend(override.aes = list(fill = "white", color = "black"))
+    )
 
   pca_file <- paste0("PCA_tissue_VST_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", pca_file), plot = p_pca, width = 8, height = 6, dpi = 300)
@@ -490,24 +511,22 @@ tryCatch({
 
   p_mds <- ggplot(
     mds_df,
-    aes(x = MDS1, y = MDS2, color = DepotSex, shape = Genotype, label = Sample)
+    aes(x = MDS1, y = MDS2, color = DepotSex, fill = DepotSex, shape = Genotype, label = Sample)
   ) +
-    geom_point(size = 3) +
-    geom_text_repel(size = 3, max.overlaps = 60) +
-    scale_color_manual(
-      values = c(
-        "iWAT_F" = "#1b9e77",
-        "iWAT_M" = "#d95f02",
-        "gWAT_F" = "#7570b3",
-        "gWAT_M" = "#e7298a"
-      ),
-      name = "Depot/Sex"
-    ) +
-    scale_shape_manual(values = c("CTL" = 16, "KAT8KD" = 17), name = "Genotype") +
+    geom_point(size = 3, stroke = 1) +
+    geom_text_repel(size = 3, max.overlaps = 60, color = "black") +
+    scale_color_manual(values = depot_sex_fill, name = "Depot/Sex") +
+    scale_fill_manual(values = depot_sex_fill, name = "Depot/Sex") +
+    scale_shape_manual(values = c("CTL" = 21, "KAT8KD" = 24), name = "Genotype") +
     labs(title = "Tissue MDS (VST, DESeq2)", x = "MDS1", y = "MDS2") +
     theme_bw(base_size = 14) +
     theme(plot.title = element_text(hjust = 0.5, face = "bold"),
-          legend.position = "right")
+          legend.position = "right") +
+    guides(
+      color = "none",
+      fill = guide_legend(override.aes = list(shape = 21, color = depot_sex_fill, fill = depot_sex_fill)),
+      shape = guide_legend(override.aes = list(fill = "white", color = "black"))
+    )
 
   mds_file <- paste0("MDS_tissue_VST_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", mds_file), plot = p_mds, width = 8, height = 6, dpi = 300)
@@ -1101,7 +1120,7 @@ tryCatch({
         col = overall_col_fun,
         cluster_rows = TRUE,
         cluster_columns = TRUE,
-        show_column_names = FALSE,
+        show_column_names = TRUE,
         show_row_names = (nrow(mat_overall_scaled) <= 50),
         column_split = heat_meta_overall$Genotype,
         border = TRUE,
@@ -1115,13 +1134,14 @@ tryCatch({
           title_gp = gpar(fontsize = 10)
         ),
         row_names_gp = gpar(fontsize = 5),
-        column_names_gp = gpar(fontsize = 6)
+        column_names_gp = gpar(fontsize = 6),
+        column_names_side = "bottom"
       )
 
       ## Save (increased height to prevent sample name cutoff)
       heat_overall_file <- paste0("Heatmap_tissue_OVERALL_KD_vs_CTL_", run_tag, ".png")
-      png(file.path(outdir, "plots", heat_overall_file), width = 2400, height = 3500, res = 200)
-      draw(heat_overall, padding = unit(c(2, 2, 15, 2), "mm"))  ## Extra bottom padding for sample names
+      png(file.path(outdir, "plots", heat_overall_file), width = 2400, height = 4200, res = 200)
+      draw(heat_overall, padding = unit(c(2, 2, 40, 2), "mm"))  ## Extra bottom padding for sample names
       dev.off()
       cat("Heatmap saved: ", file.path(outdir, "plots", heat_overall_file), "\n", sep = "")
     } else {
