@@ -93,6 +93,25 @@ if (!dir.exists(file.path(outdir, "plots"))) {
 logFC_cut <- 1
 fdr_cut   <- 0.05
 
+## ============================================================
+## IMPORTANT: ORA Universe/Background Setting
+## ============================================================
+## Set this to TRUE or FALSE to control background gene set
+##
+## use_universe = TRUE (RECOMMENDED - statistically correct)
+##   - Uses all genes tested by DESeq2 as background
+##   - More conservative (fewer significant pathways)
+##   - Accounts for your specific gene filtering
+##
+## use_universe = FALSE (common default)
+##   - No background specified (uses all genes in database)
+##   - More liberal (more significant pathways)
+##   - Standard approach in many publications
+##
+## CURRENT SETTING:
+use_universe <- FALSE  ## Change to TRUE for statistical rigor
+## ============================================================
+
 ## Sanity check tracker
 pathway_sanity_tracker <- data.frame(
   Contrast = character(),
@@ -124,36 +143,44 @@ tryCatch({
 
   cat("[INFO] Found ", length(de_files), " DE tables\n")
 
-  ## 4.2) Load first DE table to get universe ---------------
-  cat("\n=== CREATING ORA UNIVERSE ===\n")
+  ## 4.2) Optionally create ORA universe --------------------
+  if (use_universe) {
+    cat("\n=== CREATING ORA UNIVERSE ===\n")
+    cat("[INFO] Using background gene set (statistically rigorous approach)\n")
 
-  ## Load first DE table (any will work; they all have the same tested genes)
-  de_first <- read.csv(de_files[1], row.names = 1, stringsAsFactors = FALSE)
+    ## Load first DE table (any will work; they all have the same tested genes)
+    de_first <- read.csv(de_files[1], row.names = 1, stringsAsFactors = FALSE)
 
-  ## Universe = all genes tested by DESeq2
-  universe_symbols <- rownames(de_first)
-  cat("[INFO] Total genes tested by DESeq2: ", length(universe_symbols), "\n")
+    ## Universe = all genes tested by DESeq2
+    universe_symbols <- rownames(de_first)
+    cat("[INFO] Total genes tested by DESeq2: ", length(universe_symbols), "\n")
 
-  ## Convert to Entrez IDs
-  universe_entrez_df <- tryCatch({
-    bitr(
-      universe_symbols,
-      fromType = "SYMBOL",
-      toType   = "ENTREZID",
-      OrgDb    = org.Mm.eg.db,
-      drop     = TRUE
-    )
-  }, error = function(e) {
-    cat("[ERROR] Universe gene ID conversion failed: ", conditionMessage(e), "\n")
-    stop("Cannot create universe for ORA")
-  })
+    ## Convert to Entrez IDs
+    universe_entrez_df <- tryCatch({
+      bitr(
+        universe_symbols,
+        fromType = "SYMBOL",
+        toType   = "ENTREZID",
+        OrgDb    = org.Mm.eg.db,
+        drop     = TRUE
+      )
+    }, error = function(e) {
+      cat("[ERROR] Universe gene ID conversion failed: ", conditionMessage(e), "\n")
+      stop("Cannot create universe for ORA")
+    })
 
-  ## Get unique Entrez IDs
-  universe_entrez <- unique(universe_entrez_df$ENTREZID)
-  universe_entrez <- universe_entrez[!is.na(universe_entrez)]
+    ## Get unique Entrez IDs
+    universe_entrez <- unique(universe_entrez_df$ENTREZID)
+    universe_entrez <- universe_entrez[!is.na(universe_entrez)]
 
-  cat("[INFO] Universe Entrez IDs: ", length(universe_entrez), " (",
-      round(100 * length(universe_entrez) / length(universe_symbols), 1), "% mapped)\n", sep = "")
+    cat("[INFO] Universe Entrez IDs: ", length(universe_entrez), " (",
+        round(100 * length(universe_entrez) / length(universe_symbols), 1), "% mapped)\n", sep = "")
+  } else {
+    cat("\n=== ORA UNIVERSE SETTING ===\n")
+    cat("[INFO] NOT using background gene set (default/liberal approach)\n")
+    cat("[INFO] To use background, set use_universe <- TRUE at top of script\n")
+    universe_entrez <- NULL
+  }
 
   ## 4.3) ORA analysis function ------------------------------
   run_ora_analysis <- function(gene_list, direction, contrast_name,
@@ -188,7 +215,11 @@ tryCatch({
     cat("[OK] Mapped ", nrow(gene_entrez), " of ", length(unique(gene_list)),
         " genes to Entrez (", round(mapping_rate * 100, 1), "%)\n", sep = "")
     cat("[INFO] Genes entering pathway enrichment: ", nrow(gene_entrez), "\n", sep = "")
-    cat("[INFO] Universe size: ", length(universe_entrez), " Entrez IDs\n", sep = "")
+    if (!is.null(universe_entrez)) {
+      cat("[INFO] Universe size: ", length(universe_entrez), " Entrez IDs\n", sep = "")
+    } else {
+      cat("[INFO] Universe: using default (all genes in database)\n")
+    }
 
     if (nrow(gene_entrez) < 3) {
       cat("[WARN] Too few genes mapped to Entrez IDs\n")
@@ -201,7 +232,7 @@ tryCatch({
           Database = "GO:BP",
           N_Input_Genes = length(gene_list),
           N_Mapped_Entrez = nrow(gene_entrez),
-          N_Universe_Entrez = length(universe_entrez),
+          N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
           N_Sig_Pathways = 0,
           stringsAsFactors = FALSE
         )
@@ -214,7 +245,7 @@ tryCatch({
           Database = "KEGG",
           N_Input_Genes = length(gene_list),
           N_Mapped_Entrez = nrow(gene_entrez),
-          N_Universe_Entrez = length(universe_entrez),
+          N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
           N_Sig_Pathways = 0,
           stringsAsFactors = FALSE
         )
@@ -225,19 +256,32 @@ tryCatch({
     entrez_ids <- gene_entrez$ENTREZID
     results <- list()
 
-    ## GO:BP enrichment (with universe)
+    ## GO:BP enrichment (conditionally with universe)
     tryCatch({
-      enrich_go <- enrichGO(
-        gene          = entrez_ids,
-        OrgDb         = org.Mm.eg.db,
-        ont           = "BP",
-        pvalueCutoff  = 0.1,
-        qvalueCutoff  = 0.2,
-        readable      = TRUE,
-        minGSSize     = 5,
-        maxGSSize     = 500,
-        universe      = universe_entrez  ## KEY FIX: Add universe
-      )
+      enrich_go <- if (!is.null(universe_entrez)) {
+        enrichGO(
+          gene          = entrez_ids,
+          OrgDb         = org.Mm.eg.db,
+          ont           = "BP",
+          pvalueCutoff  = 0.1,
+          qvalueCutoff  = 0.2,
+          readable      = TRUE,
+          minGSSize     = 5,
+          maxGSSize     = 500,
+          universe      = universe_entrez
+        )
+      } else {
+        enrichGO(
+          gene          = entrez_ids,
+          OrgDb         = org.Mm.eg.db,
+          ont           = "BP",
+          pvalueCutoff  = 0.1,
+          qvalueCutoff  = 0.2,
+          readable      = TRUE,
+          minGSSize     = 5,
+          maxGSSize     = 500
+        )
+      }
       if (!is.null(enrich_go) && nrow(enrich_go@result) > 0) {
         enrich_go_simp <- simplify(enrich_go, cutoff = 0.7, by = "p.adjust", select_fun = min)
         results$gobp <- enrich_go_simp
@@ -254,7 +298,7 @@ tryCatch({
             Database = "GO:BP",
             N_Input_Genes = length(gene_list),
             N_Mapped_Entrez = nrow(gene_entrez),
-            N_Universe_Entrez = length(universe_entrez),
+            N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
             N_Sig_Pathways = n_sig,
             stringsAsFactors = FALSE
           )
@@ -269,7 +313,7 @@ tryCatch({
             Database = "GO:BP",
             N_Input_Genes = length(gene_list),
             N_Mapped_Entrez = nrow(gene_entrez),
-            N_Universe_Entrez = length(universe_entrez),
+            N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
             N_Sig_Pathways = 0,
             stringsAsFactors = FALSE
           )
@@ -285,24 +329,35 @@ tryCatch({
           Database = "GO:BP",
           N_Input_Genes = length(gene_list),
           N_Mapped_Entrez = nrow(gene_entrez),
-          N_Universe_Entrez = length(universe_entrez),
+          N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
           N_Sig_Pathways = 0,
           stringsAsFactors = FALSE
         )
       )
     })
 
-    ## KEGG enrichment (with universe)
+    ## KEGG enrichment (conditionally with universe)
     tryCatch({
-      enrich_kegg <- enrichKEGG(
-        gene         = entrez_ids,
-        organism     = "mmu",
-        pvalueCutoff = 0.1,
-        qvalueCutoff = 0.2,
-        minGSSize    = 5,
-        maxGSSize    = 500,
-        universe     = universe_entrez  ## KEY FIX: Add universe
-      )
+      enrich_kegg <- if (!is.null(universe_entrez)) {
+        enrichKEGG(
+          gene         = entrez_ids,
+          organism     = "mmu",
+          pvalueCutoff = 0.1,
+          qvalueCutoff = 0.2,
+          minGSSize    = 5,
+          maxGSSize    = 500,
+          universe     = universe_entrez
+        )
+      } else {
+        enrichKEGG(
+          gene         = entrez_ids,
+          organism     = "mmu",
+          pvalueCutoff = 0.1,
+          qvalueCutoff = 0.2,
+          minGSSize    = 5,
+          maxGSSize    = 500
+        )
+      }
 
       if (!is.null(enrich_kegg) && nrow(enrich_kegg@result) > 0) {
         ## Convert Entrez IDs back to gene symbols for KEGG results
@@ -333,7 +388,7 @@ tryCatch({
             Database = "KEGG",
             N_Input_Genes = length(gene_list),
             N_Mapped_Entrez = nrow(gene_entrez),
-            N_Universe_Entrez = length(universe_entrez),
+            N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
             N_Sig_Pathways = n_sig,
             stringsAsFactors = FALSE
           )
@@ -348,7 +403,7 @@ tryCatch({
             Database = "KEGG",
             N_Input_Genes = length(gene_list),
             N_Mapped_Entrez = nrow(gene_entrez),
-            N_Universe_Entrez = length(universe_entrez),
+            N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
             N_Sig_Pathways = 0,
             stringsAsFactors = FALSE
           )
@@ -364,7 +419,7 @@ tryCatch({
           Database = "KEGG",
           N_Input_Genes = length(gene_list),
           N_Mapped_Entrez = nrow(gene_entrez),
-          N_Universe_Entrez = length(universe_entrez),
+          N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
           N_Sig_Pathways = 0,
           stringsAsFactors = FALSE
         )

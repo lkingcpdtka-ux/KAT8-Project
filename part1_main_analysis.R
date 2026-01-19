@@ -1072,10 +1072,10 @@ tryCatch({
         column_names_gp = gpar(fontsize = 6)
       )
 
-      ## Save
+      ## Save (increased height to prevent sample name cutoff)
       heat_overall_file <- paste0("Heatmap_tissue_OVERALL_KD_vs_CTL_", run_tag, ".png")
-      png(file.path(outdir, "plots", heat_overall_file), width = 2400, height = 3000, res = 200)
-      draw(heat_overall)
+      png(file.path(outdir, "plots", heat_overall_file), width = 2400, height = 3500, res = 200)
+      draw(heat_overall, padding = unit(c(2, 2, 15, 2), "mm"))  ## Extra bottom padding for sample names
       dev.off()
       cat("Heatmap saved: ", file.path(outdir, "plots", heat_overall_file), "\n", sep = "")
     } else {
