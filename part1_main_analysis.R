@@ -1105,7 +1105,7 @@ tryCatch({
         col = overall_col_fun,
         cluster_rows = TRUE,
         cluster_columns = TRUE,
-        show_column_names = FALSE,
+        show_column_names = TRUE,
         show_row_names = (nrow(mat_overall_scaled) <= 50),
         column_split = heat_meta_overall$Genotype,
         border = TRUE,
@@ -1119,7 +1119,8 @@ tryCatch({
           title_gp = gpar(fontsize = 10)
         ),
         row_names_gp = gpar(fontsize = 5),
-        column_names_gp = gpar(fontsize = 6)
+        column_names_gp = gpar(fontsize = 6),
+        column_names_side = "bottom"
       )
 
       ## Save (increased height to prevent sample name cutoff)
