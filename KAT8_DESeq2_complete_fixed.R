@@ -1170,15 +1170,6 @@ tryCatch({
     return(results)
   }
 
-  ## NOTE: Continuing in next message due to length...
-  ## This is part 1 of the complete script
-
-}, error = function(e) {
-  cat("\nERROR in script setup:\n")
-  cat(conditionMessage(e), "\n")
-  stop(e)
-})
-
   ## 4.15) Per-contrast DE + volcano + heatmap + pathways + fgsea + genes of interest ----
   for (cn in contrast_names) {
 
