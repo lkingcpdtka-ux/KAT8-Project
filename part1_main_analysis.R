@@ -359,6 +359,14 @@ tryCatch({
   vst_tissue_hm <- vst(dds_tissue, blind = FALSE)
   vst_mat_hm <- assay(vst_tissue_hm)
 
+  genotype_colors <- c("CTL" = "#0072B2", "KAT8KD" = "#E69F00")
+  depot_sex_fill <- c(
+    "iWAT_F" = "#56B4E9",
+    "iWAT_M" = "#0072B2",
+    "gWAT_F" = "#F0E442",
+    "gWAT_M" = "#E69F00"
+  )
+
   ## 4.9) Density plots (VST before/after filtering) --------
   cat("\n=== Creating before/after filtering density plots ===\n")
 
@@ -388,19 +396,7 @@ tryCatch({
 
     ## Define consistent colors for each sample across both plots
     depot_sex <- colData(dds_tissue)$DepotSex
-    genotype <- colData(dds_tissue)$Genotype
-    density_combo_colors <- c(
-      "CTL_iWAT_F" = "#56B4E9",
-      "CTL_iWAT_M" = "#0072B2",
-      "CTL_gWAT_F" = "#3B8BC2",
-      "CTL_gWAT_M" = "#1F78B4",
-      "KAT8KD_iWAT_F" = "#F6C141",
-      "KAT8KD_iWAT_M" = "#E69F00",
-      "KAT8KD_gWAT_F" = "#F1A340",
-      "KAT8KD_gWAT_M" = "#D55E00"
-    )
-    combo_key <- paste(genotype, depot_sex, sep = "_")
-    sample_colors <- density_combo_colors[combo_key]
+    sample_colors <- depot_sex_fill[depot_sex]
 
     ## BEFORE filter
     plot(dens_before[[1]],
@@ -454,14 +450,6 @@ tryCatch({
     stringsAsFactors = FALSE
   )
 
-  genotype_colors <- c("CTL" = "#0072B2", "KAT8KD" = "#E69F00")
-  depot_sex_fill <- c(
-    "iWAT_F" = "#56B4E9",
-    "iWAT_M" = "#0072B2",
-    "gWAT_F" = "#F0E442",
-    "gWAT_M" = "#E69F00"
-  )
-
   p_pca <- ggplot(
     pca_df,
     aes(x = PC1, y = PC2, color = DepotSex, fill = DepotSex, shape = Genotype, label = Sample)
@@ -479,7 +467,11 @@ tryCatch({
     theme_bw(base_size = 14) +
     theme(plot.title = element_text(hjust = 0.5, face = "bold"),
           legend.position = "right") +
-    guides(color = "none")
+    guides(
+      color = "none",
+      fill = guide_legend(override.aes = list(shape = 21, color = depot_sex_fill, fill = depot_sex_fill)),
+      shape = guide_legend(override.aes = list(fill = "white", color = "black"))
+    )
 
   pca_file <- paste0("PCA_tissue_VST_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", pca_file), plot = p_pca, width = 8, height = 6, dpi = 300)
@@ -513,7 +505,11 @@ tryCatch({
     theme_bw(base_size = 14) +
     theme(plot.title = element_text(hjust = 0.5, face = "bold"),
           legend.position = "right") +
-    guides(color = "none")
+    guides(
+      color = "none",
+      fill = guide_legend(override.aes = list(shape = 21, color = depot_sex_fill, fill = depot_sex_fill)),
+      shape = guide_legend(override.aes = list(fill = "white", color = "black"))
+    )
 
   mds_file <- paste0("MDS_tissue_VST_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", mds_file), plot = p_mds, width = 8, height = 6, dpi = 300)
