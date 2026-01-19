@@ -10,8 +10,6 @@
 ## - Differential expression: DESeq2 (Wald)
 ## - Volcano plots (orange/teal), per-contrast heatmaps
 ## - DEG counts summary
-## - Pathway over-representation (Up/Down): GO:BP + KEGG only
-## - fgsea (Gene Set Enrichment Analysis): GO:BP + KEGG
 ## - ComplexHeatmap for genes of interest
 ## - EnhancedVolcano for genes of interest
 ## - Overall CTL vs KD contrast (across all depots/sexes)
@@ -19,10 +17,8 @@
 ##
 ## FIXES APPLIED:
 ## 1. Density plot: before/after filtering with matched colors
-## 2. Pathway bar plots: ordered by gene ratio, direction-specific colors
-## 3. EnhancedVolcano: only colors significant genes by direction
-## 4. fgsea: fixed GO:BP and KEGG errors
-## 5. Consistent colors across all plots
+## 2. EnhancedVolcano: only colors significant genes by direction
+## 3. Consistent colors across all plots
 ## =========================================================
 
 ## 0) Working dir (optional) --------------------------------
@@ -37,7 +33,8 @@ required_pkgs <- c(
   "viridis",
   "pheatmap",
   "grid",
-  "scales"
+  "scales",
+  "msigdbr"
 )
 
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
@@ -45,15 +42,8 @@ if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
 
 required_bioc_pkgs <- c(
   "DESeq2",
-  "clusterProfiler",
-  "org.Mm.eg.db",
-  "enrichplot",
-  "DOSE",
-  "AnnotationDbi",
   "ComplexHeatmap",
-  "EnhancedVolcano",
-  "fgsea",
-  "GO.db"
+  "EnhancedVolcano"
 )
 
 ## circlize is on CRAN
@@ -73,16 +63,9 @@ suppressPackageStartupMessages({
   library(grid)   ## for unit()
   library(scales)
   library(DESeq2)
-  library(clusterProfiler)
-  library(org.Mm.eg.db)
-  library(enrichplot)
-  library(DOSE)
-  library(AnnotationDbi)
   library(ComplexHeatmap)
   library(circlize)
   library(EnhancedVolcano)
-  library(fgsea)
-  library(GO.db)
 })
 
 ## 2) save_core utilities -----------------------------------
@@ -97,9 +80,9 @@ run_info <- list(
   script_name = "KAT8_DESeq2_complete_fixed.R",
   species     = "mouse",
   data_type   = "bulkRNAseq_WAT_tissue",
-  keywords    = c("KAT8", "WAT", "iWAT", "gWAT", "bulk RNA-seq", "tissue", "DESeq2", "fgsea"),
-  notes       = "DESeq2 pipeline with all fixes: VST QC + per-depot/sex contrasts + overall + GO:BP/KEGG (ORA + fgsea) + genes of interest",
-  message     = "Tissue KAT8KD vs CTL: DESeq2 + VST QC + DEGs + pathways + fgsea + ComplexHeatmap + EnhancedVolcano"
+  keywords    = c("KAT8", "WAT", "iWAT", "gWAT", "bulk RNA-seq", "tissue", "DESeq2"),
+  notes       = "DESeq2 pipeline with VST QC + per-depot/sex contrasts + overall + genes of interest",
+  message     = "Tissue KAT8KD vs CTL: DESeq2 + VST QC + DEGs + ComplexHeatmap + EnhancedVolcano"
 )
 
 ## 3) init_run ----------------------------------------------
@@ -114,10 +97,6 @@ run_ctx <- init_run(
 outdir  <- run_ctx$outdir
 run_tag <- run_ctx$run_tag
 cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
-
-## Pathway focus controls (optional)
-pathway_focus_depot_sex <- "iWAT_F"
-run_pathway_subset_only <- FALSE  ## Run pathway analysis for ALL contrasts
 
 ## -----------------------------
 ## Genes of interest for focused heatmap/volcano
@@ -134,37 +113,8 @@ genes_of_interest <- c(
 )
 cat("[INFO] Genes of interest for focused plots: ", length(genes_of_interest), "\n")
 
-## -----------------------------
-## Sanity check: org.Mm.eg.db
-## -----------------------------
-cat("\n--- SANITY CHECK: ORGANISM DATABASE ---\n")
-org_species <- AnnotationDbi::species(org.Mm.eg.db)
-if (!identical(org_species, "Mus musculus")) stop("ERROR: org.Mm.eg.db species mismatch: ", org_species)
-cat("[PASS] org.Mm.eg.db species:", org_species, "\n")
-
 ## 4) Main logic --------------------------------------------
 hero_volcano_file <- NULL
-
-## Container for pathway sanity checks (populated during analysis)
-pathway_sanity_tracker <- data.frame(
-  Contrast = character(),
-  Direction = character(),
-  Database = character(),
-  N_Input_Genes = integer(),
-  N_Mapped_Entrez = integer(),
-  N_Sig_Pathways = integer(),
-  stringsAsFactors = FALSE
-)
-
-## Container for fgsea sanity checks
-fgsea_sanity_tracker <- data.frame(
-  Contrast = character(),
-  Database = character(),
-  N_Input_Genes = integer(),
-  N_Pathways_Tested = integer(),
-  N_Sig_Pathways = integer(),
-  stringsAsFactors = FALSE
-)
 
 tryCatch({
   
@@ -316,7 +266,8 @@ tryCatch({
   ## Typical DESeq2 prefilter is count-based (not CPM-based).
   ## This reduces memory + improves stability without mixing frameworks.
   min_count <- 10
-  min_samples <- ceiling(ncol(count_matrix_tissue) * 0.5)  ## at least 50% of samples
+  ## Prefer retaining genes expressed in at least the smallest group size.
+  min_samples <- min(table(sample_annot$GroupFull))
   
   keep <- rowSums(count_matrix_tissue >= min_count) >= min_samples
   cat("\nPrefilter rule: keep genes with counts >= ", min_count,
@@ -341,7 +292,7 @@ tryCatch({
     prefilter_rule    = list(
       min_count       = min_count,
       min_samples     = min_samples,
-      description     = "Keep genes with counts >= min_count in at least min_samples"
+      description     = "Keep genes with counts >= min_count in at least min_samples (smallest group size)"
     ),
     de_thresholds     = list(
       logFC_cutoff    = logFC_cut_tissue,
@@ -349,7 +300,7 @@ tryCatch({
     ),
     vst              = list(
       blind           = TRUE,
-      description     = "VST used for QC and heatmaps"
+      description     = "VST used for QC (blind=TRUE); heatmaps use blind=FALSE"
     ),
     volcano_labels   = list(
       top_n_by_fdr    = 10,
@@ -403,6 +354,10 @@ tryCatch({
   vst_tissue <- vst(dds_tissue, blind = TRUE)
   vst_mat <- assay(vst_tissue)  ## genes x samples (log2-ish stabilized)
   
+  cat("\n=== VST FOR HEATMAPS (blind=FALSE) ===\n")
+  vst_tissue_hm <- vst(dds_tissue, blind = FALSE)
+  vst_mat_hm <- assay(vst_tissue_hm)
+  
   ## 4.9) Density plots (VST before/after filtering) --------
   ## FIXED: Side-by-side before/after filtering comparison with matched colors
   cat("\n=== Creating before/after filtering density plots ===\n")
@@ -414,7 +369,7 @@ tryCatch({
     design    = ~ 0 + GroupFull
   )
   dds_all_genes <- estimateSizeFactors(dds_all_genes)
-  dds_all_genes <- estimateDispersions(dds_all_genes)
+  dds_all_genes <- estimateDispersions(dds_all_genes, fitType = "local")
   vst_all_genes <- vst(dds_all_genes, blind = TRUE)
   vst_mat_before <- assay(vst_all_genes)
   
@@ -578,8 +533,6 @@ tryCatch({
   
   tt_list <- vector("list", length(contrast_names))
   names(tt_list) <- contrast_names
-  pathway_results <- list()
-  fgsea_results <- list()
   
   ## 4.14) Pathway analysis function (ORA) - GO:BP + KEGG ----
   run_pathway_analysis <- function(gene_list, direction, contrast_name,
@@ -982,14 +935,30 @@ tryCatch({
     tryCatch({
       cat("[INFO] Running fgsea for KEGG...\n")
       
-      ## FIXED: Use msigdbr or org.Mm.eg.db PATH mapping
+      ## FIXED: Use msigdbr (mouse-native) or org.Mm.eg.db PATH mapping
       if (requireNamespace("msigdbr", quietly = TRUE)) {
         cat("[INFO] Using msigdbr for KEGG pathways\n")
-        kegg_msigdb <- msigdbr::msigdbr(species = "Mus musculus", category = "C2", subcategory = "CP:KEGG")
-        kegg_list <- split(kegg_msigdb$gene_symbol, kegg_msigdb$gs_name)
+        kegg_msigdb <- suppressMessages(msigdbr::msigdbr(species = "Mus musculus", category = "C2"))
+        kegg_msigdb <- kegg_msigdb %>% dplyr::filter(gs_subcat == "CP:KEGG")
+        if (nrow(kegg_msigdb) == 0) {
+          cat("[WARN] msigdbr KEGG gene sets not available; falling back to org.Mm.eg.db\n")
+        } else {
+          kegg_list <- split(kegg_msigdb$gene_symbol, kegg_msigdb$gs_name)
+        }
       } else {
         ## Fallback: build from org.Mm.eg.db
         cat("[INFO] Building KEGG pathways from org.Mm.eg.db\n")
+        kegg_genes <- AnnotationDbi::select(
+          org.Mm.eg.db,
+          keys = keys(org.Mm.eg.db, keytype = "PATH"),
+          columns = c("SYMBOL", "PATH"),
+          keytype = "PATH"
+        )
+        kegg_genes <- kegg_genes %>% dplyr::filter(!is.na(SYMBOL), !is.na(PATH))
+        kegg_list <- split(kegg_genes$SYMBOL, paste0("mmu", kegg_genes$PATH))
+      }
+      
+      if (!exists("kegg_list")) {
         kegg_genes <- AnnotationDbi::select(
           org.Mm.eg.db,
           keys = keys(org.Mm.eg.db, keytype = "PATH"),
@@ -1329,10 +1298,10 @@ tryCatch({
       ## fgsea (Gene Set Enrichment Analysis) - NOT split by up/down
       cat("\n--- Preparing ranked gene list for fgsea ---\n")
       
-      ## Rank genes by sign(logFC) * -log10(pvalue)
-      ranked_genes <- tt %>%
-        dplyr::filter(is.finite(logFC), is.finite(P.Value), P.Value > 0) %>%
-        dplyr::mutate(rank_stat = sign(logFC) * -log10(P.Value)) %>%
+      ## Rank genes by DESeq2 Wald statistic
+  ranked_genes <- tt %>%
+        dplyr::filter(is.finite(stat)) %>%
+        dplyr::mutate(rank_stat = stat) %>%
         dplyr::arrange(dplyr::desc(rank_stat))
       
       ## Create named vector
@@ -1375,7 +1344,7 @@ tryCatch({
         samples_heat <- rownames(colData(dds_tissue))[idx_samples]
         heat_meta_deg <- as.data.frame(colData(dds_tissue))[idx_samples, , drop = FALSE]
         
-        mat <- vst_mat[gene_set, samples_heat, drop = FALSE]
+        mat <- vst_mat_hm[gene_set, samples_heat, drop = FALSE]
         
         ## Scale rows (z-score)
         mat_scaled <- t(scale(t(mat)))
@@ -1466,7 +1435,7 @@ tryCatch({
         heat_ctrls <- heat_meta %>% dplyr::filter(Genotype == "CTL") %>% rownames()
         
         ## Build matrix
-        heat_matrix <- vst_mat[goi_in_data, heat_samples, drop = FALSE]
+        heat_matrix <- vst_mat_hm[goi_in_data, heat_samples, drop = FALSE]
         
         ## Center by control means (z-score relative to controls)
         heat_ctrl_means <- rowMeans(heat_matrix[, heat_ctrls, drop = FALSE])
@@ -1614,7 +1583,7 @@ tryCatch({
   dds_overall <- DESeqDataSetFromMatrix(
     countData = round(count_matrix_filt),
     colData   = sample_annot,
-    design    = ~ Genotype
+    design    = ~ Depot + Sex + Genotype
   )
   
   cat("[INFO] Running DESeq2 for overall contrast...\n")
@@ -1770,8 +1739,8 @@ tryCatch({
   
   ## fgsea for overall contrast
   ranked_genes_overall <- tt_overall %>%
-    dplyr::filter(is.finite(logFC), is.finite(P.Value), P.Value > 0) %>%
-    dplyr::mutate(rank_stat = sign(logFC) * -log10(P.Value)) %>%
+    dplyr::filter(is.finite(stat)) %>%
+    dplyr::mutate(rank_stat = stat) %>%
     dplyr::arrange(dplyr::desc(rank_stat))
   
   ranked_vec_overall <- setNames(ranked_genes_overall$rank_stat, ranked_genes_overall$gene_name)
@@ -1793,67 +1762,6 @@ tryCatch({
   write.csv(deg_summary, file = file.path(outdir, "tables", deg_summary_file), row.names = FALSE)
   cat("\nDEG summary written: ", file.path(outdir, "tables", deg_summary_file), "\n", sep = "")
   
-  ## =======================================================
-  ## PATHWAY SANITY CHECKS (at end with gene counts)
-  ## =======================================================
-  cat("\n\n=================================================================\n")
-  cat("=== PATHWAY SANITY CHECKS (Summary with Gene Counts) ===\n")
-  cat("=================================================================\n\n")
-  
-  ## Save pathway sanity tracker to file
-  sanity_file <- paste0("Pathway_sanity_checks_", run_tag, ".csv")
-  write.csv(pathway_sanity_tracker, file = file.path(outdir, "tables", sanity_file), row.names = FALSE)
-  cat("[OK] Saved pathway sanity checks to: ", file.path(outdir, "tables", sanity_file), "\n\n", sep = "")
-  
-  ## Print summary by contrast and direction
-  cat("--- PATHWAY SANITY CHECK SUMMARY ---\n\n")
-  for (cn_check in unique(pathway_sanity_tracker$Contrast)) {
-    cat("Contrast: ", cn_check, "\n", sep = "")
-    for (dir_check in c("Up", "Down")) {
-      sub_tracker <- pathway_sanity_tracker %>%
-        dplyr::filter(Contrast == cn_check, Direction == dir_check)
-      
-      if (nrow(sub_tracker) > 0) {
-        cat("  Direction: ", dir_check, "\n", sep = "")
-        for (i in 1:nrow(sub_tracker)) {
-          row <- sub_tracker[i, ]
-          cat("    Database: ", row$Database, "\n", sep = "")
-          cat("      Input genes: ", row$N_Input_Genes, "\n", sep = "")
-          cat("      Mapped to Entrez: ", row$N_Mapped_Entrez, "\n", sep = "")
-          cat("      Significant pathways (FDR<0.05): ", row$N_Sig_Pathways, "\n", sep = "")
-        }
-      }
-    }
-    cat("\n")
-  }
-  
-  ## fgsea sanity checks
-  if (nrow(fgsea_sanity_tracker) > 0) {
-    fgsea_sanity_file <- paste0("fgsea_sanity_checks_", run_tag, ".csv")
-    write.csv(fgsea_sanity_tracker, file = file.path(outdir, "tables", fgsea_sanity_file), row.names = FALSE)
-    cat("[OK] Saved fgsea sanity checks to: ", file.path(outdir, "tables", fgsea_sanity_file), "\n\n", sep = "")
-    
-    cat("--- fgsea SANITY CHECK SUMMARY ---\n\n")
-    for (cn_check in unique(fgsea_sanity_tracker$Contrast)) {
-      cat("Contrast: ", cn_check, "\n", sep = "")
-      sub_tracker <- fgsea_sanity_tracker %>%
-        dplyr::filter(Contrast == cn_check)
-      
-      if (nrow(sub_tracker) > 0) {
-        for (i in 1:nrow(sub_tracker)) {
-          row <- sub_tracker[i, ]
-          cat("  Database: ", row$Database, "\n", sep = "")
-          cat("    Input genes: ", row$N_Input_Genes, "\n", sep = "")
-          cat("    Pathways tested: ", row$N_Pathways_Tested, "\n", sep = "")
-          cat("    Significant pathways (FDR<0.05): ", row$N_Sig_Pathways, "\n", sep = "")
-        }
-      }
-      cat("\n")
-    }
-  }
-  
-  cat("\n=================================================================\n\n")
-  
   ## 4.18) save_core bookkeeping ----------------------------
   if (!is.null(hero_volcano_file)) {
     hero_path <- file.path(outdir, "plots", hero_volcano_file)
@@ -1873,8 +1781,16 @@ tryCatch({
   cat(conditionMessage(e), "\n\n")
   
   err_file <- paste0("ERROR_", run_tag, ".txt")
-  writeLines(c("Script error:", conditionMessage(e), "", traceback()), 
-             con = file.path(outdir, "logs", err_file))
+  writeLines(
+    c(
+      "Script error:",
+      conditionMessage(e),
+      "",
+      "Traceback:",
+      capture.output(traceback())
+    ),
+    con = file.path(outdir, "logs", err_file)
+  )
   
   stop(e)
 })
