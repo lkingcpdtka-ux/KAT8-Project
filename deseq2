@@ -10,8 +10,6 @@
 ## - Differential expression: DESeq2 (Wald)
 ## - Volcano plots (orange/teal), per-contrast heatmaps
 ## - DEG counts summary
-## - Pathway over-representation (Up/Down): GO:BP + KEGG only
-## - fgsea (Gene Set Enrichment Analysis): GO:BP + KEGG
 ## - ComplexHeatmap for genes of interest
 ## - EnhancedVolcano for genes of interest
 ## - Overall CTL vs KD contrast (across all depots/sexes)
@@ -19,10 +17,8 @@
 ##
 ## FIXES APPLIED:
 ## 1. Density plot: before/after filtering with matched colors
-## 2. Pathway bar plots: ordered by gene ratio, direction-specific colors
-## 3. EnhancedVolcano: only colors significant genes by direction
-## 4. fgsea: fixed GO:BP and KEGG errors
-## 5. Consistent colors across all plots
+## 2. EnhancedVolcano: only colors significant genes by direction
+## 3. Consistent colors across all plots
 ## =========================================================
 
 ## 0) Working dir (optional) --------------------------------
@@ -46,15 +42,8 @@ if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
 
 required_bioc_pkgs <- c(
   "DESeq2",
-  "clusterProfiler",
-  "org.Mm.eg.db",
-  "enrichplot",
-  "DOSE",
-  "AnnotationDbi",
   "ComplexHeatmap",
-  "EnhancedVolcano",
-  "fgsea",
-  "GO.db"
+  "EnhancedVolcano"
 )
 
 ## circlize is on CRAN
@@ -74,16 +63,9 @@ suppressPackageStartupMessages({
   library(grid)   ## for unit()
   library(scales)
   library(DESeq2)
-  library(clusterProfiler)
-  library(org.Mm.eg.db)
-  library(enrichplot)
-  library(DOSE)
-  library(AnnotationDbi)
   library(ComplexHeatmap)
   library(circlize)
   library(EnhancedVolcano)
-  library(fgsea)
-  library(GO.db)
 })
 
 ## 2) save_core utilities -----------------------------------
@@ -98,9 +80,9 @@ run_info <- list(
   script_name = "KAT8_DESeq2_complete_fixed.R",
   species     = "mouse",
   data_type   = "bulkRNAseq_WAT_tissue",
-  keywords    = c("KAT8", "WAT", "iWAT", "gWAT", "bulk RNA-seq", "tissue", "DESeq2", "fgsea"),
-  notes       = "DESeq2 pipeline with all fixes: VST QC + per-depot/sex contrasts + overall + GO:BP/KEGG (ORA + fgsea) + genes of interest",
-  message     = "Tissue KAT8KD vs CTL: DESeq2 + VST QC + DEGs + pathways + fgsea + ComplexHeatmap + EnhancedVolcano"
+  keywords    = c("KAT8", "WAT", "iWAT", "gWAT", "bulk RNA-seq", "tissue", "DESeq2"),
+  notes       = "DESeq2 pipeline with VST QC + per-depot/sex contrasts + overall + genes of interest",
+  message     = "Tissue KAT8KD vs CTL: DESeq2 + VST QC + DEGs + ComplexHeatmap + EnhancedVolcano"
 )
 
 ## 3) init_run ----------------------------------------------
@@ -115,10 +97,6 @@ run_ctx <- init_run(
 outdir  <- run_ctx$outdir
 run_tag <- run_ctx$run_tag
 cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
-
-## Pathway focus controls (optional)
-pathway_focus_depot_sex <- "iWAT_F"
-run_pathway_subset_only <- FALSE  ## Run pathway analysis for ALL contrasts
 
 ## -----------------------------
 ## Genes of interest for focused heatmap/volcano
@@ -135,37 +113,8 @@ genes_of_interest <- c(
 )
 cat("[INFO] Genes of interest for focused plots: ", length(genes_of_interest), "\n")
 
-## -----------------------------
-## Sanity check: org.Mm.eg.db
-## -----------------------------
-cat("\n--- SANITY CHECK: ORGANISM DATABASE ---\n")
-org_species <- AnnotationDbi::species(org.Mm.eg.db)
-if (!identical(org_species, "Mus musculus")) stop("ERROR: org.Mm.eg.db species mismatch: ", org_species)
-cat("[PASS] org.Mm.eg.db species:", org_species, "\n")
-
 ## 4) Main logic --------------------------------------------
 hero_volcano_file <- NULL
-
-## Container for pathway sanity checks (populated during analysis)
-pathway_sanity_tracker <- data.frame(
-  Contrast = character(),
-  Direction = character(),
-  Database = character(),
-  N_Input_Genes = integer(),
-  N_Mapped_Entrez = integer(),
-  N_Sig_Pathways = integer(),
-  stringsAsFactors = FALSE
-)
-
-## Container for fgsea sanity checks
-fgsea_sanity_tracker <- data.frame(
-  Contrast = character(),
-  Database = character(),
-  N_Input_Genes = integer(),
-  N_Pathways_Tested = integer(),
-  N_Sig_Pathways = integer(),
-  stringsAsFactors = FALSE
-)
 
 tryCatch({
   
@@ -584,8 +533,6 @@ tryCatch({
   
   tt_list <- vector("list", length(contrast_names))
   names(tt_list) <- contrast_names
-  pathway_results <- list()
-  fgsea_results <- list()
   
   ## 4.14) Pathway analysis function (ORA) - GO:BP + KEGG ----
   run_pathway_analysis <- function(gene_list, direction, contrast_name,
@@ -1814,67 +1761,6 @@ tryCatch({
   deg_summary_file <- paste0("DEG_summary_tissue_", run_tag, ".csv")
   write.csv(deg_summary, file = file.path(outdir, "tables", deg_summary_file), row.names = FALSE)
   cat("\nDEG summary written: ", file.path(outdir, "tables", deg_summary_file), "\n", sep = "")
-  
-  ## =======================================================
-  ## PATHWAY SANITY CHECKS (at end with gene counts)
-  ## =======================================================
-  cat("\n\n=================================================================\n")
-  cat("=== PATHWAY SANITY CHECKS (Summary with Gene Counts) ===\n")
-  cat("=================================================================\n\n")
-  
-  ## Save pathway sanity tracker to file
-  sanity_file <- paste0("Pathway_sanity_checks_", run_tag, ".csv")
-  write.csv(pathway_sanity_tracker, file = file.path(outdir, "tables", sanity_file), row.names = FALSE)
-  cat("[OK] Saved pathway sanity checks to: ", file.path(outdir, "tables", sanity_file), "\n\n", sep = "")
-  
-  ## Print summary by contrast and direction
-  cat("--- PATHWAY SANITY CHECK SUMMARY ---\n\n")
-  for (cn_check in unique(pathway_sanity_tracker$Contrast)) {
-    cat("Contrast: ", cn_check, "\n", sep = "")
-    for (dir_check in c("Up", "Down")) {
-      sub_tracker <- pathway_sanity_tracker %>%
-        dplyr::filter(Contrast == cn_check, Direction == dir_check)
-      
-      if (nrow(sub_tracker) > 0) {
-        cat("  Direction: ", dir_check, "\n", sep = "")
-        for (i in 1:nrow(sub_tracker)) {
-          row <- sub_tracker[i, ]
-          cat("    Database: ", row$Database, "\n", sep = "")
-          cat("      Input genes: ", row$N_Input_Genes, "\n", sep = "")
-          cat("      Mapped to Entrez: ", row$N_Mapped_Entrez, "\n", sep = "")
-          cat("      Significant pathways (FDR<0.05): ", row$N_Sig_Pathways, "\n", sep = "")
-        }
-      }
-    }
-    cat("\n")
-  }
-  
-  ## fgsea sanity checks
-  if (nrow(fgsea_sanity_tracker) > 0) {
-    fgsea_sanity_file <- paste0("fgsea_sanity_checks_", run_tag, ".csv")
-    write.csv(fgsea_sanity_tracker, file = file.path(outdir, "tables", fgsea_sanity_file), row.names = FALSE)
-    cat("[OK] Saved fgsea sanity checks to: ", file.path(outdir, "tables", fgsea_sanity_file), "\n\n", sep = "")
-    
-    cat("--- fgsea SANITY CHECK SUMMARY ---\n\n")
-    for (cn_check in unique(fgsea_sanity_tracker$Contrast)) {
-      cat("Contrast: ", cn_check, "\n", sep = "")
-      sub_tracker <- fgsea_sanity_tracker %>%
-        dplyr::filter(Contrast == cn_check)
-      
-      if (nrow(sub_tracker) > 0) {
-        for (i in 1:nrow(sub_tracker)) {
-          row <- sub_tracker[i, ]
-          cat("  Database: ", row$Database, "\n", sep = "")
-          cat("    Input genes: ", row$N_Input_Genes, "\n", sep = "")
-          cat("    Pathways tested: ", row$N_Pathways_Tested, "\n", sep = "")
-          cat("    Significant pathways (FDR<0.05): ", row$N_Sig_Pathways, "\n", sep = "")
-        }
-      }
-      cat("\n")
-    }
-  }
-  
-  cat("\n=================================================================\n\n")
   
   ## 4.18) save_core bookkeeping ----------------------------
   if (!is.null(hero_volcano_file)) {
