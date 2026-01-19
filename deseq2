@@ -37,7 +37,8 @@ required_pkgs <- c(
   "viridis",
   "pheatmap",
   "grid",
-  "scales"
+  "scales",
+  "msigdbr"
 )
 
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
@@ -316,7 +317,8 @@ tryCatch({
   ## Typical DESeq2 prefilter is count-based (not CPM-based).
   ## This reduces memory + improves stability without mixing frameworks.
   min_count <- 10
-  min_samples <- ceiling(ncol(count_matrix_tissue) * 0.5)  ## at least 50% of samples
+  ## Prefer retaining genes expressed in at least the smallest group size.
+  min_samples <- min(table(sample_annot$GroupFull))
   
   keep <- rowSums(count_matrix_tissue >= min_count) >= min_samples
   cat("\nPrefilter rule: keep genes with counts >= ", min_count,
@@ -341,7 +343,7 @@ tryCatch({
     prefilter_rule    = list(
       min_count       = min_count,
       min_samples     = min_samples,
-      description     = "Keep genes with counts >= min_count in at least min_samples"
+      description     = "Keep genes with counts >= min_count in at least min_samples (smallest group size)"
     ),
     de_thresholds     = list(
       logFC_cutoff    = logFC_cut_tissue,
@@ -349,7 +351,7 @@ tryCatch({
     ),
     vst              = list(
       blind           = TRUE,
-      description     = "VST used for QC and heatmaps"
+      description     = "VST used for QC (blind=TRUE); heatmaps use blind=FALSE"
     ),
     volcano_labels   = list(
       top_n_by_fdr    = 10,
@@ -403,6 +405,10 @@ tryCatch({
   vst_tissue <- vst(dds_tissue, blind = TRUE)
   vst_mat <- assay(vst_tissue)  ## genes x samples (log2-ish stabilized)
   
+  cat("\n=== VST FOR HEATMAPS (blind=FALSE) ===\n")
+  vst_tissue_hm <- vst(dds_tissue, blind = FALSE)
+  vst_mat_hm <- assay(vst_tissue_hm)
+  
   ## 4.9) Density plots (VST before/after filtering) --------
   ## FIXED: Side-by-side before/after filtering comparison with matched colors
   cat("\n=== Creating before/after filtering density plots ===\n")
@@ -414,7 +420,7 @@ tryCatch({
     design    = ~ 0 + GroupFull
   )
   dds_all_genes <- estimateSizeFactors(dds_all_genes)
-  dds_all_genes <- estimateDispersions(dds_all_genes)
+  dds_all_genes <- estimateDispersions(dds_all_genes, fitType = "local")
   vst_all_genes <- vst(dds_all_genes, blind = TRUE)
   vst_mat_before <- assay(vst_all_genes)
   
@@ -982,14 +988,30 @@ tryCatch({
     tryCatch({
       cat("[INFO] Running fgsea for KEGG...\n")
       
-      ## FIXED: Use msigdbr or org.Mm.eg.db PATH mapping
+      ## FIXED: Use msigdbr (mouse-native) or org.Mm.eg.db PATH mapping
       if (requireNamespace("msigdbr", quietly = TRUE)) {
         cat("[INFO] Using msigdbr for KEGG pathways\n")
-        kegg_msigdb <- msigdbr::msigdbr(species = "Mus musculus", category = "C2", subcategory = "CP:KEGG")
-        kegg_list <- split(kegg_msigdb$gene_symbol, kegg_msigdb$gs_name)
+        kegg_msigdb <- suppressMessages(msigdbr::msigdbr(species = "Mus musculus", category = "C2"))
+        kegg_msigdb <- kegg_msigdb %>% dplyr::filter(gs_subcat == "CP:KEGG")
+        if (nrow(kegg_msigdb) == 0) {
+          cat("[WARN] msigdbr KEGG gene sets not available; falling back to org.Mm.eg.db\n")
+        } else {
+          kegg_list <- split(kegg_msigdb$gene_symbol, kegg_msigdb$gs_name)
+        }
       } else {
         ## Fallback: build from org.Mm.eg.db
         cat("[INFO] Building KEGG pathways from org.Mm.eg.db\n")
+        kegg_genes <- AnnotationDbi::select(
+          org.Mm.eg.db,
+          keys = keys(org.Mm.eg.db, keytype = "PATH"),
+          columns = c("SYMBOL", "PATH"),
+          keytype = "PATH"
+        )
+        kegg_genes <- kegg_genes %>% dplyr::filter(!is.na(SYMBOL), !is.na(PATH))
+        kegg_list <- split(kegg_genes$SYMBOL, paste0("mmu", kegg_genes$PATH))
+      }
+      
+      if (!exists("kegg_list")) {
         kegg_genes <- AnnotationDbi::select(
           org.Mm.eg.db,
           keys = keys(org.Mm.eg.db, keytype = "PATH"),
@@ -1074,6 +1096,12 @@ tryCatch({
         }
         
         ## Save table
+        list_cols <- vapply(sig_results, is.list, logical(1))
+        if (any(list_cols)) {
+          sig_results[list_cols] <- lapply(sig_results[list_cols], function(x) {
+            vapply(x, function(item) paste(item, collapse = ","), character(1))
+          })
+        }
         table_file <- paste0("fgsea_", db_name, "_", contrast_name, "_", run_tag, ".csv")
         write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
         cat("[OK] Saved fgsea table: ", table_file, "\n", sep = "")
@@ -1329,10 +1357,10 @@ tryCatch({
       ## fgsea (Gene Set Enrichment Analysis) - NOT split by up/down
       cat("\n--- Preparing ranked gene list for fgsea ---\n")
       
-      ## Rank genes by sign(logFC) * -log10(pvalue)
-      ranked_genes <- tt %>%
-        dplyr::filter(is.finite(logFC), is.finite(P.Value), P.Value > 0) %>%
-        dplyr::mutate(rank_stat = sign(logFC) * -log10(P.Value)) %>%
+      ## Rank genes by DESeq2 Wald statistic
+  ranked_genes <- tt %>%
+        dplyr::filter(is.finite(stat)) %>%
+        dplyr::mutate(rank_stat = stat) %>%
         dplyr::arrange(dplyr::desc(rank_stat))
       
       ## Create named vector
@@ -1375,7 +1403,7 @@ tryCatch({
         samples_heat <- rownames(colData(dds_tissue))[idx_samples]
         heat_meta_deg <- as.data.frame(colData(dds_tissue))[idx_samples, , drop = FALSE]
         
-        mat <- vst_mat[gene_set, samples_heat, drop = FALSE]
+        mat <- vst_mat_hm[gene_set, samples_heat, drop = FALSE]
         
         ## Scale rows (z-score)
         mat_scaled <- t(scale(t(mat)))
@@ -1466,7 +1494,7 @@ tryCatch({
         heat_ctrls <- heat_meta %>% dplyr::filter(Genotype == "CTL") %>% rownames()
         
         ## Build matrix
-        heat_matrix <- vst_mat[goi_in_data, heat_samples, drop = FALSE]
+        heat_matrix <- vst_mat_hm[goi_in_data, heat_samples, drop = FALSE]
         
         ## Center by control means (z-score relative to controls)
         heat_ctrl_means <- rowMeans(heat_matrix[, heat_ctrls, drop = FALSE])
@@ -1614,7 +1642,7 @@ tryCatch({
   dds_overall <- DESeqDataSetFromMatrix(
     countData = round(count_matrix_filt),
     colData   = sample_annot,
-    design    = ~ Genotype
+    design    = ~ Depot + Sex + Genotype
   )
   
   cat("[INFO] Running DESeq2 for overall contrast...\n")
@@ -1770,8 +1798,8 @@ tryCatch({
   
   ## fgsea for overall contrast
   ranked_genes_overall <- tt_overall %>%
-    dplyr::filter(is.finite(logFC), is.finite(P.Value), P.Value > 0) %>%
-    dplyr::mutate(rank_stat = sign(logFC) * -log10(P.Value)) %>%
+    dplyr::filter(is.finite(stat)) %>%
+    dplyr::mutate(rank_stat = stat) %>%
     dplyr::arrange(dplyr::desc(rank_stat))
   
   ranked_vec_overall <- setNames(ranked_genes_overall$rank_stat, ranked_genes_overall$gene_name)
@@ -1873,8 +1901,16 @@ tryCatch({
   cat(conditionMessage(e), "\n\n")
   
   err_file <- paste0("ERROR_", run_tag, ".txt")
-  writeLines(c("Script error:", conditionMessage(e), "", traceback()), 
-             con = file.path(outdir, "logs", err_file))
+  writeLines(
+    c(
+      "Script error:",
+      conditionMessage(e),
+      "",
+      "Traceback:",
+      capture.output(traceback())
+    ),
+    con = file.path(outdir, "logs", err_file)
+  )
   
   stop(e)
 })
