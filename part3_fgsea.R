@@ -98,6 +98,16 @@ simplify_go_bp <- TRUE
 simplify_go_cutoff <- 0.7
 top_n_per_direction <- 10
 
+## Library toggles (temporary)
+run_go_bp <- FALSE
+run_kegg <- FALSE
+run_wikipathways <- TRUE
+run_hallmark <- TRUE
+
+log_time <- function(message) {
+  cat("[TIME] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), " ", message, "\n", sep = "")
+}
+
 ## Sanity check tracker
 fgsea_sanity_tracker <- data.frame(
   Contrast = character(),
@@ -131,122 +141,140 @@ tryCatch({
 
   ## 4.2) Build gene sets ------------------------------------
   cat("\n=== BUILDING GENE SETS FOR fgsea ===\n")
+  log_time("Starting gene set construction")
 
-  ## GO:BP gene sets
-  cat("[INFO] Building GO:BP gene sets from org.Mm.eg.db...\n")
-  go_bp_genes <- tryCatch({
-    AnnotationDbi::select(
-      org.Mm.eg.db,
-      keys = keys(org.Mm.eg.db, keytype = "GOALL"),
-      columns = c("SYMBOL", "GOALL", "ONTOLOGYALL"),
-      keytype = "GOALL"
-    )
-  }, error = function(e) {
-    cat("[ERROR] Failed to get GO:BP gene sets: ", conditionMessage(e), "\n")
-    return(NULL)
-  })
-
+  ## GO:BP gene sets (disabled for now)
   go_bp_list <- NULL
   go_bp_term2gene <- NULL
-  if (!is.null(go_bp_genes)) {
-    ## Filter for BP ontology and remove NA symbols
-    go_bp_genes <- go_bp_genes %>%
-      dplyr::filter(ONTOLOGYALL == "BP", !is.na(SYMBOL)) %>%
-      dplyr::select(GOALL, SYMBOL)
+  if (run_go_bp) {
+    cat("[INFO] Building GO:BP gene sets from org.Mm.eg.db...\n")
+    go_bp_genes <- tryCatch({
+      AnnotationDbi::select(
+        org.Mm.eg.db,
+        keys = keys(org.Mm.eg.db, keytype = "GOALL"),
+        columns = c("SYMBOL", "GOALL", "ONTOLOGYALL"),
+        keytype = "GOALL"
+      )
+    }, error = function(e) {
+      cat("[ERROR] Failed to get GO:BP gene sets: ", conditionMessage(e), "\n")
+      return(NULL)
+    })
 
-    ## Convert to named list (pathway name -> gene vector)
-    go_bp_list <- split(go_bp_genes$SYMBOL, go_bp_genes$GOALL)
-    go_bp_term2gene <- go_bp_genes %>% dplyr::select(GOALL, SYMBOL)
+    if (!is.null(go_bp_genes)) {
+      ## Filter for BP ontology and remove NA symbols
+      go_bp_genes <- go_bp_genes %>%
+        dplyr::filter(ONTOLOGYALL == "BP", !is.na(SYMBOL)) %>%
+        dplyr::select(GOALL, SYMBOL)
 
-    ## Filter for gene set size
-    go_bp_list <- go_bp_list[sapply(go_bp_list, length) >= 5 & sapply(go_bp_list, length) <= 500]
+      ## Convert to named list (pathway name -> gene vector)
+      go_bp_list <- split(go_bp_genes$SYMBOL, go_bp_genes$GOALL)
+      go_bp_term2gene <- go_bp_genes %>% dplyr::select(GOALL, SYMBOL)
 
-    cat("[OK] GO:BP gene sets: ", length(go_bp_list), " pathways\n", sep = "")
+      ## Filter for gene set size
+      go_bp_list <- go_bp_list[sapply(go_bp_list, length) >= 5 & sapply(go_bp_list, length) <= 500]
+
+      cat("[OK] GO:BP gene sets: ", length(go_bp_list), " pathways\n", sep = "")
+    }
+  } else {
+    cat("[INFO] GO:BP gene sets disabled (run_go_bp = FALSE)\n")
   }
 
-  ## KEGG gene sets (FIXED: use msigdbr correctly)
-  cat("[INFO] Building KEGG gene sets from msigdbr...\n")
+  ## KEGG gene sets (disabled for now)
   kegg_list <- NULL
-  tryCatch({
-    ## Get all C2 (curated gene sets) for mouse
-    msigdb_c2 <- msigdbr(species = "Mus musculus", collection = "C2")
-
-    ## Filter for KEGG pathways (gs_subcat is empty for KEGG, but gs_name starts with "KEGG_")
-    kegg_msigdb <- msigdb_c2 %>%
-      dplyr::filter(grepl("^KEGG_", gs_name))
-
-    if (nrow(kegg_msigdb) == 0) {
-      cat("[WARN] No KEGG pathways found in msigdbr C2\n")
-    } else {
-      ## Convert to named list
-      kegg_list <- split(kegg_msigdb$gene_symbol, kegg_msigdb$gs_name)
-
-      ## Filter for gene set size
-      kegg_list <- kegg_list[sapply(kegg_list, length) >= 5 & sapply(kegg_list, length) <= 500]
-
-      cat("[OK] KEGG gene sets: ", length(kegg_list), " pathways\n", sep = "")
-    }
-  }, error = function(e) {
-    cat("[WARN] msigdbr KEGG failed: ", conditionMessage(e), "\n")
-    cat("[INFO] Falling back to org.Mm.eg.db PATH mapping...\n")
-
-    ## Fallback: build from org.Mm.eg.db
+  if (run_kegg) {
+    cat("[INFO] Building KEGG gene sets from msigdbr...\n")
     tryCatch({
-      kegg_genes <- AnnotationDbi::select(
-        org.Mm.eg.db,
-        keys = keys(org.Mm.eg.db, keytype = "PATH"),
-        columns = c("SYMBOL", "PATH"),
-        keytype = "PATH"
-      )
-      kegg_genes <- kegg_genes %>% dplyr::filter(!is.na(SYMBOL), !is.na(PATH))
-      kegg_list <- split(kegg_genes$SYMBOL, paste0("mmu", kegg_genes$PATH))
+      ## Get all C2 (curated gene sets) for mouse
+      msigdb_c2 <- msigdbr(species = "Mus musculus", collection = "C2")
 
-      ## Filter for gene set size
-      kegg_list <- kegg_list[sapply(kegg_list, length) >= 5 & sapply(kegg_list, length) <= 500]
+      ## Filter for KEGG pathways (gs_subcat is empty for KEGG, but gs_name starts with "KEGG_")
+      kegg_msigdb <- msigdb_c2 %>%
+        dplyr::filter(grepl("^KEGG_", gs_name))
 
-      cat("[OK] KEGG gene sets (from org.Mm.eg.db): ", length(kegg_list), " pathways\n", sep = "")
-    }, error = function(e2) {
-      cat("[ERROR] KEGG fallback also failed: ", conditionMessage(e2), "\n")
+      if (nrow(kegg_msigdb) == 0) {
+        cat("[WARN] No KEGG pathways found in msigdbr C2\n")
+      } else {
+        ## Convert to named list
+        kegg_list <- split(kegg_msigdb$gene_symbol, kegg_msigdb$gs_name)
+
+        ## Filter for gene set size
+        kegg_list <- kegg_list[sapply(kegg_list, length) >= 5 & sapply(kegg_list, length) <= 500]
+
+        cat("[OK] KEGG gene sets: ", length(kegg_list), " pathways\n", sep = "")
+      }
+    }, error = function(e) {
+      cat("[WARN] msigdbr KEGG failed: ", conditionMessage(e), "\n")
+      cat("[INFO] Falling back to org.Mm.eg.db PATH mapping...\n")
+
+      ## Fallback: build from org.Mm.eg.db
+      tryCatch({
+        kegg_genes <- AnnotationDbi::select(
+          org.Mm.eg.db,
+          keys = keys(org.Mm.eg.db, keytype = "PATH"),
+          columns = c("SYMBOL", "PATH"),
+          keytype = "PATH"
+        )
+        kegg_genes <- kegg_genes %>% dplyr::filter(!is.na(SYMBOL), !is.na(PATH))
+        kegg_list <- split(kegg_genes$SYMBOL, paste0("mmu", kegg_genes$PATH))
+
+        ## Filter for gene set size
+        kegg_list <- kegg_list[sapply(kegg_list, length) >= 5 & sapply(kegg_list, length) <= 500]
+
+        cat("[OK] KEGG gene sets (from org.Mm.eg.db): ", length(kegg_list), " pathways\n", sep = "")
+      }, error = function(e2) {
+        cat("[ERROR] KEGG fallback also failed: ", conditionMessage(e2), "\n")
+      })
     })
-  })
+  } else {
+    cat("[INFO] KEGG gene sets disabled (run_kegg = FALSE)\n")
+  }
 
   ## WikiPathways gene sets
-  cat("[INFO] Building WikiPathways gene sets from msigdbr...\n")
   wikipathways_list <- NULL
-  tryCatch({
-    msigdb_wp <- msigdbr(
-      species = "Mus musculus",
-      collection = "C2",
-      subcollection = "CP:WIKIPATHWAYS"
-    )
-    if (nrow(msigdb_wp) == 0) {
-      cat("[WARN] No WikiPathways gene sets found in msigdbr\n")
-    } else {
-      wikipathways_list <- split(msigdb_wp$gene_symbol, msigdb_wp$gs_name)
-      wikipathways_list <- wikipathways_list[
-        sapply(wikipathways_list, length) >= 5 & sapply(wikipathways_list, length) <= 500
-      ]
-      cat("[OK] WikiPathways gene sets: ", length(wikipathways_list), " pathways\n", sep = "")
-    }
-  }, error = function(e) {
-    cat("[WARN] msigdbr WikiPathways failed: ", conditionMessage(e), "\n")
-  })
+  if (run_wikipathways) {
+    cat("[INFO] Building WikiPathways gene sets from msigdbr...\n")
+    tryCatch({
+      msigdb_wp <- msigdbr(
+        species = "Mus musculus",
+        collection = "C2",
+        subcollection = "CP:WIKIPATHWAYS"
+      )
+      if (nrow(msigdb_wp) == 0) {
+        cat("[WARN] No WikiPathways gene sets found in msigdbr\n")
+      } else {
+        wikipathways_list <- split(msigdb_wp$gene_symbol, msigdb_wp$gs_name)
+        wikipathways_list <- wikipathways_list[
+          sapply(wikipathways_list, length) >= 5 & sapply(wikipathways_list, length) <= 500
+        ]
+        cat("[OK] WikiPathways gene sets: ", length(wikipathways_list), " pathways\n", sep = "")
+      }
+    }, error = function(e) {
+      cat("[WARN] msigdbr WikiPathways failed: ", conditionMessage(e), "\n")
+    })
+  } else {
+    cat("[INFO] WikiPathways gene sets disabled (run_wikipathways = FALSE)\n")
+  }
 
   ## Hallmark gene sets
-  cat("[INFO] Building Hallmark gene sets from msigdbr...\n")
   hallmark_list <- NULL
-  tryCatch({
-    msigdb_hallmark <- msigdbr(species = "Mus musculus", collection = "H")
-    if (nrow(msigdb_hallmark) == 0) {
-      cat("[WARN] No Hallmark gene sets found in msigdbr\n")
-    } else {
-      hallmark_list <- split(msigdb_hallmark$gene_symbol, msigdb_hallmark$gs_name)
-      hallmark_list <- hallmark_list[sapply(hallmark_list, length) >= 5 & sapply(hallmark_list, length) <= 500]
-      cat("[OK] Hallmark gene sets: ", length(hallmark_list), " pathways\n", sep = "")
-    }
-  }, error = function(e) {
-    cat("[WARN] msigdbr Hallmark failed: ", conditionMessage(e), "\n")
-  })
+  if (run_hallmark) {
+    cat("[INFO] Building Hallmark gene sets from msigdbr...\n")
+    tryCatch({
+      msigdb_hallmark <- msigdbr(species = "Mus musculus", collection = "H")
+      if (nrow(msigdb_hallmark) == 0) {
+        cat("[WARN] No Hallmark gene sets found in msigdbr\n")
+      } else {
+        hallmark_list <- split(msigdb_hallmark$gene_symbol, msigdb_hallmark$gs_name)
+        hallmark_list <- hallmark_list[sapply(hallmark_list, length) >= 5 & sapply(hallmark_list, length) <= 500]
+        cat("[OK] Hallmark gene sets: ", length(hallmark_list), " pathways\n", sep = "")
+      }
+    }, error = function(e) {
+      cat("[WARN] msigdbr Hallmark failed: ", conditionMessage(e), "\n")
+    })
+  } else {
+    cat("[INFO] Hallmark gene sets disabled (run_hallmark = FALSE)\n")
+  }
+  log_time("Completed gene set construction")
 
   ## 4.3) fgsea analysis function ----------------------------
   run_fgsea_analysis <- function(ranked_genes, contrast_name,
@@ -266,7 +294,8 @@ tryCatch({
     results <- list()
 
     ## GO:BP fgsea
-    if (!is.null(go_bp_list) && length(go_bp_list) > 0) {
+    if (run_go_bp && !is.null(go_bp_list) && length(go_bp_list) > 0) {
+      log_time(paste0("Starting GO:BP fgsea for ", contrast_name))
       tryCatch({
         cat("[INFO] Running fgsea for GO:BP (", length(go_bp_list), " gene sets)...\n", sep = "")
 
@@ -371,12 +400,14 @@ tryCatch({
           )
         )
       })
-    } else {
+      log_time(paste0("Completed GO:BP fgsea for ", contrast_name))
+    } else if (run_go_bp) {
       cat("[WARN] GO:BP gene sets not available\n")
     }
 
     ## KEGG fgsea
-    if (!is.null(kegg_list) && length(kegg_list) > 0) {
+    if (run_kegg && !is.null(kegg_list) && length(kegg_list) > 0) {
+      log_time(paste0("Starting KEGG fgsea for ", contrast_name))
       tryCatch({
         cat("[INFO] Running fgsea for KEGG (", length(kegg_list), " gene sets)...\n", sep = "")
 
@@ -434,12 +465,14 @@ tryCatch({
           )
         )
       })
-    } else {
+      log_time(paste0("Completed KEGG fgsea for ", contrast_name))
+    } else if (run_kegg) {
       cat("[WARN] KEGG gene sets not available\n")
     }
 
     ## WikiPathways fgsea
-    if (!is.null(wikipathways_list) && length(wikipathways_list) > 0) {
+    if (run_wikipathways && !is.null(wikipathways_list) && length(wikipathways_list) > 0) {
+      log_time(paste0("Starting WikiPathways fgsea for ", contrast_name))
       tryCatch({
         cat("[INFO] Running fgsea for WikiPathways (", length(wikipathways_list), " gene sets)...\n", sep = "")
 
@@ -492,12 +525,14 @@ tryCatch({
           )
         )
       })
-    } else {
+      log_time(paste0("Completed WikiPathways fgsea for ", contrast_name))
+    } else if (run_wikipathways) {
       cat("[WARN] WikiPathways gene sets not available\n")
     }
 
     ## Hallmark fgsea
-    if (!is.null(hallmark_list) && length(hallmark_list) > 0) {
+    if (run_hallmark && !is.null(hallmark_list) && length(hallmark_list) > 0) {
+      log_time(paste0("Starting Hallmark fgsea for ", contrast_name))
       tryCatch({
         cat("[INFO] Running fgsea for Hallmark (", length(hallmark_list), " gene sets)...\n", sep = "")
 
@@ -554,7 +589,8 @@ tryCatch({
           )
         )
       })
-    } else {
+      log_time(paste0("Completed Hallmark fgsea for ", contrast_name))
+    } else if (run_hallmark) {
       cat("[WARN] Hallmark gene sets not available\n")
     }
 
@@ -660,6 +696,7 @@ tryCatch({
     contrast_name <- gsub("^DE_tissue_(.+)_[0-9]{8}_[0-9]{6}\\.csv$", "\\1", de_filename)
 
     cat("\n=== Processing contrast: ", contrast_name, " ===\n", sep = "")
+    log_time(paste0("Starting fgsea for contrast: ", contrast_name))
 
     ## Load DE table
     de_table <- read.csv(de_file, row.names = 1, stringsAsFactors = FALSE)
@@ -709,6 +746,7 @@ tryCatch({
         simplify_cutoff = simplify_go_cutoff,
         top_n_per_direction = top_n_per_direction
       )
+      log_time(paste0("Completed fgsea for contrast: ", contrast_name))
     } else {
       cat("[WARN] Too few genes for fgsea\n")
     }
