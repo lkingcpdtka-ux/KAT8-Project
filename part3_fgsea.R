@@ -169,7 +169,7 @@ tryCatch({
   kegg_list <- NULL
   tryCatch({
     ## Get all C2 (curated gene sets) for mouse
-    msigdb_c2 <- msigdbr(species = "Mus musculus", category = "C2")
+    msigdb_c2 <- msigdbr(species = "Mus musculus", collection = "C2")
 
     ## Filter for KEGG pathways (gs_subcat is empty for KEGG, but gs_name starts with "KEGG_")
     kegg_msigdb <- msigdb_c2 %>%
@@ -214,7 +214,7 @@ tryCatch({
   cat("[INFO] Building Hallmark gene sets from msigdbr...\n")
   hallmark_list <- NULL
   tryCatch({
-    msigdb_hallmark <- msigdbr(species = "Mus musculus", category = "H")
+    msigdb_hallmark <- msigdbr(species = "Mus musculus", collection = "H")
     if (nrow(msigdb_hallmark) == 0) {
       cat("[WARN] No Hallmark gene sets found in msigdbr\n")
     } else {
@@ -297,9 +297,11 @@ tryCatch({
           if (simplify_go && !is.null(go_bp_term2gene)) {
             cat("[INFO] Simplifying GO:BP results (cutoff=", simplify_cutoff, ")...\n", sep = "")
             tryCatch({
-              gsea_obj <- clusterProfiler::GSEA(
-                ranked_genes,
-                TERM2GENE = go_bp_term2gene,
+              gsea_obj <- clusterProfiler::gseGO(
+                geneList = ranked_genes,
+                OrgDb = org.Mm.eg.db,
+                keyType = "SYMBOL",
+                ont = "BP",
                 minGSSize = 5,
                 maxGSSize = 500,
                 pvalueCutoff = 1,
