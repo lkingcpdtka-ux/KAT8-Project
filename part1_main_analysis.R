@@ -566,6 +566,9 @@ tryCatch({
   ## Initialize reference gene order for genes of interest (will be set from iWAT_F)
   goi_reference_order <- NULL
 
+  ## Ensure contrasts are processed in order (iWAT_F must be first for reference)
+  contrast_names <- c("iWAT_F_KD_vs_CTL", "iWAT_M_KD_vs_CTL", "gWAT_F_KD_vs_CTL", "gWAT_M_KD_vs_CTL")
+
   for (cn in contrast_names) {
 
     cat("\n=== Contrast: ", cn, " ===\n", sep = "")
@@ -841,6 +844,9 @@ tryCatch({
             ## Reorder matrix to match clustered order
             heat_matrix_scaled <- heat_matrix_scaled[goi_reference_order, , drop = FALSE]
 
+            ## Print gene order for verification
+            cat("[INFO] Gene order (first 10): ", paste(head(rownames(heat_matrix_scaled), 10), collapse=", "), "\n", sep="")
+
             ## Create heatmap WITHOUT clustering (using pre-clustered order)
             heat_goi <- Heatmap(
               heat_matrix_scaled,
@@ -870,6 +876,7 @@ tryCatch({
             common_genes <- intersect(goi_reference_order, rownames(heat_matrix_scaled))
             heat_matrix_scaled <- heat_matrix_scaled[common_genes, , drop = FALSE]
             cat("[INFO] Using ", length(common_genes), " genes in common with reference\n", sep = "")
+            cat("[INFO] Gene order (first 10): ", paste(head(rownames(heat_matrix_scaled), 10), collapse=", "), "\n", sep="")
 
             heat_goi <- Heatmap(
               heat_matrix_scaled,
