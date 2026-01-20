@@ -104,30 +104,36 @@ genes_of_interest <- c(
 )
 cat("[INFO] Genes of interest for focused plots: ", length(genes_of_interest), "\n")
 
+## -----------------------------
+## Prefilter parameters (tune as needed)
+## -----------------------------
+prefilter_min_count <- 5
+prefilter_min_samples_per_group <- 2
+
 ## 4) Main logic --------------------------------------------
 hero_volcano_file <- NULL
 
 tryCatch({
-
+  
   ## 4.1) Load raw counts -----------------------------------
   cat("\n=== RAW COUNTS MATRIX (FULL) ===\n")
-
+  
   counts_raw <- read.delim(
     "counts.txt",
     header           = TRUE,
     stringsAsFactors = FALSE,
     check.names      = FALSE
   )
-
+  
   cat("Dimensions (rows x cols):", paste(dim(counts_raw), collapse = " x "), "\n")
   cat("First 10 column names:\n")
   print(head(colnames(counts_raw), 10))
   cat("\nHead of counts (first 5 rows, first 6 cols):\n")
   print(head(counts_raw[, 1:min(6, ncol(counts_raw))]))
-
+  
   ## 4.2) Define tissue samples + annotation ----------------
   sample_ids <- paste0("JS_", sprintf("%02d", 1:40))
-
+  
   sample_annot_full <- data.frame(
     Sample   = sample_ids,
     Depot    = c(rep("iWAT", 10), rep("iWAT", 10), rep("gWAT", 10), rep("gWAT", 10)),
@@ -145,25 +151,25 @@ tryCatch({
     ),
     stringsAsFactors = FALSE
   )
-
+  
   ## Outliers (removed before analysis)
   outlier_samples <- c("JS_08", "JS_28")
-
+  
   ## 4.2.1) QC evidence log BEFORE outlier removal ----------
   cat("\n=== QC BEFORE OUTLIER REMOVAL (log only) ===\n")
-
+  
   all_tissue_samples <- sample_annot_full$Sample
   missing_all <- setdiff(all_tissue_samples, colnames(counts_raw))
   if (length(missing_all) > 0) stop("Missing columns for QC: ", paste(missing_all, collapse = ", "))
-
+  
   counts_all_tissue <- as.matrix(counts_raw[, all_tissue_samples])
   rownames(counts_all_tissue) <- counts_raw$gene_id
-
+  
   ## Library sizes from raw counts (simple + transparent)
   lib_sizes <- colSums(counts_all_tissue, na.rm = TRUE)
   lib_summary <- summary(lib_sizes)
   outlier_lib_sizes <- lib_sizes[names(lib_sizes) %in% outlier_samples]
-
+  
   outlier_log_file <- file.path(outdir, "logs", paste0("outliers_", run_tag, ".txt"))
   outlier_log_lines <- c(
     "=== Outlier Removal Rationale ===",
@@ -190,31 +196,31 @@ tryCatch({
   writeLines(outlier_log_lines, con = outlier_log_file)
   cat("Saved outlier rationale log to ", outlier_log_file, "\n")
   cat("=== END QC BEFORE OUTLIER REMOVAL ===\n\n")
-
+  
   ## Continue with outlier removal
   sample_annot <- sample_annot_full %>% dplyr::filter(!(Sample %in% outlier_samples))
   tissue_samples <- sample_annot$Sample
-
+  
   missing_tissue <- setdiff(tissue_samples, colnames(counts_raw))
   if (length(missing_tissue) > 0) {
     stop("These tissue sample columns are missing in counts.txt: ", paste(missing_tissue, collapse = ", "))
   }
-
+  
   counts_tissue_raw <- counts_raw[, c("gene_id", "gene", tissue_samples)]
-
+  
   cat("\n=== TISSUE SUBSET (outliers removed) ===\n")
   cat("Dimensions (rows x cols):", paste(dim(counts_tissue_raw), collapse = " x "), "\n")
-
+  
   ## 4.3) Gene cleaning -------------------------------------
   counts_tissue <- counts_tissue_raw %>%
     mutate(
       ensembl_gene_id = gene_id,
       gene_name       = gene
     )
-
+  
   na_or_blank <- is.na(counts_tissue$gene_name) | counts_tissue$gene_name == ""
   counts_tissue$gene_name[na_or_blank] <- counts_tissue$ensembl_gene_id[na_or_blank]
-
+  
   ## Handle duplicates robustly
   if (any(duplicated(counts_tissue$gene_name))) {
     dup_flag <- duplicated(counts_tissue$gene_name) | duplicated(counts_tissue$gene_name, fromLast = TRUE)
@@ -222,18 +228,20 @@ tryCatch({
   }
   ## As a final safety net:
   counts_tissue$gene_name <- make.unique(counts_tissue$gene_name)
-
+  
   rownames(counts_tissue) <- counts_tissue$gene_name
-
+  
   ## 4.4) Build count matrix --------------------------------
   count_matrix_tissue <- as.matrix(counts_tissue[, tissue_samples])
   rownames(count_matrix_tissue) <- counts_tissue$gene_name
-
+  
   ## 4.5) Attach sample annotation --------------------------
   sample_annot <- sample_annot[match(colnames(count_matrix_tissue), sample_annot$Sample), ]
   if (any(is.na(sample_annot$Sample))) stop("Sample annotation failed to match count matrix columns.")
-
+  
   sample_annot$Genotype <- factor(sample_annot$Genotype, levels = c("CTL", "KAT8KD"))
+  sample_annot$Depot <- factor(sample_annot$Depot, levels = c("iWAT", "gWAT"))
+  sample_annot$Sex <- factor(sample_annot$Sex, levels = c("F", "M"))
   sample_annot$DepotSex <- factor(paste(sample_annot$Depot, sample_annot$Sex, sep = "_"),
                                   levels = c("iWAT_F", "iWAT_M", "gWAT_F", "gWAT_M"))
   sample_annot$GroupFull <- factor(
@@ -246,41 +254,63 @@ tryCatch({
     )
   )
   rownames(sample_annot) <- sample_annot$Sample
-
+  
   cat("\n=== BASIC QC (TISSUE) ===\n")
   cat("Number of genes:   ", nrow(count_matrix_tissue), "\n")
   cat("Number of samples: ", ncol(count_matrix_tissue), "\n")
   cat("Library sizes (colSums raw counts):\n")
   print(colSums(count_matrix_tissue))
-
+  
   ## 4.6) DESeq2 object + typical prefilter ------------------
-  min_count <- 10
-  min_samples <- min(table(sample_annot$GroupFull))
-
-  keep <- rowSums(count_matrix_tissue >= min_count) >= min_samples
-  cat("\nPrefilter rule: keep genes with counts >= ", min_count,
-      " in at least ", min_samples, " samples.\n", sep = "")
-  cat("Genes before filter: ", nrow(count_matrix_tissue), "\n", sep = "")
-  cat("Genes after  filter: ", sum(keep), "\n", sep = "")
-
+  min_count <- prefilter_min_count
+  min_samples_per_group <- prefilter_min_samples_per_group
+  
+  group_levels <- levels(sample_annot$GroupFull)
+  keep <- vapply(group_levels, function(group_name) {
+    group_samples <- sample_annot$Sample[sample_annot$GroupFull == group_name]
+    if (length(group_samples) == 0) {
+      return(rep(FALSE, nrow(count_matrix_tissue)))
+    }
+    rowSums(count_matrix_tissue[, group_samples, drop = FALSE] >= min_count) >= min_samples_per_group
+  }, logical(nrow(count_matrix_tissue)))
+  keep <- rowSums(keep) > 0
+  
+  ## Comprehensive filtering sanity check
+  n_before <- nrow(count_matrix_tissue)
+  n_after <- sum(keep)
+  n_removed <- n_before - n_after
+  pct_retained <- round(100 * n_after / n_before, 1)
+  
+  cat("\n==========================================================\n")
+  cat("=== SANITY CHECK: GENE PREFILTERING ===\n")
+  cat("==========================================================\n")
+  cat("Prefilter rule: counts >= ", min_count, " in >= ", min_samples_per_group,
+      " samples within any GroupFull stratum\n", sep = "")
+  cat("  (keeps genes expressed in at least one depot/sex/genotype group)\n\n")
+  cat("Genes BEFORE prefiltering:  ", n_before, "\n", sep = "")
+  cat("Genes AFTER prefiltering:   ", n_after, "\n", sep = "")
+  cat("Genes REMOVED:              ", n_removed, " (", 100 - pct_retained, "%)\n", sep = "")
+  cat("Genes RETAINED:             ", pct_retained, "%\n", sep = "")
+  cat("==========================================================\n\n")
+  
   count_matrix_filt <- count_matrix_tissue[keep, , drop = FALSE]
-
+  
   dds_tissue <- DESeqDataSetFromMatrix(
     countData = round(count_matrix_filt),
     colData   = sample_annot,
     design    = ~ 0 + GroupFull
   )
-
+  
   ## Save centralized parameters
   logFC_cut_tissue <- 1
   fdr_cut_tissue   <- 0.05
-
+  
   params <- list(
     outlier_samples   = outlier_samples,
     prefilter_rule    = list(
       min_count       = min_count,
-      min_samples     = min_samples,
-      description     = "Keep genes with counts >= min_count in at least min_samples (smallest group size)"
+      min_samples     = min_samples_per_group,
+      description     = "Keep genes with counts >= min_count in at least min_samples_per_group within any GroupFull stratum"
     ),
     de_thresholds     = list(
       logFC_cutoff    = logFC_cut_tissue,
@@ -296,7 +326,7 @@ tryCatch({
     ),
     heatmap_max_genes = 300
   )
-
+  
   params_file <- file.path(outdir, "logs", paste0("params_", run_tag, ".txt"))
   params_lines <- c(
     "=== RNA-seq Pipeline Parameters (Part 1: Gene-level Analysis) ===",
@@ -328,27 +358,35 @@ tryCatch({
   )
   writeLines(params_lines, con = params_file)
   cat("Saved params to ", params_file, "\n")
-
+  
   ## 4.7) Run DESeq2 ----------------------------------------
   cat("\n=== RUNNING DESeq2 ===\n")
   dds_tissue <- DESeq(dds_tissue)
   cat("[OK] DESeq2 complete.\n")
-
+  
   cat("\nDESeq2 design matrix (first rows):\n")
   print(head(model.matrix(design(dds_tissue), colData(dds_tissue))))
-
+  
   ## 4.8) VST transform for QC ------------------------------
   cat("\n=== VST FOR QC ===\n")
   vst_tissue <- vst(dds_tissue, blind = TRUE)
   vst_mat <- assay(vst_tissue)  ## genes x samples (log2-ish stabilized)
-
+  
   cat("\n=== VST FOR HEATMAPS (blind=FALSE) ===\n")
   vst_tissue_hm <- vst(dds_tissue, blind = FALSE)
   vst_mat_hm <- assay(vst_tissue_hm)
-
+  
+  genotype_colors <- c("CTL" = "#0072B2", "KAT8KD" = "#E69F00")
+  depot_sex_fill <- c(
+    "iWAT_F" = "#56B4E9",
+    "iWAT_M" = "#0072B2",
+    "gWAT_F" = "#F0E442",
+    "gWAT_M" = "#E69F00"
+  )
+  
   ## 4.9) Density plots (VST before/after filtering) --------
   cat("\n=== Creating before/after filtering density plots ===\n")
-
+  
   ## Get VST for all genes (before filtering) for comparison
   dds_all_genes <- DESeqDataSetFromMatrix(
     countData = round(count_matrix_tissue),
@@ -359,26 +397,24 @@ tryCatch({
   dds_all_genes <- estimateDispersions(dds_all_genes, fitType = "local")
   vst_all_genes <- vst(dds_all_genes, blind = TRUE)
   vst_mat_before <- assay(vst_all_genes)
-
+  
   plot_density_vst_comparison <- function(vst_before, vst_after) {
     dens_before <- apply(vst_before, 2, density)
     dens_after  <- apply(vst_after, 2, density)
-
+    
     xlim_before <- range(sapply(dens_before, function(d) range(d$x)))
     xlim_after  <- range(sapply(dens_after, function(d) range(d$x)))
     xlim_global <- range(c(xlim_before, xlim_after))
-
+    
     max_y_before <- max(sapply(dens_before, function(d) max(d$y)))
     max_y_after  <- max(sapply(dens_after, function(d) max(d$y)))
-
+    
     par(mfrow = c(1, 2), mar = c(5, 5, 5, 2), oma = c(0, 0, 2, 0))
-
+    
     ## Define consistent colors for each sample across both plots
     depot_sex <- colData(dds_tissue)$DepotSex
-    color_map <- c("iWAT_F" = "#1b9e77", "iWAT_M" = "#d95f02",
-                   "gWAT_F" = "#7570b3", "gWAT_M" = "#e7298a")
-    sample_colors <- color_map[as.character(depot_sex)]
-
+    sample_colors <- depot_sex_fill[depot_sex]
+    
     ## BEFORE filter
     plot(dens_before[[1]],
          main = "Before Filtering",
@@ -393,7 +429,7 @@ tryCatch({
         lines(dens_before[[i]], lwd = 2, col = sample_colors[i])
       }
     }
-
+    
     ## AFTER filter
     plot(dens_after[[1]],
          main = "After Filtering",
@@ -409,17 +445,17 @@ tryCatch({
       }
     }
   }
-
+  
   density_file <- paste0("VST_density_tissue_before_after_", run_tag, ".png")
   png(file.path(outdir, "plots", density_file), width = 1600, height = 900, res = 150)
   plot_density_vst_comparison(vst_mat_before, vst_mat)
   dev.off()
   cat("Saved VST density plot (before/after filtering) to ", file.path(outdir, "plots", density_file), "\n")
-
+  
   ## 4.10) PCA (VST) ----------------------------------------
   pca_tissue <- prcomp(t(vst_mat), scale. = TRUE)
   pca_var <- summary(pca_tissue)$importance[2, 1:2] * 100
-
+  
   pca_df <- data.frame(
     Sample   = colnames(vst_mat),
     Genotype = colData(dds_tissue)$Genotype,
@@ -430,23 +466,16 @@ tryCatch({
     PC2      = pca_tissue$x[, 2],
     stringsAsFactors = FALSE
   )
-
+  
   p_pca <- ggplot(
     pca_df,
-    aes(x = PC1, y = PC2, color = DepotSex, shape = Genotype, label = Sample)
+    aes(x = PC1, y = PC2, color = DepotSex, fill = DepotSex, shape = Genotype, label = Sample)
   ) +
-    geom_point(size = 3) +
-    geom_text_repel(size = 3, max.overlaps = 60) +
-    scale_color_manual(
-      values = c(
-        "iWAT_F" = "#1b9e77",
-        "iWAT_M" = "#d95f02",
-        "gWAT_F" = "#7570b3",
-        "gWAT_M" = "#e7298a"
-      ),
-      name = "Depot/Sex"
-    ) +
-    scale_shape_manual(values = c("CTL" = 16, "KAT8KD" = 17), name = "Genotype") +
+    geom_point(size = 3, stroke = 1) +
+    geom_text_repel(size = 3, max.overlaps = 60, color = "black") +
+    scale_color_manual(values = depot_sex_fill, name = "Depot/Sex") +
+    scale_fill_manual(values = depot_sex_fill, name = "Depot/Sex") +
+    scale_shape_manual(values = c("CTL" = 21, "KAT8KD" = 24), name = "Genotype") +
     labs(
       title = "Tissue PCA (VST, DESeq2)",
       x = paste0("PC1 (", round(pca_var[1], 1), "%)"),
@@ -454,16 +483,21 @@ tryCatch({
     ) +
     theme_bw(base_size = 14) +
     theme(plot.title = element_text(hjust = 0.5, face = "bold"),
-          legend.position = "right")
-
+          legend.position = "right") +
+    guides(
+      color = "none",
+      fill = guide_legend(override.aes = list(shape = 21, color = depot_sex_fill, fill = depot_sex_fill)),
+      shape = guide_legend(override.aes = list(fill = "white", color = "black"))
+    )
+  
   pca_file <- paste0("PCA_tissue_VST_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", pca_file), plot = p_pca, width = 8, height = 6, dpi = 300)
   cat("Saved PCA plot to ", file.path(outdir, "plots", pca_file), "\n")
-
+  
   ## 4.11) MDS (VST) ----------------------------------------
   dist_mat <- dist(t(vst_mat))
   mds_coords <- cmdscale(dist_mat, k = 2)
-
+  
   mds_df <- data.frame(
     Sample   = colnames(vst_mat),
     Genotype = colData(dds_tissue)$Genotype,
@@ -474,32 +508,30 @@ tryCatch({
     MDS2     = mds_coords[, 2],
     stringsAsFactors = FALSE
   )
-
+  
   p_mds <- ggplot(
     mds_df,
-    aes(x = MDS1, y = MDS2, color = DepotSex, shape = Genotype, label = Sample)
+    aes(x = MDS1, y = MDS2, color = DepotSex, fill = DepotSex, shape = Genotype, label = Sample)
   ) +
-    geom_point(size = 3) +
-    geom_text_repel(size = 3, max.overlaps = 60) +
-    scale_color_manual(
-      values = c(
-        "iWAT_F" = "#1b9e77",
-        "iWAT_M" = "#d95f02",
-        "gWAT_F" = "#7570b3",
-        "gWAT_M" = "#e7298a"
-      ),
-      name = "Depot/Sex"
-    ) +
-    scale_shape_manual(values = c("CTL" = 16, "KAT8KD" = 17), name = "Genotype") +
+    geom_point(size = 3, stroke = 1) +
+    geom_text_repel(size = 3, max.overlaps = 60, color = "black") +
+    scale_color_manual(values = depot_sex_fill, name = "Depot/Sex") +
+    scale_fill_manual(values = depot_sex_fill, name = "Depot/Sex") +
+    scale_shape_manual(values = c("CTL" = 21, "KAT8KD" = 24), name = "Genotype") +
     labs(title = "Tissue MDS (VST, DESeq2)", x = "MDS1", y = "MDS2") +
     theme_bw(base_size = 14) +
     theme(plot.title = element_text(hjust = 0.5, face = "bold"),
-          legend.position = "right")
-
+          legend.position = "right") +
+    guides(
+      color = "none",
+      fill = guide_legend(override.aes = list(shape = 21, color = depot_sex_fill, fill = depot_sex_fill)),
+      shape = guide_legend(override.aes = list(fill = "white", color = "black"))
+    )
+  
   mds_file <- paste0("MDS_tissue_VST_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", mds_file), plot = p_mds, width = 8, height = 6, dpi = 300)
   cat("Saved MDS plot to ", file.path(outdir, "plots", mds_file), "\n")
-
+  
   ## 4.12) Contrasts ----------------------------------------
   contrast_definitions <- list(
     iWAT_F_KD_vs_CTL = c("GroupFull", "iWAT_F_KAT8KD", "iWAT_F_CTL"),
@@ -508,7 +540,7 @@ tryCatch({
     gWAT_M_KD_vs_CTL = c("GroupFull", "gWAT_M_KAT8KD", "gWAT_M_CTL")
   )
   contrast_names <- names(contrast_definitions)
-
+  
   ## 4.13) Containers ---------------------------------------
   deg_summary <- data.frame(
     Contrast          = contrast_names,
@@ -517,49 +549,66 @@ tryCatch({
     N_Down            = NA_integer_,
     stringsAsFactors  = FALSE
   )
-
+  
   tt_list <- vector("list", length(contrast_names))
   names(tt_list) <- contrast_names
-
+  
   ## 4.14) Per-contrast DE + volcano + heatmap + genes of interest ----
   for (cn in contrast_names) {
-
+    
     cat("\n=== Contrast: ", cn, " ===\n", sep = "")
-
+    
     res <- results(dds_tissue, contrast = contrast_definitions[[cn]])
     res <- res[order(res$pvalue), , drop = FALSE]
-
+    
     tt <- as.data.frame(res)
     tt$logFC     <- tt$log2FoldChange
     tt$P.Value   <- tt$pvalue
     tt$adj.P.Val <- tt$padj
     tt$gene_name <- rownames(tt)
-
+    
     ## Remove duplicate columns
     tt <- tt[, !duplicated(colnames(tt)), drop = FALSE]
-
+    
     tt_list[[cn]] <- tt
-
+    
     de_file <- paste0("DE_tissue_", cn, "_", run_tag, ".csv")
     write.csv(tt, file = file.path(outdir, "tables", de_file), row.names = TRUE)
-
-    n_sig <- sum(tt$adj.P.Val < fdr_cut_tissue, na.rm = TRUE)
+    
+    ## Calculate comprehensive DEG statistics
+    n_total <- nrow(tt)
+    n_valid_pval <- sum(!is.na(tt$adj.P.Val))
+    n_fdr_only <- sum(tt$adj.P.Val < fdr_cut_tissue, na.rm = TRUE)
+    n_up_both <- sum(tt$adj.P.Val < fdr_cut_tissue & tt$logFC > logFC_cut_tissue, na.rm = TRUE)
+    n_down_both <- sum(tt$adj.P.Val < fdr_cut_tissue & tt$logFC < -logFC_cut_tissue, na.rm = TRUE)
+    n_both <- n_up_both + n_down_both
+    
+    cat("\n==========================================================\n")
+    cat("=== SANITY CHECK: ", cn, " ===\n", sep = "")
+    cat("==========================================================\n")
+    cat("Total genes tested by DESeq2:           ", n_total, "\n", sep = "")
+    cat("Genes with valid adjusted p-value:      ", n_valid_pval, "\n", sep = "")
+    cat("\n--- DEG Counts at Different Thresholds ---\n")
+    cat("DEGs (FDR < ", fdr_cut_tissue, " only):               ", n_fdr_only, "\n", sep = "")
+    cat("DEGs (FDR < ", fdr_cut_tissue, " AND |logFC| > ", logFC_cut_tissue, "):  ", n_both, "\n", sep = "")
+    cat("  - Up-regulated (logFC > ", logFC_cut_tissue, "):       ", n_up_both, "\n", sep = "")
+    cat("  - Down-regulated (logFC < -", logFC_cut_tissue, "):    ", n_down_both, "\n", sep = "")
+    cat("\nPercent of tested genes that are DEGs:\n")
+    cat("  - FDR-only threshold:                 ", round(100 * n_fdr_only / n_total, 2), "%\n", sep = "")
+    cat("  - FDR + logFC threshold:              ", round(100 * n_both / n_total, 2), "%\n", sep = "")
+    cat("==========================================================\n")
     cat("DE table written: ", file.path(outdir, "tables", de_file), "\n", sep = "")
-    cat("Number of genes with FDR < 0.05 (", cn, "): ", n_sig, "\n", sep = "")
-
-    deg_summary$N_DEG_FDR_lt_0_05[deg_summary$Contrast == cn] <- n_sig
-    deg_summary$N_Up[deg_summary$Contrast == cn] <- sum(
-      tt$adj.P.Val < fdr_cut_tissue & tt$logFC >  logFC_cut_tissue, na.rm = TRUE
-    )
-    deg_summary$N_Down[deg_summary$Contrast == cn] <- sum(
-      tt$adj.P.Val < fdr_cut_tissue & tt$logFC < -logFC_cut_tissue, na.rm = TRUE
-    )
-
+    cat("==========================================================\n\n")
+    
+    deg_summary$N_DEG_FDR_lt_0_05[deg_summary$Contrast == cn] <- n_fdr_only
+    deg_summary$N_Up[deg_summary$Contrast == cn] <- n_up_both
+    deg_summary$N_Down[deg_summary$Contrast == cn] <- n_down_both
+    
     ## Volcano
     tt_plot <- tt %>%
       dplyr::filter(is.finite(logFC), is.finite(adj.P.Val), adj.P.Val > 0) %>%
       mutate(negLogFDR = -log10(adj.P.Val))
-
+    
     tt_plot <- tt_plot %>%
       mutate(
         sig_cat = dplyr::case_when(
@@ -569,27 +618,27 @@ tryCatch({
         ),
         sig_cat = factor(sig_cat, levels = c("Up", "Down", "NS"))
       )
-
+    
     tt_sig <- tt_plot %>%
       dplyr::filter(adj.P.Val < fdr_cut_tissue,
                     abs(logFC) >= logFC_cut_tissue,
                     sig_cat != "NS")
-
+    
     top_n_fdr <- params$volcano_labels$top_n_by_fdr
     top_n_fc  <- params$volcano_labels$top_n_by_fc
-
+    
     up_sig <- tt_sig %>% dplyr::filter(sig_cat == "Up")
     down_sig <- tt_sig %>% dplyr::filter(sig_cat == "Down")
-
+    
     up_top_fdr <- up_sig %>% dplyr::arrange(adj.P.Val) %>% dplyr::slice_head(n = top_n_fdr)
     up_top_fc  <- up_sig %>% dplyr::arrange(dplyr::desc(logFC)) %>% dplyr::slice_head(n = top_n_fc)
-
+    
     down_top_fdr <- down_sig %>% dplyr::arrange(adj.P.Val) %>% dplyr::slice_head(n = top_n_fdr)
     down_top_fc  <- down_sig %>% dplyr::arrange(logFC) %>% dplyr::slice_head(n = top_n_fc)
-
+    
     label_genes <- dplyr::bind_rows(up_top_fdr, up_top_fc, down_top_fdr, down_top_fc) %>%
       dplyr::distinct(gene_name, .keep_all = TRUE)
-
+    
     vol_tissue <- ggplot(
       tt_plot,
       aes(x = logFC, y = negLogFDR, color = sig_cat)
@@ -624,41 +673,41 @@ tryCatch({
       ggtitle(paste0("Volcano: ", cn, " (WAT tissue; DESeq2)")) +
       xlab(expression(log[2]~Fold~Change)) +
       ylab(expression(-log[10]~FDR))
-
+    
     volcano_file <- paste0("Volcano_tissue_", cn, "_", run_tag, ".png")
     ggsave(file.path(outdir, "plots", volcano_file), plot = vol_tissue, width = 8, height = 6, dpi = 300)
     cat("Volcano saved: ", file.path(outdir, "plots", volcano_file), "\n", sep = "")
-
+    
     if (is.null(hero_volcano_file)) hero_volcano_file <- volcano_file
-
+    
     ## Heatmap (VST) of strongest DEGs using ComplexHeatmap
     de_sig <- tt %>%
       dplyr::filter(adj.P.Val < fdr_cut_tissue, abs(logFC) > logFC_cut_tissue)
-
+    
     if (nrow(de_sig) >= 2) {
       de_sig <- de_sig[order(de_sig$adj.P.Val), , drop = FALSE]
       if (nrow(de_sig) > params$heatmap_max_genes) de_sig <- de_sig[1:params$heatmap_max_genes, , drop = FALSE]
       gene_set <- de_sig$gene_name
-
+      
       depot <- NA_character_
       sex   <- NA_character_
       if (grepl("^iWAT_F", cn))      { depot <- "iWAT"; sex <- "F" }
       else if (grepl("^iWAT_M", cn)) { depot <- "iWAT"; sex <- "M" }
       else if (grepl("^gWAT_F", cn)) { depot <- "gWAT"; sex <- "F" }
       else if (grepl("^gWAT_M", cn)) { depot <- "gWAT"; sex <- "M" }
-
+      
       if (!is.na(depot) && !is.na(sex)) {
-
+        
         idx_samples <- with(as.data.frame(colData(dds_tissue)), Depot == depot & Sex == sex)
         samples_heat <- rownames(colData(dds_tissue))[idx_samples]
         heat_meta_deg <- as.data.frame(colData(dds_tissue))[idx_samples, , drop = FALSE]
-
+        
         mat <- vst_mat_hm[gene_set, samples_heat, drop = FALSE]
-
+        
         ## Scale rows (z-score)
         mat_scaled <- t(scale(t(mat)))
         mat_scaled <- mat_scaled[!rowSums(is.na(mat_scaled)), , drop = FALSE]
-
+        
         if (nrow(mat_scaled) >= 2) {
           ## Use volcano colors (teal to white to orange)
           max_val_deg <- max(abs(mat_scaled), na.rm = TRUE)
@@ -666,14 +715,14 @@ tryCatch({
             c(-max_val_deg, 0, max_val_deg),
             c("#0072B2", "white", "#E69F00")  ## Teal (down) -> white -> orange (up)
           )
-
+          
           ## Column annotation
           deg_ha <- HeatmapAnnotation(
             Genotype = heat_meta_deg$Genotype,
             col = list(Genotype = c(CTL = "#1B9E77", KAT8KD = "#D95F02")),
             annotation_name_side = "left"
           )
-
+          
           ## Create heatmap
           heat_deg <- Heatmap(
             mat_scaled,
@@ -696,7 +745,7 @@ tryCatch({
             row_names_gp = gpar(fontsize = 5),
             column_names_gp = gpar(fontsize = 8)
           )
-
+          
           ## Save
           heat_file <- paste0("Heatmap_tissue_", cn, "_", run_tag, ".png")
           png(file.path(outdir, "plots", heat_file), width = 2000, height = 3000, res = 200)
@@ -706,25 +755,25 @@ tryCatch({
         } else {
           cat("Not enough valid genes for heatmap after scaling (", cn, ").\n", sep = "")
         }
-
+        
       } else {
         cat("Could not map contrast ", cn, " to depot/sex for heatmap.\n", sep = "")
       }
     } else {
       cat("Not enough DE genes for heatmap (", cn, ").\n", sep = "")
     }
-
+    
     ## -------------------------------------------------------
     ## ComplexHeatmap for genes of interest
     ## -------------------------------------------------------
     cat("\n--- ComplexHeatmap: Genes of Interest (", cn, ") ---\n", sep = "")
-
+    
     ## Find which genes of interest are in our data
     goi_in_data <- genes_of_interest[genes_of_interest %in% rownames(vst_mat)]
     cat("[INFO] Genes of interest found in data: ", length(goi_in_data), "/", length(genes_of_interest), "\n", sep = "")
-
+    
     if (length(goi_in_data) >= 2) {
-
+      
       ## Get depot/sex for this contrast
       depot_h <- NA_character_
       sex_h   <- NA_character_
@@ -732,41 +781,41 @@ tryCatch({
       else if (grepl("^iWAT_M", cn)) { depot_h <- "iWAT"; sex_h <- "M" }
       else if (grepl("^gWAT_F", cn)) { depot_h <- "gWAT"; sex_h <- "F" }
       else if (grepl("^gWAT_M", cn)) { depot_h <- "gWAT"; sex_h <- "M" }
-
+      
       if (!is.na(depot_h) && !is.na(sex_h)) {
-
+        
         ## Get sample indices for this contrast
         heat_idx <- with(as.data.frame(colData(dds_tissue)), Depot == depot_h & Sex == sex_h)
         heat_samples <- rownames(colData(dds_tissue))[heat_idx]
         heat_meta <- as.data.frame(colData(dds_tissue))[heat_idx, , drop = FALSE]
-
+        
         ## Get control samples for centering
         heat_ctrls <- heat_meta %>% dplyr::filter(Genotype == "CTL") %>% rownames()
-
+        
         ## Build matrix
         heat_matrix <- vst_mat_hm[goi_in_data, heat_samples, drop = FALSE]
-
+        
         ## Center by control means (z-score relative to controls)
         heat_ctrl_means <- rowMeans(heat_matrix[, heat_ctrls, drop = FALSE])
         heat_matrix_scaled <- t(scale(t(heat_matrix), center = heat_ctrl_means, scale = TRUE))
         heat_matrix_scaled <- heat_matrix_scaled[!rowSums(is.na(heat_matrix_scaled)), , drop = FALSE]
-
+        
         if (nrow(heat_matrix_scaled) >= 2) {
-
+          
           ## Use volcano colors (teal to white to orange)
           max_val <- max(abs(heat_matrix_scaled), na.rm = TRUE)
           heat_col_fun <- colorRamp2(
             c(-max_val, 0, max_val),
             c("#0072B2", "white", "#E69F00")  ## Teal (down) -> white -> orange (up)
           )
-
+          
           ## Column annotation
           heat_ha <- HeatmapAnnotation(
             Genotype = heat_meta$Genotype,
             col = list(Genotype = c(CTL = "#1B9E77", KAT8KD = "#D95F02")),
             annotation_name_side = "left"
           )
-
+          
           ## Create heatmap
           heat_goi <- Heatmap(
             heat_matrix_scaled,
@@ -789,14 +838,14 @@ tryCatch({
             row_names_gp = gpar(fontsize = 8),
             column_names_gp = gpar(fontsize = 8)
           )
-
+          
           ## Save
           heat_goi_file <- paste0("Heatmap_GOI_", cn, "_", run_tag, ".png")
           png(file.path(outdir, "plots", heat_goi_file), width = 2000, height = 2500, res = 200)
           draw(heat_goi)
           dev.off()
           cat("[OK] ComplexHeatmap saved: ", heat_goi_file, "\n", sep = "")
-
+          
         } else {
           cat("[WARN] Not enough genes of interest with valid values for heatmap\n")
         }
@@ -804,44 +853,44 @@ tryCatch({
     } else {
       cat("[WARN] Too few genes of interest found in data for heatmap\n")
     }
-
+    
     ## -------------------------------------------------------
     ## EnhancedVolcano labeling genes of interest
     ## -------------------------------------------------------
     cat("\n--- EnhancedVolcano: Genes of Interest (", cn, ") ---\n", sep = "")
-
+    
     ## Prepare data for EnhancedVolcano
     volcano_df <- tt %>%
       dplyr::filter(is.finite(logFC), is.finite(adj.P.Val), adj.P.Val > 0)
-
+    
     ## Only label genes of interest that are SIGNIFICANT (pass both thresholds)
     goi_significant <- volcano_df %>%
       dplyr::filter(gene_name %in% genes_of_interest,
                     adj.P.Val < fdr_cut_tissue,
                     abs(logFC) >= logFC_cut_tissue) %>%
       dplyr::pull(gene_name)
-
+    
     cat("[INFO] Genes of interest (total): ", length(genes_of_interest), "\n", sep = "")
     cat("[INFO] Genes of interest (significant): ", length(goi_significant), "\n", sep = "")
-
+    
     if (nrow(volcano_df) > 0) {
-
+      
       ## Create custom color scheme using keyvals
       keyvals_color <- rep("grey70", nrow(volcano_df))
       names(keyvals_color) <- rep("NS", nrow(volcano_df))
-
+      
       ## Significant UP (orange)
       sig_up_idx <- which(volcano_df$adj.P.Val < fdr_cut_tissue &
                             volcano_df$logFC >= logFC_cut_tissue)
       keyvals_color[sig_up_idx] <- "#E69F00"
       names(keyvals_color)[sig_up_idx] <- "Significant Up"
-
+      
       ## Significant DOWN (teal/blue)
       sig_down_idx <- which(volcano_df$adj.P.Val < fdr_cut_tissue &
                               volcano_df$logFC <= -logFC_cut_tissue)
       keyvals_color[sig_down_idx] <- "#0072B2"
       names(keyvals_color)[sig_down_idx] <- "Significant Down"
-
+      
       ev_plot <- EnhancedVolcano(
         volcano_df,
         lab = volcano_df$gene_name,
@@ -869,59 +918,75 @@ tryCatch({
         gridlines.major = FALSE,
         gridlines.minor = FALSE
       )
-
+      
       ev_file <- paste0("EnhancedVolcano_GOI_", cn, "_", run_tag, ".png")
       ggsave(file.path(outdir, "plots", ev_file), plot = ev_plot, width = 10, height = 8, dpi = 300)
       cat("[OK] EnhancedVolcano saved: ", ev_file, "\n", sep = "")
-
+      
     } else {
       cat("[WARN] No valid data for EnhancedVolcano\n")
     }
   }
-
-
+  
+  
   ## 4.15) OVERALL CTL vs KD contrast (all depots/sexes combined) ----
   cat("\n\n=================================================================\n")
   cat("=== OVERALL CONTRAST: CTL vs KD (all depots/sexes combined) ===\n")
   cat("=================================================================\n\n")
-
+  
   ## Rebuild DESeq2 object with proper design
   dds_overall <- DESeqDataSetFromMatrix(
     countData = round(count_matrix_filt),
     colData   = sample_annot,
     design    = ~ Depot + Sex + Genotype
   )
-
+  
   cat("[INFO] Running DESeq2 for overall contrast...\n")
   dds_overall <- DESeq(dds_overall)
   cat("[OK] DESeq2 complete for overall contrast.\n")
-
+  
   ## Extract results: KAT8KD vs CTL
   res_overall <- results(dds_overall, contrast = c("Genotype", "KAT8KD", "CTL"))
   res_overall <- res_overall[order(res_overall$pvalue), , drop = FALSE]
-
+  
   tt_overall <- as.data.frame(res_overall)
   tt_overall$logFC     <- tt_overall$log2FoldChange
   tt_overall$P.Value   <- tt_overall$pvalue
   tt_overall$adj.P.Val <- tt_overall$padj
   tt_overall$gene_name <- rownames(tt_overall)
-
+  
   ## Remove duplicate columns
   tt_overall <- tt_overall[, !duplicated(colnames(tt_overall)), drop = FALSE]
-
+  
   ## Save DE table
   de_overall_file <- paste0("DE_tissue_OVERALL_KD_vs_CTL_", run_tag, ".csv")
   write.csv(tt_overall, file = file.path(outdir, "tables", de_overall_file), row.names = TRUE)
-
+  
+  ## Calculate comprehensive DEG statistics for overall contrast
+  n_total_overall <- nrow(tt_overall)
+  n_valid_pval_overall <- sum(!is.na(tt_overall$adj.P.Val))
   n_sig_overall <- sum(tt_overall$adj.P.Val < fdr_cut_tissue, na.rm = TRUE)
   n_up_overall <- sum(tt_overall$adj.P.Val < fdr_cut_tissue & tt_overall$logFC > logFC_cut_tissue, na.rm = TRUE)
   n_down_overall <- sum(tt_overall$adj.P.Val < fdr_cut_tissue & tt_overall$logFC < -logFC_cut_tissue, na.rm = TRUE)
-
+  n_both_overall <- n_up_overall + n_down_overall
+  
+  cat("\n==========================================================\n")
+  cat("=== SANITY CHECK: OVERALL_KD_vs_CTL ===\n")
+  cat("==========================================================\n")
+  cat("Total genes tested by DESeq2:           ", n_total_overall, "\n", sep = "")
+  cat("Genes with valid adjusted p-value:      ", n_valid_pval_overall, "\n", sep = "")
+  cat("\n--- DEG Counts at Different Thresholds ---\n")
+  cat("DEGs (FDR < ", fdr_cut_tissue, " only):               ", n_sig_overall, "\n", sep = "")
+  cat("DEGs (FDR < ", fdr_cut_tissue, " AND |logFC| > ", logFC_cut_tissue, "):  ", n_both_overall, "\n", sep = "")
+  cat("  - Up-regulated (logFC > ", logFC_cut_tissue, "):       ", n_up_overall, "\n", sep = "")
+  cat("  - Down-regulated (logFC < -", logFC_cut_tissue, "):    ", n_down_overall, "\n", sep = "")
+  cat("\nPercent of tested genes that are DEGs:\n")
+  cat("  - FDR-only threshold:                 ", round(100 * n_sig_overall / n_total_overall, 2), "%\n", sep = "")
+  cat("  - FDR + logFC threshold:              ", round(100 * n_both_overall / n_total_overall, 2), "%\n", sep = "")
+  cat("==========================================================\n")
   cat("DE table written: ", file.path(outdir, "tables", de_overall_file), "\n", sep = "")
-  cat("Number of genes with FDR < 0.05: ", n_sig_overall, "\n", sep = "")
-  cat("Up-regulated (|logFC| > ", logFC_cut_tissue, "): ", n_up_overall, "\n", sep = "")
-  cat("Down-regulated (|logFC| > ", logFC_cut_tissue, "): ", n_down_overall, "\n", sep = "")
-
+  cat("==========================================================\n\n")
+  
   ## Add to summary table
   deg_summary <- rbind(
     deg_summary,
@@ -933,12 +998,12 @@ tryCatch({
       stringsAsFactors  = FALSE
     )
   )
-
+  
   ## Volcano plot for overall contrast
   tt_overall_plot <- tt_overall %>%
     dplyr::filter(is.finite(logFC), is.finite(adj.P.Val), adj.P.Val > 0) %>%
     mutate(negLogFDR = -log10(adj.P.Val))
-
+  
   tt_overall_plot <- tt_overall_plot %>%
     mutate(
       sig_cat = dplyr::case_when(
@@ -948,24 +1013,24 @@ tryCatch({
       ),
       sig_cat = factor(sig_cat, levels = c("Up", "Down", "NS"))
     )
-
+  
   ## Label top genes
   tt_overall_sig <- tt_overall_plot %>%
     dplyr::filter(adj.P.Val < fdr_cut_tissue, abs(logFC) >= logFC_cut_tissue, sig_cat != "NS")
-
+  
   overall_up_sig <- tt_overall_sig %>% dplyr::filter(sig_cat == "Up")
   overall_down_sig <- tt_overall_sig %>% dplyr::filter(sig_cat == "Down")
-
+  
   overall_up_top_fdr <- overall_up_sig %>% dplyr::arrange(adj.P.Val) %>% dplyr::slice_head(n = 10)
   overall_up_top_fc  <- overall_up_sig %>% dplyr::arrange(dplyr::desc(logFC)) %>% dplyr::slice_head(n = 10)
-
+  
   overall_down_top_fdr <- overall_down_sig %>% dplyr::arrange(adj.P.Val) %>% dplyr::slice_head(n = 10)
   overall_down_top_fc  <- overall_down_sig %>% dplyr::arrange(logFC) %>% dplyr::slice_head(n = 10)
-
+  
   overall_label_genes <- dplyr::bind_rows(
     overall_up_top_fdr, overall_up_top_fc, overall_down_top_fdr, overall_down_top_fc
   ) %>% dplyr::distinct(gene_name, .keep_all = TRUE)
-
+  
   vol_overall <- ggplot(
     tt_overall_plot,
     aes(x = logFC, y = negLogFDR, color = sig_cat)
@@ -1000,33 +1065,33 @@ tryCatch({
     ggtitle("Volcano: OVERALL KD vs CTL (all depots/sexes combined)") +
     xlab(expression(log[2]~Fold~Change)) +
     ylab(expression(-log[10]~FDR))
-
+  
   volcano_overall_file <- paste0("Volcano_tissue_OVERALL_KD_vs_CTL_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", volcano_overall_file), plot = vol_overall, width = 8, height = 6, dpi = 300)
   cat("Volcano saved: ", file.path(outdir, "plots", volcano_overall_file), "\n", sep = "")
-
+  
   ## Heatmap for overall contrast
   cat("\n--- Heatmap: OVERALL contrast ---\n")
   de_sig_overall <- tt_overall %>%
     dplyr::filter(adj.P.Val < fdr_cut_tissue, abs(logFC) > logFC_cut_tissue)
-
+  
   if (nrow(de_sig_overall) >= 2) {
     de_sig_overall <- de_sig_overall[order(de_sig_overall$adj.P.Val), , drop = FALSE]
     if (nrow(de_sig_overall) > params$heatmap_max_genes) {
       de_sig_overall <- de_sig_overall[1:params$heatmap_max_genes, , drop = FALSE]
     }
     gene_set_overall <- de_sig_overall$gene_name
-
+    
     ## Get VST matrix for overall (using blind=FALSE VST from the overall dds object)
     vst_overall_hm <- vst(dds_overall, blind = FALSE)
     vst_mat_overall_hm <- assay(vst_overall_hm)
-
+    
     mat_overall <- vst_mat_overall_hm[gene_set_overall, , drop = FALSE]
-
+    
     ## Scale rows (z-score)
     mat_overall_scaled <- t(scale(t(mat_overall)))
     mat_overall_scaled <- mat_overall_scaled[!rowSums(is.na(mat_overall_scaled)), , drop = FALSE]
-
+    
     if (nrow(mat_overall_scaled) >= 2) {
       ## Color function
       max_val_overall <- max(abs(mat_overall_scaled), na.rm = TRUE)
@@ -1034,7 +1099,7 @@ tryCatch({
         c(-max_val_overall, 0, max_val_overall),
         c("#0072B2", "white", "#E69F00")
       )
-
+      
       ## Column annotation (Depot, Sex, Genotype)
       heat_meta_overall <- as.data.frame(colData(dds_overall))
       overall_ha <- HeatmapAnnotation(
@@ -1048,14 +1113,14 @@ tryCatch({
         ),
         annotation_name_side = "left"
       )
-
+      
       ## Create heatmap
       heat_overall <- Heatmap(
         mat_overall_scaled,
         col = overall_col_fun,
         cluster_rows = TRUE,
         cluster_columns = TRUE,
-        show_column_names = FALSE,
+        show_column_names = TRUE,
         show_row_names = (nrow(mat_overall_scaled) <= 50),
         column_split = heat_meta_overall$Genotype,
         border = TRUE,
@@ -1069,13 +1134,14 @@ tryCatch({
           title_gp = gpar(fontsize = 10)
         ),
         row_names_gp = gpar(fontsize = 5),
-        column_names_gp = gpar(fontsize = 6)
+        column_names_gp = gpar(fontsize = 6),
+        column_names_side = "bottom"
       )
-
-      ## Save
+      
+      ## Save (increased height to prevent sample name cutoff)
       heat_overall_file <- paste0("Heatmap_tissue_OVERALL_KD_vs_CTL_", run_tag, ".png")
-      png(file.path(outdir, "plots", heat_overall_file), width = 2400, height = 3000, res = 200)
-      draw(heat_overall)
+      png(file.path(outdir, "plots", heat_overall_file), width = 2400, height = 4200, res = 200)
+      draw(heat_overall, padding = unit(c(2, 2, 40, 2), "mm"))  ## Extra bottom padding for sample names
       dev.off()
       cat("Heatmap saved: ", file.path(outdir, "plots", heat_overall_file), "\n", sep = "")
     } else {
@@ -1084,12 +1150,12 @@ tryCatch({
   } else {
     cat("Not enough DE genes for overall heatmap.\n")
   }
-
+  
   ## 4.16) DEG summary table --------------------------------
   deg_summary_file <- paste0("DEG_summary_tissue_", run_tag, ".csv")
   write.csv(deg_summary, file = file.path(outdir, "tables", deg_summary_file), row.names = FALSE)
   cat("\nDEG summary written: ", file.path(outdir, "tables", deg_summary_file), "\n", sep = "")
-
+  
   ## 4.17) save_core bookkeeping ----------------------------
   if (!is.null(hero_volcano_file)) {
     hero_path <- file.path(outdir, "plots", hero_volcano_file)
@@ -1101,7 +1167,7 @@ tryCatch({
       })
     }
   }
-
+  
   if (exists("dedupe")) {
     try(dedupe(outdir), silent = TRUE)
   }
@@ -1109,14 +1175,14 @@ tryCatch({
   cat("=== PART 1 COMPLETE ===\n")
   cat("======================================\n")
   cat("DE results saved. Run part2_ora.R and part3_fgsea.R for pathway analysis.\n\n")
-
+  
 }, error = function(e) {
-
+  
   cat("\n======================================\n")
   cat("=== ERROR IN PIPELINE ===\n")
   cat("======================================\n")
   cat(conditionMessage(e), "\n\n")
-
+  
   err_file <- paste0("ERROR_", run_tag, ".txt")
   writeLines(
     c(
@@ -1128,7 +1194,7 @@ tryCatch({
     ),
     con = file.path(outdir, "logs", err_file)
   )
-
+  
   stop(e)
 })
 
