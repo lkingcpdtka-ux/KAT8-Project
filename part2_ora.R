@@ -591,7 +591,83 @@ tryCatch({
       cat("[WARN] Too few down-regulated genes for ORA\n")
     }
   }
-  
+
+  ## 4.4B) OPTIONAL: Re-run GWAT contrasts with RELAXED parameters ----
+  ## Uncomment this section if GWAT has <50 down-regulated DEGs
+  ##
+  ## cat("\n\n==========================================================\n")
+  ## cat("=== RELAXED ORA FOR GWAT (if needed) ===\n")
+  ## cat("==========================================================\n\n")
+  ##
+  ## logFC_cut_relaxed <- 0.5   # More lenient (was 1.0)
+  ## fdr_cut_relaxed   <- 0.1   # More lenient (was 0.05)
+  ##
+  ## cat("RELAXED PARAMETERS (GWAT only):\n")
+  ## cat("  DEG thresholds: FDR < ", fdr_cut_relaxed, ", |logFC| > ", logFC_cut_relaxed, "\n", sep = "")
+  ## cat("  Pathway p-cutoff: 0.15 (was 0.1)\n")
+  ## cat("  Pathway q-cutoff: 0.25 (was 0.2)\n\n")
+  ##
+  ## gwat_de_files <- de_files[grepl("gWAT", de_files)]
+  ##
+  ## for (de_file in gwat_de_files) {
+  ##   de_filename <- basename(de_file)
+  ##   contrast_name <- gsub("^DE_tissue_(.+)_[0-9]{8}_[0-9]{6}\\.csv$", "\\1", de_filename)
+  ##
+  ##   cat("\n=== RELAXED: ", contrast_name, " ===\n", sep = "")
+  ##   de_table <- read.csv(de_file, row.names = 1, stringsAsFactors = FALSE)
+  ##
+  ##   if (!"adj.P.Val" %in% colnames(de_table)) {
+  ##     de_table$adj.P.Val <- de_table$padj
+  ##   }
+  ##   if (!"logFC" %in% colnames(de_table)) {
+  ##     de_table$logFC <- de_table$log2FoldChange
+  ##   }
+  ##
+  ##   ## Get down genes with RELAXED cutoffs
+  ##   down_genes_relaxed <- de_table %>%
+  ##     dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut_relaxed,
+  ##                   logFC < -logFC_cut_relaxed) %>%
+  ##     rownames()
+  ##
+  ##   cat("[INFO] Down DEGs (relaxed): ", length(down_genes_relaxed), "\n", sep = "")
+  ##
+  ##   if (length(down_genes_relaxed) >= 5) {
+  ##     ## Convert to Entrez
+  ##     gene_entrez <- tryCatch({
+  ##       bitr(unique(down_genes_relaxed), fromType = "SYMBOL", toType = "ENTREZID",
+  ##            OrgDb = org.Mm.eg.db, drop = TRUE)
+  ##     }, error = function(e) {
+  ##       data.frame(SYMBOL = character(), ENTREZID = character())
+  ##     })
+  ##
+  ##     if (nrow(gene_entrez) >= 3) {
+  ##       ## GO:BP with RELAXED parameters
+  ##       enrich_go_relaxed <- if (!is.null(universe_entrez)) {
+  ##         enrichGO(gene = gene_entrez$ENTREZID, OrgDb = org.Mm.eg.db, ont = "BP",
+  ##                  pvalueCutoff = 0.15, qvalueCutoff = 0.25, readable = TRUE,
+  ##                  minGSSize = 3, maxGSSize = 500, universe = universe_entrez)
+  ##       } else {
+  ##         enrichGO(gene = gene_entrez$ENTREZID, OrgDb = org.Mm.eg.db, ont = "BP",
+  ##                  pvalueCutoff = 0.15, qvalueCutoff = 0.25, readable = TRUE,
+  ##                  minGSSize = 3, maxGSSize = 500)
+  ##       }
+  ##
+  ##       if (!is.null(enrich_go_relaxed) && nrow(enrich_go_relaxed@result) > 0) {
+  ##         enrich_go_simp <- simplify(enrich_go_relaxed, cutoff = 0.7)
+  ##         sig_results <- enrich_go_simp@result %>%
+  ##           dplyr::filter(p.adjust < 0.25) %>%
+  ##           dplyr::arrange(p.adjust)
+  ##
+  ##         if (nrow(sig_results) > 0) {
+  ##           table_file <- paste0("ORA_RELAXED_gobp_", contrast_name, "_Down_", run_tag, ".csv")
+  ##           write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
+  ##           cat("[OK] RELAXED ORA: ", nrow(sig_results), " pathways (saved as ", table_file, ")\n", sep = "")
+  ##         }
+  ##       }
+  ##     }
+  ##   }
+  ## }
+
   ## 4.5) Save sanity check table ----------------------------
   sanity_file <- paste0("ORA_sanity_check_", run_tag, ".csv")
   write.csv(pathway_sanity_tracker, file = file.path(outdir, "tables", sanity_file), row.names = FALSE)
