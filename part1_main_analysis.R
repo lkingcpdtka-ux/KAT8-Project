@@ -838,11 +838,14 @@ tryCatch({
             goi_reference_order <- rownames(heat_matrix_scaled)[row_hclust$order]
             cat("[INFO] Reference order established: ", length(goi_reference_order), " genes\n", sep = "")
 
-            ## Create heatmap with clustering
+            ## Reorder matrix to match clustered order
+            heat_matrix_scaled <- heat_matrix_scaled[goi_reference_order, , drop = FALSE]
+
+            ## Create heatmap WITHOUT clustering (using pre-clustered order)
             heat_goi <- Heatmap(
               heat_matrix_scaled,
               col = heat_col_fun,
-              cluster_rows = TRUE,
+              cluster_rows = FALSE,  ## No clustering - already in clustered order
               cluster_columns = FALSE,
               show_column_names = TRUE,
               show_row_names = TRUE,
@@ -851,7 +854,7 @@ tryCatch({
               column_gap = unit(2, "mm"),
               row_gap = unit(0, "mm"),
               top_annotation = heat_ha,
-              column_title = paste0("Genes of Interest: ", cn, " (REFERENCE)"),
+              column_title = paste0("Genes of Interest: ", cn, " (REFERENCE order)"),
               heatmap_legend_param = list(
                 title = "Z-score\n(vs CTL)",
                 title_position = "leftcenter-rot",
@@ -1213,10 +1216,10 @@ tryCatch({
         column_names_side = "bottom"
       )
       
-      ## Save (increased height to prevent sample name cutoff)
+      ## Save
       heat_overall_file <- paste0("Heatmap_tissue_OVERALL_KD_vs_CTL_", run_tag, ".png")
       png(file.path(outdir, "plots", heat_overall_file), width = 2400, height = 4200, res = 200)
-      draw(heat_overall, padding = unit(c(2, 2, 40, 2), "mm"))  ## Extra bottom padding for sample names
+      draw(heat_overall, padding = unit(c(2, 2, 2, 2), "mm"))  ## Standard padding
       dev.off()
       cat("Heatmap saved: ", file.path(outdir, "plots", heat_overall_file), "\n", sep = "")
     } else {
