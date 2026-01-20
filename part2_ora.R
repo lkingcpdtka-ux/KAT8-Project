@@ -42,6 +42,10 @@ suppressPackageStartupMessages({
   library(AnnotationDbi)
 })
 
+## Load improved gene mapping function for better mapping rates
+cat("[INFO] Loading improved gene mapping function...\n")
+source(file.path(getwd(), "improved_gene_mapping.R"))
+
 ## 2) save_core utilities -----------------------------------
 utils_dir <- file.path(getwd(), "save_core")
 if (file.exists(file.path(utils_dir, "save.R"))) {
@@ -154,21 +158,27 @@ tryCatch({
     ## Universe = all genes tested by DESeq2
     universe_symbols <- rownames(de_first)
     cat("[INFO] Total genes tested by DESeq2: ", length(universe_symbols), "\n")
-    
-    ## Convert to Entrez IDs
+
+    ## Check if ENSEMBL IDs are available
+    universe_ensembl <- if ("gene_id" %in% colnames(de_first)) {
+      de_first[universe_symbols, "gene_id"]
+    } else {
+      NULL
+    }
+
+    ## Convert to Entrez IDs using improved mapping
     universe_entrez_df <- tryCatch({
-      bitr(
-        universe_symbols,
-        fromType = "SYMBOL",
-        toType   = "ENTREZID",
-        OrgDb    = org.Mm.eg.db,
-        drop     = TRUE
+      improved_gene_mapping(
+        gene_symbols = universe_symbols,
+        ensembl_ids  = universe_ensembl,
+        orgdb        = org.Mm.eg.db,
+        verbose      = TRUE
       )
     }, error = function(e) {
       cat("[ERROR] Universe gene ID conversion failed: ", conditionMessage(e), "\n")
       stop("Cannot create universe for ORA")
     })
-    
+
     ## Get unique Entrez IDs
     universe_entrez <- unique(universe_entrez_df$ENTREZID)
     universe_entrez <- universe_entrez[!is.na(universe_entrez)]
@@ -184,36 +194,41 @@ tryCatch({
   
   ## 4.3) ORA analysis function ------------------------------
   run_ora_analysis <- function(gene_list, direction, contrast_name,
-                               universe_entrez, run_tag, outdir, fdr_cutoff = 0.05) {
-    
+                               universe_entrez, run_tag, outdir, fdr_cutoff = 0.05,
+                               de_table = NULL) {
+
     cat("\n--- ORA Pathway enrichment: ", direction, " genes (", contrast_name, ") ---\n", sep = "")
     cat("[INFO] Input gene count: ", length(gene_list), " genes\n", sep = "")
-    
+
     if (length(gene_list) < 5) {
       cat("[WARN] Too few genes (", length(gene_list), ") for pathway analysis\n", sep = "")
       return(NULL)
     }
-    
-    ## Convert gene list to Entrez IDs
+
+    ## Check if ENSEMBL IDs are available
+    gene_ensembl <- if (!is.null(de_table) && "gene_id" %in% colnames(de_table)) {
+      de_table[gene_list, "gene_id"]
+    } else {
+      NULL
+    }
+
+    ## Convert gene list to Entrez IDs using improved mapping
     gene_entrez <- tryCatch({
-      bitr(
-        unique(gene_list),
-        fromType = "SYMBOL",
-        toType   = "ENTREZID",
-        OrgDb    = org.Mm.eg.db,
-        drop     = TRUE
+      improved_gene_mapping(
+        gene_symbols = unique(gene_list),
+        ensembl_ids  = gene_ensembl,
+        orgdb        = org.Mm.eg.db,
+        verbose      = TRUE
       )
     }, error = function(e) {
       cat("[WARN] Gene ID conversion failed: ", conditionMessage(e), "\n", sep = "")
       return(data.frame(SYMBOL = character(), ENTREZID = character()))
     })
-    
+
     gene_entrez <- gene_entrez[!is.na(gene_entrez$ENTREZID), , drop = FALSE]
     gene_entrez <- gene_entrez[!duplicated(gene_entrez$ENTREZID), , drop = FALSE]
-    
+
     mapping_rate <- if (length(gene_list) == 0) 0 else nrow(gene_entrez) / length(unique(gene_list))
-    cat("[OK] Mapped ", nrow(gene_entrez), " of ", length(unique(gene_list)),
-        " genes to Entrez (", round(mapping_rate * 100, 1), "%)\n", sep = "")
     cat("[INFO] Genes entering pathway enrichment: ", nrow(gene_entrez), "\n", sep = "")
     if (!is.null(universe_entrez)) {
       cat("[INFO] Universe size: ", length(universe_entrez), " Entrez IDs\n", sep = "")
@@ -570,12 +585,13 @@ tryCatch({
         universe_entrez = universe_entrez,
         run_tag         = run_tag,
         outdir          = outdir,
-        fdr_cutoff      = fdr_cut
+        fdr_cutoff      = fdr_cut,
+        de_table        = de_table
       )
     } else {
       cat("[WARN] Too few up-regulated genes for ORA\n")
     }
-    
+
     ## Run ORA for down-regulated genes
     if (length(down_genes) >= 5) {
       run_ora_analysis(
@@ -585,7 +601,8 @@ tryCatch({
         universe_entrez = universe_entrez,
         run_tag         = run_tag,
         outdir          = outdir,
-        fdr_cutoff      = fdr_cut
+        fdr_cutoff      = fdr_cut,
+        de_table        = de_table
       )
     } else {
       cat("[WARN] Too few down-regulated genes for ORA\n")

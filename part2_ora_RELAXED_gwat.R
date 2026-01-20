@@ -41,6 +41,10 @@ suppressPackageStartupMessages({
   library(AnnotationDbi)
 })
 
+## Load improved gene mapping function
+cat("[INFO] Loading improved gene mapping function...\n")
+source(file.path(getwd(), "improved_gene_mapping.R"))
+
 ## 2) Find most recent Part 1 run --------------------------
 cat("\n=== RELAXED ORA FOR GWAT CONTRASTS ===\n")
 cat("Using relaxed parameters to find more down-regulated pathways\n\n")
@@ -105,13 +109,19 @@ if (use_universe) {
   de_ref <- read.csv(gwat_de_files[1], row.names = 1, stringsAsFactors = FALSE)
   all_genes_tested <- rownames(de_ref)
 
+  ## Check if ENSEMBL IDs available
+  universe_ensembl <- if ("gene_id" %in% colnames(de_ref)) {
+    de_ref[all_genes_tested, "gene_id"]
+  } else {
+    NULL
+  }
+
   universe_genes_mapped <- tryCatch({
-    bitr(
-      unique(all_genes_tested),
-      fromType = "SYMBOL",
-      toType   = "ENTREZID",
-      OrgDb    = org.Mm.eg.db,
-      drop     = TRUE
+    improved_gene_mapping(
+      gene_symbols = unique(all_genes_tested),
+      ensembl_ids  = universe_ensembl,
+      orgdb        = org.Mm.eg.db,
+      verbose      = TRUE
     )
   }, error = function(e) {
     cat("[WARN] Failed to map universe genes: ", conditionMessage(e), "\n")
@@ -175,14 +185,20 @@ for (de_file in gwat_de_files) {
   if (length(down_genes_relaxed) >= 5) {
     cat("\n--- Running RELAXED ORA for DOWN genes ---\n")
 
-    ## Convert to Entrez IDs
+    ## Check if ENSEMBL IDs available
+    gene_ensembl <- if ("gene_id" %in% colnames(de_table)) {
+      de_table[down_genes_relaxed, "gene_id"]
+    } else {
+      NULL
+    }
+
+    ## Convert to Entrez IDs using improved mapping
     gene_entrez <- tryCatch({
-      bitr(
-        unique(down_genes_relaxed),
-        fromType = "SYMBOL",
-        toType   = "ENTREZID",
-        OrgDb    = org.Mm.eg.db,
-        drop     = TRUE
+      improved_gene_mapping(
+        gene_symbols = unique(down_genes_relaxed),
+        ensembl_ids  = gene_ensembl,
+        orgdb        = org.Mm.eg.db,
+        verbose      = TRUE
       )
     }, error = function(e) {
       cat("[ERROR] Gene ID conversion failed: ", conditionMessage(e), "\n")
