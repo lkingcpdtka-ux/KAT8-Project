@@ -1256,6 +1256,18 @@ tryCatch({
   if (exists("dedupe")) {
     try(dedupe(outdir), silent = TRUE)
   }
+
+  ## Save session info for reproducibility
+  session_file <- file.path(outdir, "logs", paste0("sessionInfo_", run_tag, ".txt"))
+  sink(session_file)
+  cat("=== R SESSION INFORMATION ===\n\n")
+  print(sessionInfo())
+  cat("\n=== KEY PACKAGE VERSIONS ===\n\n")
+  key_pkgs <- c("DESeq2", "dplyr", "ggplot2", "ComplexHeatmap")
+  print(installed.packages()[intersect(key_pkgs, rownames(installed.packages())), c("Version", "Built")])
+  sink()
+  cat("[INFO] Session info saved to: ", session_file, "\n", sep = "")
+
   cat("\n======================================\n")
   cat("=== PART 1 COMPLETE ===\n")
   cat("======================================\n")
