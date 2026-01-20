@@ -25,7 +25,8 @@ required_bioc_pkgs <- c(
   "org.Mm.eg.db",
   "enrichplot",
   "DOSE",
-  "AnnotationDbi"
+  "AnnotationDbi",
+  "ReactomePA"
 )
 
 if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
@@ -40,6 +41,7 @@ suppressPackageStartupMessages({
   library(enrichplot)
   library(DOSE)
   library(AnnotationDbi)
+  library(ReactomePA)
 })
 
 ## Note: Improved mapping not needed - current mapping rate is 90.8% (excellent!)
@@ -427,7 +429,85 @@ tryCatch({
         )
       )
     })
-    
+
+    ## Reactome pathway enrichment (conditionally with universe)
+    tryCatch({
+      enrich_reactome <- if (!is.null(universe_entrez)) {
+        enrichPathway(
+          gene         = entrez_ids,
+          organism     = "mouse",
+          pvalueCutoff = 0.1,
+          qvalueCutoff = 0.2,
+          minGSSize    = 5,
+          maxGSSize    = 500,
+          universe     = universe_entrez,
+          readable     = TRUE
+        )
+      } else {
+        enrichPathway(
+          gene         = entrez_ids,
+          organism     = "mouse",
+          pvalueCutoff = 0.1,
+          qvalueCutoff = 0.2,
+          minGSSize    = 5,
+          maxGSSize    = 500,
+          readable     = TRUE
+        )
+      }
+
+      if (!is.null(enrich_reactome) && nrow(enrich_reactome@result) > 0) {
+        results$reactome <- enrich_reactome
+        n_sig <- sum(enrich_reactome@result$p.adjust < fdr_cutoff, na.rm = TRUE)
+        cat("[OK] Reactome enrichment: ", nrow(enrich_reactome@result), " pathways, ",
+            n_sig, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
+
+        ## Track in sanity checker
+        pathway_sanity_tracker <<- rbind(
+          pathway_sanity_tracker,
+          data.frame(
+            Contrast = contrast_name,
+            Direction = direction,
+            Database = "Reactome",
+            N_Input_Genes = length(gene_list),
+            N_Mapped_Entrez = nrow(gene_entrez),
+            N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
+            N_Sig_Pathways = n_sig,
+            stringsAsFactors = FALSE
+          )
+        )
+      } else {
+        cat("[INFO] No Reactome pathways found\n")
+        pathway_sanity_tracker <<- rbind(
+          pathway_sanity_tracker,
+          data.frame(
+            Contrast = contrast_name,
+            Direction = direction,
+            Database = "Reactome",
+            N_Input_Genes = length(gene_list),
+            N_Mapped_Entrez = nrow(gene_entrez),
+            N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
+            N_Sig_Pathways = 0,
+            stringsAsFactors = FALSE
+          )
+        )
+      }
+    }, error = function(e) {
+      cat("[WARN] Reactome enrichment failed: ", conditionMessage(e), "\n", sep = "")
+      pathway_sanity_tracker <<- rbind(
+        pathway_sanity_tracker,
+        data.frame(
+          Contrast = contrast_name,
+          Direction = direction,
+          Database = "Reactome",
+          N_Input_Genes = length(gene_list),
+          N_Mapped_Entrez = nrow(gene_entrez),
+          N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
+          N_Sig_Pathways = 0,
+          stringsAsFactors = FALSE
+        )
+      )
+    })
+
     ## Save results tables + barplots
     if (length(results) > 0) {
       for (db_name in names(results)) {
@@ -510,7 +590,71 @@ tryCatch({
           dpi    = 300,
           bg     = "white"
         )
-        cat("[OK] Saved pathway bar plot: ", plot_file, "\n", sep = "")
+        ## Save PDF version for publication
+        plot_file_pdf <- paste0("ORA_barplot_", db_name, "_", contrast_name, "_", direction, "_", run_tag, ".pdf")
+        ggsave(
+          file.path(outdir, "plots", plot_file_pdf),
+          plot   = p_pathway,
+          width  = 10,
+          height = max(6, nrow(plot_data) * 0.3),
+          device = "pdf"
+        )
+        cat("[OK] Saved pathway bar plot: ", plot_file, " (PNG and PDF)\n", sep = "")
+
+        ## Create dotplot (top 15 terms) - shows gene ratio and significance
+        if (nrow(plot_data) > 0) {
+          ## Direction-specific color gradient (orange for Up, blue for Down)
+          color_low  <- if (direction == "Up") "#FFF5E1" else "#E6F2FF"  # light orange/blue
+          color_high <- if (direction == "Up") "#D55E00" else "#0072B2"  # dark orange/blue
+
+          p_dotplot <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
+            geom_point(aes(size = Count, color = p.adjust)) +
+            scale_color_gradient(
+              low  = color_high,
+              high = color_low,
+              name = "Adjusted\np-value"
+            ) +
+            scale_size_continuous(
+              name = "Gene\nCount",
+              range = c(3, 8)
+            ) +
+            labs(
+              title = paste0("ORA ", toupper(db_name), ": ", contrast_name, " (", direction, ")"),
+              x     = "Gene Ratio",
+              y     = NULL
+            ) +
+            theme_classic(base_size = 12) +
+            theme(
+              plot.title      = element_text(face = "bold", hjust = 0.5, size = 14),
+              axis.text.y     = element_text(size = 10, color = "black"),
+              axis.text.x     = element_text(size = 10, color = "black", face = "bold"),
+              axis.title.x    = element_text(size = 12, face = "bold"),
+              legend.title    = element_text(size = 10, face = "bold"),
+              legend.text     = element_text(size = 9),
+              legend.position = "right",
+              panel.border    = element_rect(color = "black", fill = NA, linewidth = 1)
+            )
+
+          dotplot_file <- paste0("ORA_dotplot_", db_name, "_", contrast_name, "_", direction, "_", run_tag, ".png")
+          ggsave(
+            file.path(outdir, "plots", dotplot_file),
+            plot   = p_dotplot,
+            width  = 10,
+            height = max(6, nrow(plot_data) * 0.3),
+            dpi    = 300,
+            bg     = "white"
+          )
+          ## Save PDF version for publication
+          dotplot_file_pdf <- paste0("ORA_dotplot_", db_name, "_", contrast_name, "_", direction, "_", run_tag, ".pdf")
+          ggsave(
+            file.path(outdir, "plots", dotplot_file_pdf),
+            plot   = p_dotplot,
+            width  = 10,
+            height = max(6, nrow(plot_data) * 0.3),
+            device = "pdf"
+          )
+          cat("[OK] Saved pathway dotplot: ", dotplot_file, " (PNG and PDF)\n", sep = "")
+        }
       }
     }
     
@@ -710,7 +854,18 @@ tryCatch({
   cat("\n======================================\n")
   cat("=== PART 2 (ORA) COMPLETE ===\n")
   cat("======================================\n\n")
-  
+
+  ## 4.7) Save session info for reproducibility -------------
+  session_file <- file.path(outdir, "logs", paste0("sessionInfo_ORA_", run_tag, ".txt"))
+  sink(session_file)
+  cat("=== R SESSION INFORMATION ===\n\n")
+  print(sessionInfo())
+  cat("\n=== KEY PACKAGE VERSIONS ===\n\n")
+  key_pkgs <- c("clusterProfiler", "org.Mm.eg.db", "dplyr", "ggplot2")
+  print(installed.packages()[intersect(key_pkgs, rownames(installed.packages())), c("Version", "Built")])
+  sink()
+  cat("[INFO] Session info saved to: ", session_file, "\n", sep = "")
+
 }, error = function(e) {
   
   cat("\n======================================\n")
