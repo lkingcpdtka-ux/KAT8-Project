@@ -100,6 +100,29 @@ simplify_go_bp <- TRUE
 simplify_go_cutoff <- 0.7
 top_n_per_direction <- 10
 
+## ============================================================
+## TROUBLESHOOTING: If GWAT has few down-regulated pathways
+## ============================================================
+## Try adjusting these parameters for GWAT contrasts:
+##
+## 1. RELAX FDR CUTOFF (for pathway significance):
+##    fdr_cut <- 0.1  # More lenient (was 0.05)
+##
+## 2. RELAX GENE SET SIZES (allow smaller pathways):
+##    In fgsea() calls below, change:
+##    minSize = 3  # Was 5
+##
+## 3. INCREASE PERMUTATIONS (more power):
+##    nPermSimple = 50000  # Was 10000
+##
+## 4. USE DIFFERENT RANKING METRIC:
+##    Instead of Wald stat, try: -log10(pvalue) * sign(logFC)
+##
+## Note: fgsea doesn't need hard DEG cutoffs - it uses the full
+## ranked gene list, so it's MORE SENSITIVE than ORA for finding
+## pathways with subtle shifts.
+## ============================================================
+
 ## Library toggles
 ## UPDATED (2026-01-20): Re-enabled GO:BP and KEGG for comprehensive pathway analysis
 ## These were previously disabled, which limited pathway discovery
