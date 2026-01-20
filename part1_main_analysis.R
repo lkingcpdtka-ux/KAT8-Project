@@ -107,8 +107,11 @@ cat("[INFO] Genes of interest for focused plots: ", length(genes_of_interest), "
 ## -----------------------------
 ## Prefilter parameters (tune as needed)
 ## -----------------------------
-prefilter_min_count <- 5
-prefilter_min_samples_per_group <- 2
+## Updated to more stringent cutoffs (2026-01-20)
+## Previous: min_count=5, min_samples=2 (too lenient)
+## Current: min_count=10, min_samples=3 (standard recommendation)
+prefilter_min_count <- 10
+prefilter_min_samples_per_group <- 3
 
 ## 4) Main logic --------------------------------------------
 hero_volcano_file <- NULL
@@ -262,6 +265,12 @@ tryCatch({
   print(colSums(count_matrix_tissue))
   
   ## 4.6) DESeq2 object + typical prefilter ------------------
+  ## DESIGN NOTE (2026-01-20): Using combined dataset approach
+  ## - Analyzing all depot/sex/genotype combinations together is CORRECT
+  ## - Design ~ 0 + GroupFull creates separate coefficients for each group
+  ## - This accounts for depot and sex differences appropriately
+  ## - NO NEED to split dataset unless PCA/MDS shows unexpected batch structure
+  ## - Current PCA/MDS shows clean separation by depot/sex (no batch effects)
   min_count <- prefilter_min_count
   min_samples_per_group <- prefilter_min_samples_per_group
   
@@ -554,10 +563,13 @@ tryCatch({
   names(tt_list) <- contrast_names
   
   ## 4.14) Per-contrast DE + volcano + heatmap + genes of interest ----
+  ## Initialize reference gene order for genes of interest (will be set from iWAT_F)
+  goi_reference_order <- NULL
+
   for (cn in contrast_names) {
-    
+
     cat("\n=== Contrast: ", cn, " ===\n", sep = "")
-    
+
     res <- results(dds_tissue, contrast = contrast_definitions[[cn]])
     res <- res[order(res$pvalue), , drop = FALSE]
     
@@ -801,43 +813,106 @@ tryCatch({
         heat_matrix_scaled <- heat_matrix_scaled[!rowSums(is.na(heat_matrix_scaled)), , drop = FALSE]
         
         if (nrow(heat_matrix_scaled) >= 2) {
-          
+
           ## Use volcano colors (teal to white to orange)
           max_val <- max(abs(heat_matrix_scaled), na.rm = TRUE)
           heat_col_fun <- colorRamp2(
             c(-max_val, 0, max_val),
             c("#0072B2", "white", "#E69F00")  ## Teal (down) -> white -> orange (up)
           )
-          
+
           ## Column annotation
           heat_ha <- HeatmapAnnotation(
             Genotype = heat_meta$Genotype,
             col = list(Genotype = c(CTL = "#1B9E77", KAT8KD = "#D95F02")),
             annotation_name_side = "left"
           )
-          
-          ## Create heatmap
-          heat_goi <- Heatmap(
-            heat_matrix_scaled,
-            col = heat_col_fun,
-            cluster_rows = TRUE,
-            cluster_columns = FALSE,
-            show_column_names = TRUE,
-            show_row_names = TRUE,
-            column_split = heat_meta$Genotype,
-            border = TRUE,
-            column_gap = unit(2, "mm"),
-            row_gap = unit(0, "mm"),
-            top_annotation = heat_ha,
-            column_title = paste0("Genes of Interest: ", cn),
-            heatmap_legend_param = list(
-              title = "Z-score\n(vs CTL)",
-              title_position = "leftcenter-rot",
-              title_gp = gpar(fontsize = 10)
-            ),
-            row_names_gp = gpar(fontsize = 8),
-            column_names_gp = gpar(fontsize = 8)
-          )
+
+          ## Establish or apply reference gene order (iWAT_F is reference)
+          if (cn == "iWAT_F_KD_vs_CTL" && is.null(goi_reference_order)) {
+            ## First contrast: cluster rows and save order as gene names
+            cat("[INFO] Establishing reference gene order from iWAT_F...\n")
+            ## Perform hierarchical clustering manually to get order
+            row_dist <- dist(heat_matrix_scaled)
+            row_hclust <- hclust(row_dist, method = "complete")
+            goi_reference_order <- rownames(heat_matrix_scaled)[row_hclust$order]
+            cat("[INFO] Reference order established: ", length(goi_reference_order), " genes\n", sep = "")
+
+            ## Create heatmap with clustering
+            heat_goi <- Heatmap(
+              heat_matrix_scaled,
+              col = heat_col_fun,
+              cluster_rows = TRUE,
+              cluster_columns = FALSE,
+              show_column_names = TRUE,
+              show_row_names = TRUE,
+              column_split = heat_meta$Genotype,
+              border = TRUE,
+              column_gap = unit(2, "mm"),
+              row_gap = unit(0, "mm"),
+              top_annotation = heat_ha,
+              column_title = paste0("Genes of Interest: ", cn, " (REFERENCE)"),
+              heatmap_legend_param = list(
+                title = "Z-score\n(vs CTL)",
+                title_position = "leftcenter-rot",
+                title_gp = gpar(fontsize = 10)
+              ),
+              row_names_gp = gpar(fontsize = 8),
+              column_names_gp = gpar(fontsize = 8)
+            )
+          } else if (!is.null(goi_reference_order)) {
+            ## Subsequent contrasts: use reference order (no clustering)
+            cat("[INFO] Applying reference gene order from iWAT_F...\n")
+            ## Reorder matrix to match reference (only use genes present in both)
+            common_genes <- intersect(goi_reference_order, rownames(heat_matrix_scaled))
+            heat_matrix_scaled <- heat_matrix_scaled[common_genes, , drop = FALSE]
+            cat("[INFO] Using ", length(common_genes), " genes in common with reference\n", sep = "")
+
+            heat_goi <- Heatmap(
+              heat_matrix_scaled,
+              col = heat_col_fun,
+              cluster_rows = FALSE,  ## No clustering - use reference order
+              cluster_columns = FALSE,
+              show_column_names = TRUE,
+              show_row_names = TRUE,
+              column_split = heat_meta$Genotype,
+              border = TRUE,
+              column_gap = unit(2, "mm"),
+              row_gap = unit(0, "mm"),
+              top_annotation = heat_ha,
+              column_title = paste0("Genes of Interest: ", cn, " (ordered by iWAT_F)"),
+              heatmap_legend_param = list(
+                title = "Z-score\n(vs CTL)",
+                title_position = "leftcenter-rot",
+                title_gp = gpar(fontsize = 10)
+              ),
+              row_names_gp = gpar(fontsize = 8),
+              column_names_gp = gpar(fontsize = 8)
+            )
+          } else {
+            ## Fallback: cluster normally if reference not established yet
+            heat_goi <- Heatmap(
+              heat_matrix_scaled,
+              col = heat_col_fun,
+              cluster_rows = TRUE,
+              cluster_columns = FALSE,
+              show_column_names = TRUE,
+              show_row_names = TRUE,
+              column_split = heat_meta$Genotype,
+              border = TRUE,
+              column_gap = unit(2, "mm"),
+              row_gap = unit(0, "mm"),
+              top_annotation = heat_ha,
+              column_title = paste0("Genes of Interest: ", cn),
+              heatmap_legend_param = list(
+                title = "Z-score\n(vs CTL)",
+                title_position = "leftcenter-rot",
+                title_gp = gpar(fontsize = 10)
+              ),
+              row_names_gp = gpar(fontsize = 8),
+              column_names_gp = gpar(fontsize = 8)
+            )
+          }
           
           ## Save
           heat_goi_file <- paste0("Heatmap_GOI_", cn, "_", run_tag, ".png")

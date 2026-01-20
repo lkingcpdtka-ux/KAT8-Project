@@ -94,15 +94,19 @@ if (!dir.exists(file.path(outdir, "plots"))) {
 
 ## 3) Parameters --------------------------------------------
 fdr_cut   <- 0.05
-simplify_go_bp <- FALSE
+## UPDATED (2026-01-20): Enable GO:BP simplification to reduce redundancy
+## This combines similar pathways (like ORA) - recommended for GO:BP
+simplify_go_bp <- TRUE
 simplify_go_cutoff <- 0.7
 top_n_per_direction <- 10
 
-## Library toggles (temporary)
-run_go_bp <- FALSE
-run_kegg <- FALSE
-run_wikipathways <- TRUE
-run_hallmark <- TRUE
+## Library toggles
+## UPDATED (2026-01-20): Re-enabled GO:BP and KEGG for comprehensive pathway analysis
+## These were previously disabled, which limited pathway discovery
+run_go_bp <- TRUE         # GO Biological Process (large, comprehensive)
+run_kegg <- TRUE          # KEGG pathways (curated, metabolic focus)
+run_wikipathways <- TRUE  # WikiPathways (community-curated)
+run_hallmark <- TRUE      # MSigDB Hallmark (50 well-defined signatures)
 
 log_time <- function(message) {
   cat("[TIME] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), " ", message, "\n", sep = "")
@@ -345,8 +349,42 @@ tryCatch({
             )
           )
           
-          if (simplify_go) {
-            cat("[INFO] GO:BP simplification skipped (fgsea-only logic enabled)\n")
+          ## Optionally simplify GO:BP results to reduce redundancy
+          if (simplify_go && nrow(fgsea_go) > 0) {
+            cat("[INFO] Simplifying GO:BP results (removing redundant terms)...\n")
+            tryCatch({
+              ## Convert fgsea results to enrichResult object for simplify()
+              ## Create a minimal enrichResult-like structure
+              sig_go <- fgsea_go %>% dplyr::filter(padj < fdr_cutoff)
+              if (nrow(sig_go) > 0) {
+                ## For simplification, we need pathway-to-gene mapping
+                ## Use semantic similarity to remove redundant GO terms
+                require(GOSemSim)
+                godata <- godata('org.Mm.eg.db', ont = "BP", computeIC = TRUE)
+
+                ## Calculate semantic similarity matrix
+                go_ids <- sig_go$pathway
+                sim_mat <- mgoSim(go_ids, go_ids, semData = godata, measure = "Wang")
+
+                ## Find redundant terms (similarity > cutoff)
+                keep_terms <- c()
+                for (i in seq_along(go_ids)) {
+                  if (i == 1 || all(sim_mat[i, keep_terms] < simplify_cutoff)) {
+                    keep_terms <- c(keep_terms, i)
+                  }
+                }
+
+                fgsea_go_simplified <- sig_go[keep_terms, ]
+                n_removed <- nrow(sig_go) - nrow(fgsea_go_simplified)
+                cat("[OK] Removed ", n_removed, " redundant GO:BP terms\n", sep = "")
+                cat("[OK] Simplified GO:BP results: ", nrow(fgsea_go_simplified), " terms\n", sep = "")
+
+                ## Save simplified results
+                results$gobp_simplified <- fgsea_go_simplified
+              }
+            }, error = function(e) {
+              cat("[WARN] GO:BP simplification failed: ", conditionMessage(e), "\n", sep = "")
+            })
           }
         }
       }, error = function(e) {
