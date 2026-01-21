@@ -5,7 +5,7 @@
 ## =========================================================
 ## This script performs complete analysis in one run:
 ## - Part 1: DESeq2 differential expression + QC + volcano + heatmap
-## - Part 2: ORA pathway analysis (GO:BP, KEGG, Reactome)
+## - Part 2: ORA pathway analysis (GO:BP, KEGG)
 ## - Part 3: FGSEA pathway analysis (GO:BP, KEGG, WikiPathways, Hallmark)
 ##
 ## Cells: 3T3-L1 adipocytes, KAT8KD vs CTL
@@ -39,7 +39,6 @@ required_bioc_pkgs <- c(
   "DOSE",
   "AnnotationDbi",
   "ComplexHeatmap",
-  "ReactomePA",
   "fgsea",
   "GO.db",
   "GOSemSim"
@@ -69,7 +68,6 @@ suppressPackageStartupMessages({
   library(AnnotationDbi)
   library(ComplexHeatmap)
   library(circlize)
-  library(ReactomePA)
   library(fgsea)
   library(GO.db)
   library(msigdbr)
@@ -352,11 +350,7 @@ tryCatch({
   png(file.path(outdir, "plots", disp_file), width = 1000, height = 800, res = 150)
   plotDispEsts(dds_cells, main = "DESeq2 Dispersion Estimates (Cells)")
   dev.off()
-  disp_file_pdf <- paste0("Dispersion_plot_cells_", run_tag, ".pdf")
-  pdf(file.path(outdir, "plots", disp_file_pdf), width = 6.67, height = 5.33)
-  plotDispEsts(dds_cells, main = "DESeq2 Dispersion Estimates (Cells)")
-  dev.off()
-  cat("[OK] Saved dispersion plot (PNG and PDF)\n")
+  cat("[OK] Saved dispersion plot\n")
 
   ## 4.8) VST transform for QC ------------------------------
   cat("\n=== VST FOR QC ===\n")
@@ -393,9 +387,7 @@ tryCatch({
 
   pca_file <- paste0("PCA_cells_VST_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", pca_file), plot = p_pca, width = 7, height = 6, dpi = 300)
-  pca_file_pdf <- paste0("PCA_cells_VST_", run_tag, ".pdf")
-  ggsave(file.path(outdir, "plots", pca_file_pdf), plot = p_pca, width = 7, height = 6, device = "pdf")
-  cat("Saved PCA plot (PNG and PDF)\n")
+  cat("Saved PCA plot\n")
 
   ## 4.10) MDS (VST) ----------------------------------------
   dist_mat <- dist(t(vst_mat))
@@ -420,9 +412,7 @@ tryCatch({
 
   mds_file <- paste0("MDS_cells_VST_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", mds_file), plot = p_mds, width = 7, height = 6, dpi = 300)
-  mds_file_pdf <- paste0("MDS_cells_VST_", run_tag, ".pdf")
-  ggsave(file.path(outdir, "plots", mds_file_pdf), plot = p_mds, width = 7, height = 6, device = "pdf")
-  cat("Saved MDS plot (PNG and PDF)\n")
+  cat("Saved MDS plot\n")
 
   ## 4.11) Differential expression: KAT8KD vs CTL ----------
   cat("\n=== DIFFERENTIAL EXPRESSION: KAT8KD vs CTL ===\n")
@@ -538,9 +528,7 @@ tryCatch({
 
   volcano_file <- paste0("Volcano_cells_KAT8KD_vs_CTL_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", volcano_file), plot = vol_cells, width = 8, height = 6, dpi = 300)
-  volcano_file_pdf <- paste0("Volcano_cells_KAT8KD_vs_CTL_", run_tag, ".pdf")
-  ggsave(file.path(outdir, "plots", volcano_file_pdf), plot = vol_cells, width = 8, height = 6, device = "pdf")
-  cat("Volcano saved (PNG and PDF)\n")
+  cat("Volcano saved\n")
 
   hero_volcano_file <- volcano_file
 
@@ -589,11 +577,7 @@ tryCatch({
       png(file.path(outdir, "plots", heat_file), width = 2000, height = 3000, res = 200)
       draw(heat_deg)
       dev.off()
-      heat_file_pdf <- paste0("Heatmap_cells_KAT8KD_vs_CTL_", run_tag, ".pdf")
-      pdf(file.path(outdir, "plots", heat_file_pdf), width = 10, height = 15)
-      draw(heat_deg)
-      dev.off()
-      cat("[OK] ComplexHeatmap saved (PNG and PDF)\n")
+      cat("[OK] ComplexHeatmap saved\n")
     }
   }
 
@@ -687,21 +671,6 @@ tryCatch({
       }
     }, error = function(e) cat("[WARN] KEGG failed\n"))
 
-    ## Reactome
-    tryCatch({
-      enrich_reactome <- if (!is.null(universe_entrez)) {
-        enrichPathway(gene = entrez_ids, organism = "mouse", pvalueCutoff = 0.1, qvalueCutoff = 0.2,
-                      minGSSize = 5, maxGSSize = 500, universe = universe_entrez, readable = TRUE)
-      } else {
-        enrichPathway(gene = entrez_ids, organism = "mouse", pvalueCutoff = 0.1, qvalueCutoff = 0.2,
-                      minGSSize = 5, maxGSSize = 500, readable = TRUE)
-      }
-      if (!is.null(enrich_reactome) && nrow(enrich_reactome@result) > 0) {
-        results$reactome <- enrich_reactome
-        cat("[OK] Reactome: ", nrow(enrich_reactome@result), " pathways\n", sep = "")
-      }
-    }, error = function(e) cat("[WARN] Reactome failed\n"))
-
     ## Save results
     if (length(results) > 0) {
       for (db_name in names(results)) {
@@ -749,10 +718,7 @@ tryCatch({
         plot_file <- paste0("ORA_barplot_", db_name, "_KAT8KD_vs_CTL_", direction, "_", run_tag, ".png")
         ggsave(file.path(outdir, "plots", plot_file), plot = p_pathway, width = 10,
                height = max(6, nrow(plot_data) * 0.3), dpi = 300, bg = "white")
-        plot_file_pdf <- paste0("ORA_barplot_", db_name, "_KAT8KD_vs_CTL_", direction, "_", run_tag, ".pdf")
-        ggsave(file.path(outdir, "plots", plot_file_pdf), plot = p_pathway, width = 10,
-               height = max(6, nrow(plot_data) * 0.3), device = "pdf")
-        cat("[OK] Saved pathway bar plot (PNG and PDF)\n")
+        cat("[OK] Saved pathway bar plot\n")
       }
     }
 
@@ -928,9 +894,7 @@ tryCatch({
 
             plot_file <- paste0("fgsea_plot_", db_name, "_KAT8KD_vs_CTL_", run_tag, ".png")
             ggsave(file.path(outdir, "plots", plot_file), plot = p_fgsea, width = 12, height = max(6, nrow(plot_data) * 0.35), dpi = 300, bg = "white")
-            plot_file_pdf <- paste0("fgsea_plot_", db_name, "_KAT8KD_vs_CTL_", run_tag, ".pdf")
-            ggsave(file.path(outdir, "plots", plot_file_pdf), plot = p_fgsea, width = 12, height = max(6, nrow(plot_data) * 0.35), device = "pdf")
-            cat("[OK] Saved fgsea bar plot (PNG and PDF)\n")
+            cat("[OK] Saved fgsea bar plot\n")
           }
         }
       }
