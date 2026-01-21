@@ -107,11 +107,13 @@ cat("[INFO] Genes of interest for focused plots: ", length(genes_of_interest), "
 ## -----------------------------
 ## Prefilter parameters (tune as needed)
 ## -----------------------------
-## Updated to more stringent cutoffs (2026-01-20)
-## Previous: min_count=5, min_samples=2 (too lenient)
-## Current: min_count=10, min_samples=3 (standard recommendation)
+## Updated to global filtering (2026-01-21)
+## Rationale: KAT8 is a chromatin modifier causing context-dependent chromatin remodeling
+##   - Global filtering captures genes with condition-specific accessibility changes
+##   - Per-group filtering removes genes showing KAT8-dependent ectopic expression
+##   - More appropriate for studying genome-wide chromatin effects
 prefilter_min_count <- 10
-prefilter_min_samples_per_group <- 3
+prefilter_min_samples <- 4  # total across experiment, not per group
 
 ## 4) Main logic --------------------------------------------
 hero_volcano_file <- NULL
@@ -272,17 +274,10 @@ tryCatch({
   ## - NO NEED to split dataset unless PCA/MDS shows unexpected batch structure
   ## - Current PCA/MDS shows clean separation by depot/sex (no batch effects)
   min_count <- prefilter_min_count
-  min_samples_per_group <- prefilter_min_samples_per_group
-  
-  group_levels <- levels(sample_annot$GroupFull)
-  keep <- vapply(group_levels, function(group_name) {
-    group_samples <- sample_annot$Sample[sample_annot$GroupFull == group_name]
-    if (length(group_samples) == 0) {
-      return(rep(FALSE, nrow(count_matrix_tissue)))
-    }
-    rowSums(count_matrix_tissue[, group_samples, drop = FALSE] >= min_count) >= min_samples_per_group
-  }, logical(nrow(count_matrix_tissue)))
-  keep <- rowSums(keep) > 0
+  min_samples <- prefilter_min_samples
+
+  ## Global filtering: keep genes with >= min_count in >= min_samples anywhere
+  keep <- rowSums(count_matrix_tissue >= min_count) >= min_samples
   
   ## Comprehensive filtering sanity check
   n_before <- nrow(count_matrix_tissue)
@@ -293,9 +288,10 @@ tryCatch({
   cat("\n==========================================================\n")
   cat("=== SANITY CHECK: GENE PREFILTERING ===\n")
   cat("==========================================================\n")
-  cat("Prefilter rule: counts >= ", min_count, " in >= ", min_samples_per_group,
-      " samples within any GroupFull stratum\n", sep = "")
-  cat("  (keeps genes expressed in at least one depot/sex/genotype group)\n\n")
+  cat("Prefilter rule: counts >= ", min_count, " in >= ", min_samples,
+      " samples (global filtering)\n", sep = "")
+  cat("  (keeps genes expressed anywhere in the experiment)\n")
+  cat("  Rationale: Chromatin modifier study - captures context-dependent accessibility\n\n")
   cat("Genes BEFORE prefiltering:  ", n_before, "\n", sep = "")
   cat("Genes AFTER prefiltering:   ", n_after, "\n", sep = "")
   cat("Genes REMOVED:              ", n_removed, " (", 100 - pct_retained, "%)\n", sep = "")
@@ -318,8 +314,8 @@ tryCatch({
     outlier_samples   = outlier_samples,
     prefilter_rule    = list(
       min_count       = min_count,
-      min_samples     = min_samples_per_group,
-      description     = "Keep genes with counts >= min_count in at least min_samples_per_group within any GroupFull stratum"
+      min_samples     = min_samples,
+      description     = "Keep genes with counts >= min_count in at least min_samples (global filtering for chromatin modifier study)"
     ),
     de_thresholds     = list(
       logFC_cutoff    = logFC_cut_tissue,
@@ -459,12 +455,7 @@ tryCatch({
   png(file.path(outdir, "plots", density_file), width = 1600, height = 900, res = 150)
   plot_density_vst_comparison(vst_mat_before, vst_mat)
   dev.off()
-  ## Save PDF version for publication
-  density_file_pdf <- paste0("VST_density_tissue_before_after_", run_tag, ".pdf")
-  pdf(file.path(outdir, "plots", density_file_pdf), width = 10.67, height = 6)
-  plot_density_vst_comparison(vst_mat_before, vst_mat)
-  dev.off()
-  cat("Saved VST density plot (before/after filtering) to ", file.path(outdir, "plots", density_file), " (PNG and PDF)\n")
+  cat("Saved VST density plot (before/after filtering) to ", file.path(outdir, "plots", density_file), "\n")
   
   ## 4.10) PCA (VST) ----------------------------------------
   pca_tissue <- prcomp(t(vst_mat), scale. = TRUE)
@@ -506,10 +497,7 @@ tryCatch({
   
   pca_file <- paste0("PCA_tissue_VST_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", pca_file), plot = p_pca, width = 8, height = 6, dpi = 300)
-  ## Save PDF version for publication
-  pca_file_pdf <- paste0("PCA_tissue_VST_", run_tag, ".pdf")
-  ggsave(file.path(outdir, "plots", pca_file_pdf), plot = p_pca, width = 8, height = 6, device = "pdf")
-  cat("Saved PCA plot to ", file.path(outdir, "plots", pca_file), " (PNG and PDF)\n")
+  cat("Saved PCA plot to ", file.path(outdir, "plots", pca_file), "\n")
   
   ## 4.11) MDS (VST) ----------------------------------------
   dist_mat <- dist(t(vst_mat))
@@ -547,10 +535,7 @@ tryCatch({
   
   mds_file <- paste0("MDS_tissue_VST_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", mds_file), plot = p_mds, width = 8, height = 6, dpi = 300)
-  ## Save PDF version for publication
-  mds_file_pdf <- paste0("MDS_tissue_VST_", run_tag, ".pdf")
-  ggsave(file.path(outdir, "plots", mds_file_pdf), plot = p_mds, width = 8, height = 6, device = "pdf")
-  cat("Saved MDS plot to ", file.path(outdir, "plots", mds_file), " (PNG and PDF)\n")
+  cat("Saved MDS plot to ", file.path(outdir, "plots", mds_file), "\n")
   
   ## 4.12) Contrasts ----------------------------------------
   contrast_definitions <- list(
@@ -702,10 +687,7 @@ tryCatch({
     
     volcano_file <- paste0("Volcano_tissue_", cn, "_", run_tag, ".png")
     ggsave(file.path(outdir, "plots", volcano_file), plot = vol_tissue, width = 8, height = 6, dpi = 300)
-    ## Save PDF version for publication
-    volcano_file_pdf <- paste0("Volcano_tissue_", cn, "_", run_tag, ".pdf")
-    ggsave(file.path(outdir, "plots", volcano_file_pdf), plot = vol_tissue, width = 8, height = 6, device = "pdf")
-    cat("Volcano saved: ", file.path(outdir, "plots", volcano_file), " (PNG and PDF)\n", sep = "")
+    cat("Volcano saved: ", file.path(outdir, "plots", volcano_file), "\n", sep = "")
     
     if (is.null(hero_volcano_file)) hero_volcano_file <- volcano_file
     
@@ -775,17 +757,12 @@ tryCatch({
             column_names_gp = gpar(fontsize = 8)
           )
           
-          ## Save PNG
+          ## Save
           heat_file <- paste0("Heatmap_tissue_", cn, "_", run_tag, ".png")
           png(file.path(outdir, "plots", heat_file), width = 2000, height = 3000, res = 200)
           draw(heat_deg)
           dev.off()
-          ## Save PDF version for publication
-          heat_file_pdf <- paste0("Heatmap_tissue_", cn, "_", run_tag, ".pdf")
-          pdf(file.path(outdir, "plots", heat_file_pdf), width = 10, height = 15)
-          draw(heat_deg)
-          dev.off()
-          cat("Heatmap saved: ", file.path(outdir, "plots", heat_file), " (PNG and PDF)\n", sep = "")
+          cat("Heatmap saved: ", file.path(outdir, "plots", heat_file), "\n", sep = "")
         } else {
           cat("Not enough valid genes for heatmap after scaling (", cn, ").\n", sep = "")
         }
@@ -943,17 +920,12 @@ tryCatch({
             )
           }
           
-          ## Save PNG
+          ## Save
           heat_goi_file <- paste0("Heatmap_GOI_", cn, "_", run_tag, ".png")
           png(file.path(outdir, "plots", heat_goi_file), width = 2000, height = 2500, res = 200)
           draw(heat_goi)
           dev.off()
-          ## Save PDF version for publication
-          heat_goi_file_pdf <- paste0("Heatmap_GOI_", cn, "_", run_tag, ".pdf")
-          pdf(file.path(outdir, "plots", heat_goi_file_pdf), width = 10, height = 12.5)
-          draw(heat_goi)
-          dev.off()
-          cat("[OK] ComplexHeatmap saved: ", heat_goi_file, " (PNG and PDF)\n", sep = "")
+          cat("[OK] ComplexHeatmap saved: ", heat_goi_file, "\n", sep = "")
           
         } else {
           cat("[WARN] Not enough genes of interest with valid values for heatmap\n")
@@ -1030,10 +1002,7 @@ tryCatch({
       
       ev_file <- paste0("EnhancedVolcano_GOI_", cn, "_", run_tag, ".png")
       ggsave(file.path(outdir, "plots", ev_file), plot = ev_plot, width = 10, height = 8, dpi = 300)
-      ## Save PDF version for publication
-      ev_file_pdf <- paste0("EnhancedVolcano_GOI_", cn, "_", run_tag, ".pdf")
-      ggsave(file.path(outdir, "plots", ev_file_pdf), plot = ev_plot, width = 10, height = 8, device = "pdf")
-      cat("[OK] EnhancedVolcano saved: ", ev_file, " (PNG and PDF)\n", sep = "")
+      cat("[OK] EnhancedVolcano saved: ", ev_file, "\n", sep = "")
       
     } else {
       cat("[WARN] No valid data for EnhancedVolcano\n")
@@ -1180,10 +1149,7 @@ tryCatch({
   
   volcano_overall_file <- paste0("Volcano_tissue_OVERALL_KD_vs_CTL_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", volcano_overall_file), plot = vol_overall, width = 8, height = 6, dpi = 300)
-  ## Save PDF version for publication
-  volcano_overall_file_pdf <- paste0("Volcano_tissue_OVERALL_KD_vs_CTL_", run_tag, ".pdf")
-  ggsave(file.path(outdir, "plots", volcano_overall_file_pdf), plot = vol_overall, width = 8, height = 6, device = "pdf")
-  cat("Volcano saved: ", file.path(outdir, "plots", volcano_overall_file), " (PNG and PDF)\n", sep = "")
+  cat("Volcano saved: ", file.path(outdir, "plots", volcano_overall_file), "\n", sep = "")
   
   ## Heatmap for overall contrast
   cat("\n--- Heatmap: OVERALL contrast ---\n")
@@ -1253,17 +1219,12 @@ tryCatch({
         column_names_side = "bottom"
       )
       
-      ## Save PNG
+      ## Save
       heat_overall_file <- paste0("Heatmap_tissue_OVERALL_KD_vs_CTL_", run_tag, ".png")
       png(file.path(outdir, "plots", heat_overall_file), width = 2400, height = 4200, res = 200)
       draw(heat_overall, padding = unit(c(2, 2, 2, 2), "mm"))  ## Standard padding
       dev.off()
-      ## Save PDF version for publication
-      heat_overall_file_pdf <- paste0("Heatmap_tissue_OVERALL_KD_vs_CTL_", run_tag, ".pdf")
-      pdf(file.path(outdir, "plots", heat_overall_file_pdf), width = 12, height = 21)
-      draw(heat_overall, padding = unit(c(2, 2, 2, 2), "mm"))  ## Standard padding
-      dev.off()
-      cat("Heatmap saved: ", file.path(outdir, "plots", heat_overall_file), " (PNG and PDF)\n", sep = "")
+      cat("Heatmap saved: ", file.path(outdir, "plots", heat_overall_file), "\n", sep = "")
     } else {
       cat("Not enough valid genes for overall heatmap after scaling.\n")
     }
