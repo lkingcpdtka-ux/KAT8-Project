@@ -752,29 +752,7 @@ tryCatch({
         plot_file_pdf <- paste0("ORA_barplot_", db_name, "_KAT8KD_vs_CTL_", direction, "_", run_tag, ".pdf")
         ggsave(file.path(outdir, "plots", plot_file_pdf), plot = p_pathway, width = 10,
                height = max(6, nrow(plot_data) * 0.3), device = "pdf")
-
-        ## Dotplot
-        color_low  <- if (direction == "Up") "#FFF5E1" else "#E6F2FF"
-        color_high <- if (direction == "Up") "#D55E00" else "#0072B2"
-
-        p_dotplot <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
-          geom_point(aes(size = Count, color = p.adjust)) +
-          scale_color_gradient(low = color_high, high = color_low, name = "Adjusted\np-value") +
-          scale_size_continuous(name = "Gene\nCount", range = c(3, 8)) +
-          labs(title = paste0("ORA ", toupper(db_name), " (", direction, ")"), x = "Gene Ratio", y = NULL) +
-          theme_classic(base_size = 12) +
-          theme(
-            plot.title = element_text(face = "bold", hjust = 0.5),
-            axis.text.y = element_text(size = 10, color = "black"),
-            panel.border = element_rect(color = "black", fill = NA, linewidth = 1)
-          )
-
-        dotplot_file <- paste0("ORA_dotplot_", db_name, "_KAT8KD_vs_CTL_", direction, "_", run_tag, ".png")
-        ggsave(file.path(outdir, "plots", dotplot_file), plot = p_dotplot, width = 10,
-               height = max(6, nrow(plot_data) * 0.3), dpi = 300, bg = "white")
-        dotplot_file_pdf <- paste0("ORA_dotplot_", db_name, "_KAT8KD_vs_CTL_", direction, "_", run_tag, ".pdf")
-        ggsave(file.path(outdir, "plots", dotplot_file_pdf), plot = p_dotplot, width = 10,
-               height = max(6, nrow(plot_data) * 0.3), device = "pdf")
+        cat("[OK] Saved pathway bar plot (PNG and PDF)\n")
       }
     }
 
@@ -952,21 +930,7 @@ tryCatch({
             ggsave(file.path(outdir, "plots", plot_file), plot = p_fgsea, width = 12, height = max(6, nrow(plot_data) * 0.35), dpi = 300, bg = "white")
             plot_file_pdf <- paste0("fgsea_plot_", db_name, "_KAT8KD_vs_CTL_", run_tag, ".pdf")
             ggsave(file.path(outdir, "plots", plot_file_pdf), plot = p_fgsea, width = 12, height = max(6, nrow(plot_data) * 0.35), device = "pdf")
-
-            ## Dotplot
-            p_dotplot <- ggplot(plot_data, aes(x = NES, y = pathway_label)) +
-              geom_point(aes(size = size, color = padj)) +
-              scale_color_gradient(low = "#D55E00", high = "#E6F2FF", name = "Adjusted\np-value") +
-              scale_size_continuous(name = "Pathway\nSize", range = c(3, 8)) +
-              labs(title = paste0("fgsea ", toupper(db_name)), x = "NES", y = NULL) +
-              theme_classic(base_size = 12) +
-              theme(plot.title = element_text(face = "bold", hjust = 0.5), panel.border = element_rect(color = "black", fill = NA, linewidth = 1)) +
-              geom_vline(xintercept = 0, linetype = "dashed", color = "grey50")
-
-            dotplot_file <- paste0("fgsea_dotplot_", db_name, "_KAT8KD_vs_CTL_", run_tag, ".png")
-            ggsave(file.path(outdir, "plots", dotplot_file), plot = p_dotplot, width = 12, height = max(6, nrow(plot_data) * 0.35), dpi = 300, bg = "white")
-            dotplot_file_pdf <- paste0("fgsea_dotplot_", db_name, "_KAT8KD_vs_CTL_", run_tag, ".pdf")
-            ggsave(file.path(outdir, "plots", dotplot_file_pdf), plot = p_dotplot, width = 12, height = max(6, nrow(plot_data) * 0.35), device = "pdf")
+            cat("[OK] Saved fgsea bar plot (PNG and PDF)\n")
           }
         }
       }
