@@ -143,10 +143,15 @@ cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
 ## =======================================================
 ## ANALYSIS PARAMETERS
 ## =======================================================
-prefilter_min_count <- 10
-prefilter_min_samples_per_group <- 3
-logFC_cut_cells <- 1
-fdr_cut_cells   <- 0.05
+## PREFILTER: Keep genes with sufficient expression in at least one group
+prefilter_min_count <- 10                # Minimum count threshold
+prefilter_min_samples_per_group <- 2     # Min samples per group (was 3, now 2 = 50% of 4 samples)
+
+## DIFFERENTIAL EXPRESSION THRESHOLDS
+## NOTE: Cell culture typically shows smaller fold changes than tissues
+## Using 0.5 (1.4-fold) instead of 1.0 (2-fold) to capture biologically relevant changes
+logFC_cut_cells <- 0.5   # |log2FC| threshold (was 1, changed to 0.5 for cells)
+fdr_cut_cells   <- 0.05  # FDR threshold (standard)
 
 ## ORA settings
 use_ora_universe <- FALSE
@@ -268,16 +273,29 @@ tryCatch({
   min_count <- prefilter_min_count
   min_samples_per_group <- prefilter_min_samples_per_group
 
-  keep <- rowSums(count_matrix_cells >= min_count) >= min_samples_per_group
+  ## IMPROVED PREFILTER: Require min samples in AT LEAST ONE GROUP (not total)
+  ## This is more appropriate for comparing two groups
+  ctl_samples_idx <- sample_annot$Sample[sample_annot$Genotype == "CTL"]
+  kat8kd_samples_idx <- sample_annot$Sample[sample_annot$Genotype == "KAT8KD"]
+
+  keep_ctl <- rowSums(count_matrix_cells[, ctl_samples_idx] >= min_count) >= min_samples_per_group
+  keep_kat8kd <- rowSums(count_matrix_cells[, kat8kd_samples_idx] >= min_count) >= min_samples_per_group
+  keep <- keep_ctl | keep_kat8kd
 
   n_before <- nrow(count_matrix_cells)
   n_after <- sum(keep)
+  n_ctl_only <- sum(keep_ctl & !keep_kat8kd)
+  n_kat8kd_only <- sum(!keep_ctl & keep_kat8kd)
+  n_both <- sum(keep_ctl & keep_kat8kd)
   pct_retained <- round(100 * n_after / n_before, 1)
 
-  cat("\n=== GENE PREFILTERING ===\n")
-  cat("Prefilter rule: counts >= ", min_count, " in >= ", min_samples_per_group, " samples\n", sep = "")
+  cat("\n=== GENE PREFILTERING (PER-GROUP) ===\n")
+  cat("Prefilter rule: counts >= ", min_count, " in >= ", min_samples_per_group, " samples in AT LEAST ONE group\n", sep = "")
   cat("Genes BEFORE: ", n_before, "\n", sep = "")
   cat("Genes AFTER:  ", n_after, " (", pct_retained, "%)\n", sep = "")
+  cat("  - Expressed in CTL only:    ", n_ctl_only, "\n", sep = "")
+  cat("  - Expressed in KAT8KD only: ", n_kat8kd_only, "\n", sep = "")
+  cat("  - Expressed in both:        ", n_both, "\n", sep = "")
 
   count_matrix_filt <- count_matrix_cells[keep, , drop = FALSE]
 
@@ -433,6 +451,28 @@ tryCatch({
   cat("DEGs (FDR < ", fdr_cut_cells, " AND |logFC| > ", logFC_cut_cells, "): ", n_up_both + n_down_both, "\n", sep = "")
   cat("  - Up-regulated:   ", n_up_both, "\n", sep = "")
   cat("  - Down-regulated: ", n_down_both, "\n", sep = "")
+
+  ## DIAGNOSTIC: Show fold change distribution for significant genes
+  cat("\n=== FOLD CHANGE DIAGNOSTICS (FDR < ", fdr_cut_cells, ") ===\n", sep = "")
+  sig_genes <- tt %>% dplyr::filter(adj.P.Val < fdr_cut_cells, !is.na(logFC))
+  if (nrow(sig_genes) > 0) {
+    cat("Among ", nrow(sig_genes), " FDR-significant genes:\n", sep = "")
+    cat("  logFC range: ", round(min(sig_genes$logFC, na.rm = TRUE), 2), " to ",
+        round(max(sig_genes$logFC, na.rm = TRUE), 2), "\n", sep = "")
+    cat("  |logFC| quantiles:\n")
+    abs_fc_quantiles <- quantile(abs(sig_genes$logFC), probs = c(0.25, 0.5, 0.75, 0.9, 0.95), na.rm = TRUE)
+    cat("    25%: ", round(abs_fc_quantiles[1], 2), "\n", sep = "")
+    cat("    50% (median): ", round(abs_fc_quantiles[2], 2), "\n", sep = "")
+    cat("    75%: ", round(abs_fc_quantiles[3], 2), "\n", sep = "")
+    cat("    90%: ", round(abs_fc_quantiles[4], 2), "\n", sep = "")
+    cat("    95%: ", round(abs_fc_quantiles[5], 2), "\n", sep = "")
+    cat("  Genes with |logFC| > 0.25: ", sum(abs(sig_genes$logFC) > 0.25, na.rm = TRUE), "\n", sep = "")
+    cat("  Genes with |logFC| > 0.5:  ", sum(abs(sig_genes$logFC) > 0.5, na.rm = TRUE), "\n", sep = "")
+    cat("  Genes with |logFC| > 1.0:  ", sum(abs(sig_genes$logFC) > 1.0, na.rm = TRUE), "\n", sep = "")
+    cat("  Genes with |logFC| > 2.0:  ", sum(abs(sig_genes$logFC) > 2.0, na.rm = TRUE), "\n", sep = "")
+  } else {
+    cat("No FDR-significant genes found!\n")
+  }
 
   ## 4.12) Volcano plot -------------------------------------
   cat("\n--- VOLCANO PLOT ---\n")
