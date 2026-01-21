@@ -658,7 +658,23 @@ tryCatch({
         table_file <- paste0("fgsea_", db_name, "_", contrast_name, "_", run_tag, ".csv")
         write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
         cat("[OK] Saved fgsea table: ", table_file, "\n", sep = "")
-        
+
+        ## Export leading edge genes as separate file for easier analysis
+        if ("leadingEdge" %in% colnames(sig_results) && nrow(sig_results) > 0) {
+          leading_edge_df <- sig_results %>%
+            dplyr::select(pathway, Description, NES, padj, leadingEdge) %>%
+            dplyr::arrange(padj) %>%
+            dplyr::mutate(
+              Direction = ifelse(NES > 0, "Up", "Down"),
+              N_LeadingEdge = sapply(strsplit(leadingEdge, ";"), length)
+            ) %>%
+            dplyr::select(pathway, Description, Direction, NES, padj, N_LeadingEdge, leadingEdge)
+
+          leading_edge_file <- paste0("fgsea_leadingEdge_", db_name, "_", contrast_name, "_", run_tag, ".csv")
+          write.csv(leading_edge_df, file = file.path(outdir, "tables", leading_edge_file), row.names = FALSE)
+          cat("[OK] Saved leading edge genes: ", leading_edge_file, "\n", sep = "")
+        }
+
         if (db_name == "gobp_simplified") {
           next
         }
@@ -711,7 +727,50 @@ tryCatch({
           plot_file <- paste0("fgsea_plot_", db_name, "_", contrast_name, "_", run_tag, ".png")
           ggsave(file.path(outdir, "plots", plot_file), plot = p_fgsea, width = 12,
                  height = max(6, nrow(plot_data) * 0.35), dpi = 300, bg = "white")
-          cat("[OK] Saved fgsea plot: ", plot_file, "\n", sep = "")
+          ## Save PDF version for publication
+          plot_file_pdf <- paste0("fgsea_plot_", db_name, "_", contrast_name, "_", run_tag, ".pdf")
+          ggsave(file.path(outdir, "plots", plot_file_pdf), plot = p_fgsea, width = 12,
+                 height = max(6, nrow(plot_data) * 0.35), device = "pdf")
+          cat("[OK] Saved fgsea plot: ", plot_file, " (PNG and PDF)\n", sep = "")
+
+          ## Create dotplot - shows NES and significance
+          p_dotplot <- ggplot(plot_data, aes(x = NES, y = pathway_label)) +
+            geom_point(aes(size = size, color = padj)) +
+            scale_color_gradient(
+              low  = "#D55E00",  # dark orange (significant)
+              high = "#E6F2FF",  # light blue (less significant)
+              name = "Adjusted\np-value"
+            ) +
+            scale_size_continuous(
+              name = "Pathway\nSize",
+              range = c(3, 8)
+            ) +
+            labs(
+              title = paste0("fgsea ", toupper(db_name), ": ", contrast_name),
+              x     = "Normalized Enrichment Score (NES)",
+              y     = NULL
+            ) +
+            theme_classic(base_size = 12) +
+            theme(
+              plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
+              axis.text.y = element_text(size = 10, color = "black"),
+              axis.text.x = element_text(size = 10, color = "black", face = "bold"),
+              axis.title.x = element_text(size = 12, face = "bold"),
+              legend.title = element_text(size = 10, face = "bold"),
+              legend.text = element_text(size = 9),
+              legend.position = "right",
+              panel.border = element_rect(color = "black", fill = NA, linewidth = 1)
+            ) +
+            geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5)
+
+          dotplot_file <- paste0("fgsea_dotplot_", db_name, "_", contrast_name, "_", run_tag, ".png")
+          ggsave(file.path(outdir, "plots", dotplot_file), plot = p_dotplot, width = 12,
+                 height = max(6, nrow(plot_data) * 0.35), dpi = 300, bg = "white")
+          ## Save PDF version for publication
+          dotplot_file_pdf <- paste0("fgsea_dotplot_", db_name, "_", contrast_name, "_", run_tag, ".pdf")
+          ggsave(file.path(outdir, "plots", dotplot_file_pdf), plot = p_dotplot, width = 12,
+                 height = max(6, nrow(plot_data) * 0.35), device = "pdf")
+          cat("[OK] Saved fgsea dotplot: ", dotplot_file, " (PNG and PDF)\n", sep = "")
         }
       }
     }
@@ -820,7 +879,18 @@ tryCatch({
   cat("\n======================================\n")
   cat("=== PART 3 (fgsea) COMPLETE ===\n")
   cat("======================================\n\n")
-  
+
+  ## 4.7) Save session info for reproducibility -------------
+  session_file <- file.path(outdir, "logs", paste0("sessionInfo_fgsea_", run_tag, ".txt"))
+  sink(session_file)
+  cat("=== R SESSION INFORMATION ===\n\n")
+  print(sessionInfo())
+  cat("\n=== KEY PACKAGE VERSIONS ===\n\n")
+  key_pkgs <- c("fgsea", "clusterProfiler", "org.Mm.eg.db", "dplyr", "ggplot2", "GOSemSim")
+  print(installed.packages()[intersect(key_pkgs, rownames(installed.packages())), c("Version", "Built")])
+  sink()
+  cat("[INFO] Session info saved to: ", session_file, "\n", sep = "")
+
 }, error = function(e) {
   
   cat("\n======================================\n")
