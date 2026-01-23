@@ -168,8 +168,9 @@ cat("\n=== CREATING VENN DIAGRAMS ===\n")
 
 ## Overall Venn (all DEGs)
 venn_all_file <- paste0("Venn_all_DEGs_", run_tag, ".png")
-png(file.path(outdir, "plots", venn_all_file), width = 2000, height = 2000, res = 300)
+png(file.path(outdir, "plots", venn_all_file), width = 2400, height = 2400, res = 300)
 grid.newpage()
+pushViewport(viewport(x = 0.5, y = 0.5, width = 0.9, height = 0.9))
 venn_all <- venn.diagram(
   x = list(
     iWAT = iwat_all_deg,
@@ -183,17 +184,22 @@ venn_all <- venn.diagram(
   cex = 1.5,
   cat.cex = 1.5,
   cat.fontface = "bold",
+  cat.pos = c(-20, 20),
+  cat.dist = c(0.05, 0.05),
   main = "All DEGs (FDR<0.05, |logFC|>1)",
-  main.cex = 1.5
+  main.cex = 1.5,
+  main.pos = c(0.5, 1.05)
 )
 grid.draw(venn_all)
+popViewport()
 dev.off()
 cat("[OK] Saved Venn diagram (all DEGs): ", venn_all_file, "\n", sep = "")
 
 ## UP-regulated Venn
 venn_up_file <- paste0("Venn_UP_DEGs_", run_tag, ".png")
-png(file.path(outdir, "plots", venn_up_file), width = 2000, height = 2000, res = 300)
+png(file.path(outdir, "plots", venn_up_file), width = 2400, height = 2400, res = 300)
 grid.newpage()
+pushViewport(viewport(x = 0.5, y = 0.5, width = 0.9, height = 0.9))
 venn_up <- venn.diagram(
   x = list(
     iWAT_UP = iwat_up,
@@ -207,17 +213,22 @@ venn_up <- venn.diagram(
   cex = 1.5,
   cat.cex = 1.5,
   cat.fontface = "bold",
+  cat.pos = c(-20, 20),
+  cat.dist = c(0.05, 0.05),
   main = "UP-regulated DEGs",
-  main.cex = 1.5
+  main.cex = 1.5,
+  main.pos = c(0.5, 1.05)
 )
 grid.draw(venn_up)
+popViewport()
 dev.off()
 cat("[OK] Saved Venn diagram (UP DEGs): ", venn_up_file, "\n", sep = "")
 
 ## DOWN-regulated Venn
 venn_down_file <- paste0("Venn_DOWN_DEGs_", run_tag, ".png")
-png(file.path(outdir, "plots", venn_down_file), width = 2000, height = 2000, res = 300)
+png(file.path(outdir, "plots", venn_down_file), width = 2400, height = 2400, res = 300)
 grid.newpage()
+pushViewport(viewport(x = 0.5, y = 0.5, width = 0.9, height = 0.9))
 venn_down <- venn.diagram(
   x = list(
     iWAT_DOWN = iwat_down,
@@ -231,10 +242,14 @@ venn_down <- venn.diagram(
   cex = 1.5,
   cat.cex = 1.5,
   cat.fontface = "bold",
+  cat.pos = c(-20, 20),
+  cat.dist = c(0.05, 0.05),
   main = "DOWN-regulated DEGs",
-  main.cex = 1.5
+  main.cex = 1.5,
+  main.pos = c(0.5, 1.05)
 )
 grid.draw(venn_down)
+popViewport()
 dev.off()
 cat("[OK] Saved Venn diagram (DOWN DEGs): ", venn_down_file, "\n", sep = "")
 
@@ -309,11 +324,14 @@ p_scatter <- ggplot(de_merged, aes(x = logFC_iWAT, y = logFC_gWAT, color = sig_c
   ) +
   annotate(
     "text",
-    x = Inf, y = Inf,
+    x = -Inf, y = Inf,
     label = paste0("Pearson r = ", round(cor_pearson, 3), "\nSpearman ρ = ", round(cor_spearman, 3)),
-    hjust = 1.1, vjust = 1.5,
+    hjust = -0.1, vjust = 1.5,
     size = 4,
-    fontface = "bold"
+    fontface = "bold",
+    color = "black",
+    fill = "white",
+    alpha = 0.8
   ) +
   theme_bw(base_size = 14) +
   theme(
