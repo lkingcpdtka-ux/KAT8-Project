@@ -5,7 +5,7 @@
 ## =========================================================
 ## This script performs complete analysis in one run:
 ## - Part 1: DESeq2 differential expression + QC + volcano + heatmap
-## - Part 2: ORA pathway analysis (GO:BP, KEGG, Reactome)
+## - Part 2: ORA pathway analysis (GO:BP, KEGG)
 ## - Part 3: FGSEA pathway analysis (GO:BP, KEGG, WikiPathways, Hallmark)
 ##
 ## Cells: 3T3-L1 adipocytes, KAT8KD vs CTL
@@ -39,7 +39,6 @@ required_bioc_pkgs <- c(
   "DOSE",
   "AnnotationDbi",
   "ComplexHeatmap",
-  "ReactomePA",
   "fgsea",
   "GO.db",
   "GOSemSim"
@@ -69,7 +68,6 @@ suppressPackageStartupMessages({
   library(AnnotationDbi)
   library(ComplexHeatmap)
   library(circlize)
-  library(ReactomePA)
   library(fgsea)
   library(GO.db)
   library(msigdbr)
@@ -143,10 +141,15 @@ cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
 ## =======================================================
 ## ANALYSIS PARAMETERS
 ## =======================================================
-prefilter_min_count <- 10
-prefilter_min_samples_per_group <- 3
-logFC_cut_cells <- 1
-fdr_cut_cells   <- 0.05
+## PREFILTER: Keep genes with sufficient expression in at least one group
+prefilter_min_count <- 10                # Minimum count threshold
+prefilter_min_samples_per_group <- 2     # Min samples per group (was 3, now 2 = 50% of 4 samples)
+
+## DIFFERENTIAL EXPRESSION THRESHOLDS
+## NOTE: Cell culture typically shows smaller fold changes than tissues
+## Using 0.5 (1.4-fold) instead of 1.0 (2-fold) to capture biologically relevant changes
+logFC_cut_cells <- 0.5   # |log2FC| threshold (was 1, changed to 0.5 for cells)
+fdr_cut_cells   <- 0.05  # FDR threshold (standard)
 
 ## ORA settings
 use_ora_universe <- FALSE
@@ -268,16 +271,29 @@ tryCatch({
   min_count <- prefilter_min_count
   min_samples_per_group <- prefilter_min_samples_per_group
 
-  keep <- rowSums(count_matrix_cells >= min_count) >= min_samples_per_group
+  ## IMPROVED PREFILTER: Require min samples in AT LEAST ONE GROUP (not total)
+  ## This is more appropriate for comparing two groups
+  ctl_samples_idx <- sample_annot$Sample[sample_annot$Genotype == "CTL"]
+  kat8kd_samples_idx <- sample_annot$Sample[sample_annot$Genotype == "KAT8KD"]
+
+  keep_ctl <- rowSums(count_matrix_cells[, ctl_samples_idx] >= min_count) >= min_samples_per_group
+  keep_kat8kd <- rowSums(count_matrix_cells[, kat8kd_samples_idx] >= min_count) >= min_samples_per_group
+  keep <- keep_ctl | keep_kat8kd
 
   n_before <- nrow(count_matrix_cells)
   n_after <- sum(keep)
+  n_ctl_only <- sum(keep_ctl & !keep_kat8kd)
+  n_kat8kd_only <- sum(!keep_ctl & keep_kat8kd)
+  n_both <- sum(keep_ctl & keep_kat8kd)
   pct_retained <- round(100 * n_after / n_before, 1)
 
-  cat("\n=== GENE PREFILTERING ===\n")
-  cat("Prefilter rule: counts >= ", min_count, " in >= ", min_samples_per_group, " samples\n", sep = "")
+  cat("\n=== GENE PREFILTERING (PER-GROUP) ===\n")
+  cat("Prefilter rule: counts >= ", min_count, " in >= ", min_samples_per_group, " samples in AT LEAST ONE group\n", sep = "")
   cat("Genes BEFORE: ", n_before, "\n", sep = "")
   cat("Genes AFTER:  ", n_after, " (", pct_retained, "%)\n", sep = "")
+  cat("  - Expressed in CTL only:    ", n_ctl_only, "\n", sep = "")
+  cat("  - Expressed in KAT8KD only: ", n_kat8kd_only, "\n", sep = "")
+  cat("  - Expressed in both:        ", n_both, "\n", sep = "")
 
   count_matrix_filt <- count_matrix_cells[keep, , drop = FALSE]
 
@@ -334,11 +350,7 @@ tryCatch({
   png(file.path(outdir, "plots", disp_file), width = 1000, height = 800, res = 150)
   plotDispEsts(dds_cells, main = "DESeq2 Dispersion Estimates (Cells)")
   dev.off()
-  disp_file_pdf <- paste0("Dispersion_plot_cells_", run_tag, ".pdf")
-  pdf(file.path(outdir, "plots", disp_file_pdf), width = 6.67, height = 5.33)
-  plotDispEsts(dds_cells, main = "DESeq2 Dispersion Estimates (Cells)")
-  dev.off()
-  cat("[OK] Saved dispersion plot (PNG and PDF)\n")
+  cat("[OK] Saved dispersion plot\n")
 
   ## 4.8) VST transform for QC ------------------------------
   cat("\n=== VST FOR QC ===\n")
@@ -375,9 +387,7 @@ tryCatch({
 
   pca_file <- paste0("PCA_cells_VST_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", pca_file), plot = p_pca, width = 7, height = 6, dpi = 300)
-  pca_file_pdf <- paste0("PCA_cells_VST_", run_tag, ".pdf")
-  ggsave(file.path(outdir, "plots", pca_file_pdf), plot = p_pca, width = 7, height = 6, device = "pdf")
-  cat("Saved PCA plot (PNG and PDF)\n")
+  cat("Saved PCA plot\n")
 
   ## 4.10) MDS (VST) ----------------------------------------
   dist_mat <- dist(t(vst_mat))
@@ -402,9 +412,7 @@ tryCatch({
 
   mds_file <- paste0("MDS_cells_VST_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", mds_file), plot = p_mds, width = 7, height = 6, dpi = 300)
-  mds_file_pdf <- paste0("MDS_cells_VST_", run_tag, ".pdf")
-  ggsave(file.path(outdir, "plots", mds_file_pdf), plot = p_mds, width = 7, height = 6, device = "pdf")
-  cat("Saved MDS plot (PNG and PDF)\n")
+  cat("Saved MDS plot\n")
 
   ## 4.11) Differential expression: KAT8KD vs CTL ----------
   cat("\n=== DIFFERENTIAL EXPRESSION: KAT8KD vs CTL ===\n")
@@ -433,6 +441,28 @@ tryCatch({
   cat("DEGs (FDR < ", fdr_cut_cells, " AND |logFC| > ", logFC_cut_cells, "): ", n_up_both + n_down_both, "\n", sep = "")
   cat("  - Up-regulated:   ", n_up_both, "\n", sep = "")
   cat("  - Down-regulated: ", n_down_both, "\n", sep = "")
+
+  ## DIAGNOSTIC: Show fold change distribution for significant genes
+  cat("\n=== FOLD CHANGE DIAGNOSTICS (FDR < ", fdr_cut_cells, ") ===\n", sep = "")
+  sig_genes <- tt %>% dplyr::filter(adj.P.Val < fdr_cut_cells, !is.na(logFC))
+  if (nrow(sig_genes) > 0) {
+    cat("Among ", nrow(sig_genes), " FDR-significant genes:\n", sep = "")
+    cat("  logFC range: ", round(min(sig_genes$logFC, na.rm = TRUE), 2), " to ",
+        round(max(sig_genes$logFC, na.rm = TRUE), 2), "\n", sep = "")
+    cat("  |logFC| quantiles:\n")
+    abs_fc_quantiles <- quantile(abs(sig_genes$logFC), probs = c(0.25, 0.5, 0.75, 0.9, 0.95), na.rm = TRUE)
+    cat("    25%: ", round(abs_fc_quantiles[1], 2), "\n", sep = "")
+    cat("    50% (median): ", round(abs_fc_quantiles[2], 2), "\n", sep = "")
+    cat("    75%: ", round(abs_fc_quantiles[3], 2), "\n", sep = "")
+    cat("    90%: ", round(abs_fc_quantiles[4], 2), "\n", sep = "")
+    cat("    95%: ", round(abs_fc_quantiles[5], 2), "\n", sep = "")
+    cat("  Genes with |logFC| > 0.25: ", sum(abs(sig_genes$logFC) > 0.25, na.rm = TRUE), "\n", sep = "")
+    cat("  Genes with |logFC| > 0.5:  ", sum(abs(sig_genes$logFC) > 0.5, na.rm = TRUE), "\n", sep = "")
+    cat("  Genes with |logFC| > 1.0:  ", sum(abs(sig_genes$logFC) > 1.0, na.rm = TRUE), "\n", sep = "")
+    cat("  Genes with |logFC| > 2.0:  ", sum(abs(sig_genes$logFC) > 2.0, na.rm = TRUE), "\n", sep = "")
+  } else {
+    cat("No FDR-significant genes found!\n")
+  }
 
   ## 4.12) Volcano plot -------------------------------------
   cat("\n--- VOLCANO PLOT ---\n")
@@ -498,9 +528,7 @@ tryCatch({
 
   volcano_file <- paste0("Volcano_cells_KAT8KD_vs_CTL_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", volcano_file), plot = vol_cells, width = 8, height = 6, dpi = 300)
-  volcano_file_pdf <- paste0("Volcano_cells_KAT8KD_vs_CTL_", run_tag, ".pdf")
-  ggsave(file.path(outdir, "plots", volcano_file_pdf), plot = vol_cells, width = 8, height = 6, device = "pdf")
-  cat("Volcano saved (PNG and PDF)\n")
+  cat("Volcano saved\n")
 
   hero_volcano_file <- volcano_file
 
@@ -549,11 +577,7 @@ tryCatch({
       png(file.path(outdir, "plots", heat_file), width = 2000, height = 3000, res = 200)
       draw(heat_deg)
       dev.off()
-      heat_file_pdf <- paste0("Heatmap_cells_KAT8KD_vs_CTL_", run_tag, ".pdf")
-      pdf(file.path(outdir, "plots", heat_file_pdf), width = 10, height = 15)
-      draw(heat_deg)
-      dev.off()
-      cat("[OK] ComplexHeatmap saved (PNG and PDF)\n")
+      cat("[OK] ComplexHeatmap saved\n")
     }
   }
 
@@ -647,21 +671,6 @@ tryCatch({
       }
     }, error = function(e) cat("[WARN] KEGG failed\n"))
 
-    ## Reactome
-    tryCatch({
-      enrich_reactome <- if (!is.null(universe_entrez)) {
-        enrichPathway(gene = entrez_ids, organism = "mouse", pvalueCutoff = 0.1, qvalueCutoff = 0.2,
-                      minGSSize = 5, maxGSSize = 500, universe = universe_entrez, readable = TRUE)
-      } else {
-        enrichPathway(gene = entrez_ids, organism = "mouse", pvalueCutoff = 0.1, qvalueCutoff = 0.2,
-                      minGSSize = 5, maxGSSize = 500, readable = TRUE)
-      }
-      if (!is.null(enrich_reactome) && nrow(enrich_reactome@result) > 0) {
-        results$reactome <- enrich_reactome
-        cat("[OK] Reactome: ", nrow(enrich_reactome@result), " pathways\n", sep = "")
-      }
-    }, error = function(e) cat("[WARN] Reactome failed\n"))
-
     ## Save results
     if (length(results) > 0) {
       for (db_name in names(results)) {
@@ -709,32 +718,7 @@ tryCatch({
         plot_file <- paste0("ORA_barplot_", db_name, "_KAT8KD_vs_CTL_", direction, "_", run_tag, ".png")
         ggsave(file.path(outdir, "plots", plot_file), plot = p_pathway, width = 10,
                height = max(6, nrow(plot_data) * 0.3), dpi = 300, bg = "white")
-        plot_file_pdf <- paste0("ORA_barplot_", db_name, "_KAT8KD_vs_CTL_", direction, "_", run_tag, ".pdf")
-        ggsave(file.path(outdir, "plots", plot_file_pdf), plot = p_pathway, width = 10,
-               height = max(6, nrow(plot_data) * 0.3), device = "pdf")
-
-        ## Dotplot
-        color_low  <- if (direction == "Up") "#FFF5E1" else "#E6F2FF"
-        color_high <- if (direction == "Up") "#D55E00" else "#0072B2"
-
-        p_dotplot <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
-          geom_point(aes(size = Count, color = p.adjust)) +
-          scale_color_gradient(low = color_high, high = color_low, name = "Adjusted\np-value") +
-          scale_size_continuous(name = "Gene\nCount", range = c(3, 8)) +
-          labs(title = paste0("ORA ", toupper(db_name), " (", direction, ")"), x = "Gene Ratio", y = NULL) +
-          theme_classic(base_size = 12) +
-          theme(
-            plot.title = element_text(face = "bold", hjust = 0.5),
-            axis.text.y = element_text(size = 10, color = "black"),
-            panel.border = element_rect(color = "black", fill = NA, linewidth = 1)
-          )
-
-        dotplot_file <- paste0("ORA_dotplot_", db_name, "_KAT8KD_vs_CTL_", direction, "_", run_tag, ".png")
-        ggsave(file.path(outdir, "plots", dotplot_file), plot = p_dotplot, width = 10,
-               height = max(6, nrow(plot_data) * 0.3), dpi = 300, bg = "white")
-        dotplot_file_pdf <- paste0("ORA_dotplot_", db_name, "_KAT8KD_vs_CTL_", direction, "_", run_tag, ".pdf")
-        ggsave(file.path(outdir, "plots", dotplot_file_pdf), plot = p_dotplot, width = 10,
-               height = max(6, nrow(plot_data) * 0.3), device = "pdf")
+        cat("[OK] Saved pathway bar plot\n")
       }
     }
 
@@ -910,23 +894,7 @@ tryCatch({
 
             plot_file <- paste0("fgsea_plot_", db_name, "_KAT8KD_vs_CTL_", run_tag, ".png")
             ggsave(file.path(outdir, "plots", plot_file), plot = p_fgsea, width = 12, height = max(6, nrow(plot_data) * 0.35), dpi = 300, bg = "white")
-            plot_file_pdf <- paste0("fgsea_plot_", db_name, "_KAT8KD_vs_CTL_", run_tag, ".pdf")
-            ggsave(file.path(outdir, "plots", plot_file_pdf), plot = p_fgsea, width = 12, height = max(6, nrow(plot_data) * 0.35), device = "pdf")
-
-            ## Dotplot
-            p_dotplot <- ggplot(plot_data, aes(x = NES, y = pathway_label)) +
-              geom_point(aes(size = size, color = padj)) +
-              scale_color_gradient(low = "#D55E00", high = "#E6F2FF", name = "Adjusted\np-value") +
-              scale_size_continuous(name = "Pathway\nSize", range = c(3, 8)) +
-              labs(title = paste0("fgsea ", toupper(db_name)), x = "NES", y = NULL) +
-              theme_classic(base_size = 12) +
-              theme(plot.title = element_text(face = "bold", hjust = 0.5), panel.border = element_rect(color = "black", fill = NA, linewidth = 1)) +
-              geom_vline(xintercept = 0, linetype = "dashed", color = "grey50")
-
-            dotplot_file <- paste0("fgsea_dotplot_", db_name, "_KAT8KD_vs_CTL_", run_tag, ".png")
-            ggsave(file.path(outdir, "plots", dotplot_file), plot = p_dotplot, width = 12, height = max(6, nrow(plot_data) * 0.35), dpi = 300, bg = "white")
-            dotplot_file_pdf <- paste0("fgsea_dotplot_", db_name, "_KAT8KD_vs_CTL_", run_tag, ".pdf")
-            ggsave(file.path(outdir, "plots", dotplot_file_pdf), plot = p_dotplot, width = 12, height = max(6, nrow(plot_data) * 0.35), device = "pdf")
+            cat("[OK] Saved fgsea bar plot\n")
           }
         }
       }
