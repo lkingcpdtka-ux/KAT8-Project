@@ -349,6 +349,7 @@ tryCatch({
     "--- DE Thresholds ---",
     paste0("  |log2FC| cutoff: ", params$de_thresholds$logFC_cutoff),
     paste0("  FDR cutoff: ", params$de_thresholds$fdr_cutoff),
+    paste0("  Description: FDR-corrected p-value threshold for differential expression; logFC threshold filters for biological significance"),
     "",
     "--- VST ---",
     paste0("  blind: ", params$vst$blind),
@@ -357,9 +358,21 @@ tryCatch({
     "--- Volcano Plot Labels ---",
     paste0("  Top N by FDR (per direction): ", params$volcano_labels$top_n_by_fdr),
     paste0("  Top N by |logFC| (per direction): ", params$volcano_labels$top_n_by_fc),
+    paste0("  Description: Number of top genes labeled in volcano plots, selected by smallest FDR and largest fold change per direction"),
     "",
     "--- Heatmap ---",
-    paste0("  Max genes displayed: ", params$heatmap_max_genes)
+    paste0("  Max genes displayed: ", params$heatmap_max_genes),
+    paste0("  Clustering: Hierarchical clustering on rows (genes), split by genotype on columns"),
+    paste0("  Scaling: Z-score normalization (row-wise)"),
+    paste0("  Color scheme: Teal (down) -> white (neutral) -> orange (up)"),
+    "",
+    "--- ComplexHeatmap (Genes of Interest) ---",
+    paste0("  Gene order: First contrast (iWAT_F) establishes reference clustering order"),
+    paste0("  Description: All subsequent contrasts use same gene order for direct comparison"),
+    paste0("  Normalization: Z-score relative to control group means"),
+    "",
+    "NOTE: This is Part 1 only (gene-level analysis).",
+    "For ORA and FGSEA parameters, see part2_ora.R and part3_fgsea.R or comprehensive scripts."
   )
   writeLines(params_lines, con = params_file)
   cat("Saved params to ", params_file, "\n")

@@ -131,6 +131,88 @@ run_kegg <- TRUE          # KEGG pathways (curated, metabolic focus)
 run_wikipathways <- TRUE  # WikiPathways (community-curated)
 run_hallmark <- TRUE      # MSigDB Hallmark (50 well-defined signatures)
 
+## ============================================================
+## COMPLETE FGSEA PARAMETER DOCUMENTATION
+## ============================================================
+## This section documents all fgsea parameters for reference
+##
+## METHOD: Fast Gene Set Enrichment Analysis (fgsea)
+##   - Permutation-based enrichment test (Korotkevich et al. 2021)
+##   - Tests if pathway genes are enriched at top/bottom of ranked list
+##   - Uses ALL genes (not just DEGs) - more sensitive than ORA
+##   - Calculates Enrichment Score (ES) and Normalized ES (NES)
+##
+## GENE RANKING METRIC:
+##   - DESeq2 Wald statistic (RECOMMENDED)
+##   - Wald stat = log2FC / lfcSE (combines effect size + significance)
+##   - Positive = up-regulated, Negative = down-regulated
+##   - Alternative: -log10(pvalue) * sign(logFC) (mentioned in troubleshooting)
+##
+## FGSEA CORE PARAMETERS:
+##   - minSize: 5 (minimum genes in pathway, smaller pathways excluded)
+##   - maxSize: 500 (maximum genes in pathway, larger pathways excluded)
+##   - nPermSimple: 10000 (number of permutations for p-value calculation)
+##     * More permutations = more accurate p-values but slower
+##     * 10000 is standard; can increase to 50000 for more power
+##   - scoreType: "std" (default, standard enrichment score)
+##
+## SIGNIFICANCE THRESHOLDS:
+##   - FDR cutoff: 0.05 (Benjamini-Hochberg adjusted p-value)
+##   - No logFC threshold (fgsea uses continuous ranking, not cutoffs)
+##
+## DATABASES ANALYZED:
+##   - GO:BP: Gene Ontology Biological Process
+##     * Source: org.Mm.eg.db (via AnnotationDbi)
+##     * Size: ~17,000+ terms (large, comprehensive)
+##     * Simplification: Yes (cutoff=0.7, semantic similarity via GOSemSim)
+##   - KEGG: Kyoto Encyclopedia of Genes and Genomes
+##     * Source: msigdbr (MSigDB C2 collection, KEGG_ prefix)
+##     * Size: ~180 pathways (curated, metabolic focus)
+##   - WikiPathways: Community-curated pathways
+##     * Source: msigdbr (C2:CP:WIKIPATHWAYS)
+##     * Size: ~600+ pathways (diverse biological processes)
+##   - Hallmark: MSigDB Hallmark gene sets
+##     * Source: msigdbr (H collection)
+##     * Size: 50 pathways (well-defined biological states/processes)
+##
+## GO:BP SIMPLIFICATION (OPTIONAL):
+##   - Enabled: simplify_go_bp = TRUE
+##   - Cutoff: 0.7 (semantic similarity threshold)
+##   - Method: GOSemSim::simplify() from clusterProfiler
+##   - Purpose: Reduce redundancy in GO:BP results
+##   - Keeps most significant term among similar ones
+##
+## VISUALIZATION:
+##   - Bar plots: Top N pathways per direction (up/down-regulated)
+##   - top_n_per_direction: 10 (shows top 10 up + top 10 down)
+##   - X-axis: NES (Normalized Enrichment Score)
+##     * Positive NES = pathway enriched in up-regulated genes
+##     * Negative NES = pathway enriched in down-regulated genes
+##   - Color: Direction-specific (orange=up, blue=down)
+##
+## OUTPUT FILES:
+##   - fgsea_[database]_[contrast].csv: All significant pathways (FDR<0.05)
+##   - fgsea_leadingEdge_[database]_[contrast].csv: Core enrichment genes
+##   - fgsea_plot_[database]_[contrast].png: Bar plot visualization
+##
+## LEADING EDGE:
+##   - Core subset of pathway genes driving enrichment signal
+##   - Genes that appear before running ES peak in ranked list
+##   - Saved as semicolon-separated strings in CSV
+##
+## SANITY TRACKING:
+##   - fgsea_sanity_tracker logs: contrast, database,
+##     N_Input_Genes, N_Pathways_Tested, N_Sig_Pathways,
+##     N_Sig_Up, N_Sig_Down
+##
+## KEY DIFFERENCES FROM ORA:
+##   - Uses continuous gene ranking (not discrete DEG list)
+##   - Tests enrichment across entire ranked list
+##   - More sensitive to subtle coordinated changes
+##   - Doesn't require hard FDR/logFC cutoffs for input
+##   - Can detect pathways with many small changes
+## ============================================================
+
 log_time <- function(message) {
   cat("[TIME] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), " ", message, "\n", sep = "")
 }

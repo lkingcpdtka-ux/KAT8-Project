@@ -114,6 +114,60 @@ fdr_cut   <- 0.05
 use_universe <- FALSE  ## Change to TRUE for statistical rigor
 ## ============================================================
 
+## ============================================================
+## COMPLETE ORA PARAMETER DOCUMENTATION
+## ============================================================
+## This section documents all ORA parameters for reference
+##
+## METHOD: Over-Representation Analysis (Fisher's exact test)
+##   - Tests if DEG list has more genes in a pathway than expected by chance
+##   - Uses hypergeometric distribution
+##   - Requires discrete gene lists (up/down analyzed separately)
+##
+## INPUT GENE SELECTION:
+##   - logFC_cut: 1 (genes with |log2FC| > 1, i.e., 2-fold change)
+##   - fdr_cut: 0.05 (Benjamini-Hochberg adjusted p-value)
+##   - Minimum genes for analysis: 5 (pathways with <5 genes skipped)
+##
+## ENRICHMENT PARAMETERS (GO:BP):
+##   - pvalueCutoff: 0.1 (initial p-value threshold for enrichment)
+##   - qvalueCutoff: 0.2 (initial FDR threshold for enrichment)
+##   - Final reporting cutoff: fdr_cut (0.05, more stringent)
+##   - Gene set size: minGSSize=5, maxGSSize=500
+##   - Simplification: Yes (cutoff=0.7, removes redundant GO terms)
+##   - readable: TRUE (converts Entrez IDs back to gene symbols)
+##
+## ENRICHMENT PARAMETERS (KEGG):
+##   - pvalueCutoff: 0.1
+##   - qvalueCutoff: 0.2
+##   - organism: "mmu" (Mus musculus)
+##   - Gene set size: minGSSize=5, maxGSSize=500
+##
+## GENE ID CONVERSION:
+##   - Input: Gene symbols (SYMBOL)
+##   - Conversion: SYMBOL -> ENTREZID (via org.Mm.eg.db)
+##   - Typical mapping rate: ~91% (excellent)
+##   - Failed mappings are dropped
+##
+## BACKGROUND/UNIVERSE:
+##   - If use_universe=TRUE: All genes tested by DESeq2
+##   - If use_universe=FALSE: All genes in organism annotation
+##   - Universe also converted to Entrez IDs
+##
+## DATABASES:
+##   - GO:BP: Gene Ontology Biological Process (hierarchical, comprehensive)
+##   - KEGG: Kyoto Encyclopedia of Genes and Genomes (curated pathways)
+##
+## OUTPUT:
+##   - CSV tables: Significant pathways (FDR < 0.05)
+##   - Bar plots: Top 15 pathways per direction/database
+##   - Columns: pathway, description, GeneRatio, p.adjust, genes, etc.
+##
+## SANITY TRACKING:
+##   - pathway_sanity_tracker logs: contrast, direction, database,
+##     N_Input_Genes, N_Mapped_Entrez, N_Universe_Entrez, N_Sig_Pathways
+## ============================================================
+
 ## Sanity check tracker
 pathway_sanity_tracker <- data.frame(
   Contrast = character(),
