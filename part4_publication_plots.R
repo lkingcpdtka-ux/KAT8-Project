@@ -421,10 +421,10 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   mat[mat > lfc_clip] <- lfc_clip
   mat[mat < -lfc_clip] <- -lfc_clip
 
-  ## Color scale: blue-white-red, centered at 0
+  ## Color scale: blue-white-orange, centered at 0
   col_fun <- colorRamp2(
     c(-lfc_clip, 0, lfc_clip),
-    c("#2166AC", "white", "#B2182B")  ## Blue-white-red
+    c("#2166AC", "white", "#E69F00")  ## Blue-white-orange
   )
 
   ## Parameter caption
