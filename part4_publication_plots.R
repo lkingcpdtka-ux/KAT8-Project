@@ -154,6 +154,12 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
   plot_title <- paste0(database, " Enrichment\n(", contrast_name, ", ", direction_label, ")")
 
+  ## Parameter caption for bottom of plot
+  param_caption <- paste0(
+    "Cutoffs: FDR < 0.05 | Count \u2265 3 | Top ", top_n, " pathways | ",
+    "Ordered by adj. p-value"
+  )
+
   ## Create dot plot
   ## Size = GeneRatio, Color = -log10(FDR)
   p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
@@ -176,7 +182,8 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
     labs(
       title = plot_title,
       x = "Gene Ratio",
-      y = NULL
+      y = NULL,
+      caption = param_caption
     ) +
     theme_bw(base_size = 10) +
     theme(
@@ -199,6 +206,8 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
       legend.key.size = unit(0.4, "cm"),
       legend.background = element_blank(),
       legend.box.background = element_blank(),
+      ## Caption (parameters)
+      plot.caption = element_text(size = 7, color = "grey40", hjust = 0.5, margin = margin(t = 8)),
       ## Margins
       plot.margin = margin(10, 10, 10, 10)
     ) +
@@ -253,306 +262,275 @@ for (ora_file in kegg_files) {
 
 
 ## ============================================================
-## SECTION 2: GROUPED HEATMAPS WITH TWO COLUMNS
+## SECTION 2: PATHWAY-BASED HEATMAPS WITH LOG2FC
 ## ============================================================
-## Shows mean expression per group (CTL vs KAT8KD)
-## Z-score normalized across both groups
-## ============================================================
-
-cat("\n=== CREATING GROUPED GENE HEATMAPS ===\n")
-
-## ============================================================
-## >>> ADD YOUR CUSTOM GENES HERE <<<
-## ============================================================
-
-gene_categories <- list(
-
-  "Inflammatory\nResponse" = c(
-    "Il1b", "Il6", "Tnf", "Il1a"
-  ),
-
-  "Chemotaxis" = c(
-    "Ccl2", "Ccl7", "Cxcl12"
-  ),
-
-  "ECM /\nCollagens" = c(
-    "Col1a1", "Col1a2", "Col3a1", "Col4a1", "Col4a2",
-    "Col5a1", "Col5a3", "Col6a1", "Col6a2", "Col6a3",
-    "Col6a6", "Col15a1"
-  ),
-
-  "Matrix\nRemodeling" = c(
-    "Fn1", "Mmp2", "Mmp3", "Mmp9", "Mmp12", "Mmp14",
-    "Timp1", "Timp2", "Timp3", "Timp4"
-  ),
-
-  "Adipocyte\nMarkers" = c(
-    "Lep", "Adipoq", "Pparg", "Ppargc1a", "Fabp4", "Plin1"
-  )
-
-)
-
-## ============================================================
-## >>> END OF CUSTOM GENE SECTION <<<
+## Heatmap style (journal-ready):
+## - Two columns: CTL (reference=0) and KAT8KD (log2FC)
+## - Rows grouped by pathway blocks from ORA results
+## - Values: DESeq2 log2FoldChange (NOT z-scores or expression)
+## - Color scale: centered at 0, clipped at ±2
+## - Pathway order: by FDR ascending (most significant first)
+## - Gene order within pathway: padj ascending, then |log2FC| descending
 ## ============================================================
 
+cat("\n=== CREATING PATHWAY-BASED HEATMAPS ===\n")
 
-## Sample annotation (matching part1_main_analysis.R)
-sample_ids <- paste0("JS_", sprintf("%02d", 1:40))
-sample_annot <- data.frame(
-  Sample   = sample_ids,
-  Depot    = c(rep("iWAT", 10), rep("iWAT", 10), rep("gWAT", 10), rep("gWAT", 10)),
-  Sex      = c(
-    rep("F", 5), rep("F", 5),
-    rep("M", 5), rep("M", 5),
-    rep("F", 5), rep("F", 5),
-    rep("M", 5), rep("M", 5)
-  ),
-  Genotype = c(
-    rep("CTL", 5), rep("KAT8KD", 5),
-    rep("CTL", 5), rep("KAT8KD", 5),
-    rep("CTL", 5), rep("KAT8KD", 5),
-    rep("CTL", 5), rep("KAT8KD", 5)
-  ),
-  stringsAsFactors = FALSE
-)
-rownames(sample_annot) <- sample_annot$Sample
+## ============================================================
+## HEATMAP SETTINGS
+## ============================================================
+heatmap_lfc_clip <- 2.0       ## Clip log2FC at ±2 (use 1.5 for subtle effects)
+heatmap_top_pathways <- 8     ## Number of pathways to show
+heatmap_max_genes_per_pathway <- 15  ## Max genes per pathway block
+## ============================================================
 
-## Outliers to exclude
-outlier_samples <- c("JS_08", "JS_28")
+## Function to create pathway-based heatmap using ORA results
+create_pathway_heatmap <- function(contrast_name, direction,
+                                   database = "GO:BP",
+                                   top_pathways = heatmap_top_pathways,
+                                   max_genes = heatmap_max_genes_per_pathway,
+                                   lfc_clip = heatmap_lfc_clip,
+                                   output_dir = plots_dir) {
 
+  cat("\n--- Creating pathway heatmap: ", contrast_name, " ", direction, " (", database, ") ---\n", sep = "")
 
-## Check if counts.txt exists
-counts_file <- file.path(getwd(), "counts.txt")
-has_counts <- file.exists(counts_file)
+  ## Find ORA file
+  db_short <- tolower(gsub(":", "", database))
+  ora_pattern <- paste0("^ORA_", db_short, "_", contrast_name, "_", direction, "_.*\\.csv$")
+  ora_files <- list.files(tables_dir, pattern = ora_pattern, full.names = TRUE)
 
-if (has_counts) {
-  cat("[INFO] Found counts.txt - loading expression data\n")
-  counts_raw <- tryCatch({
-    read.delim(counts_file, header = TRUE, stringsAsFactors = FALSE, check.names = FALSE)
-  }, error = function(e) {
-    cat("[WARN] Failed to load counts.txt: ", conditionMessage(e), "\n")
-    NULL
-  })
-} else {
-  cat("[INFO] No counts.txt found - will use log2FC values\n")
-  counts_raw <- NULL
-}
-
-
-## Function to create grouped heatmap with two columns
-create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
-                                    counts_raw = NULL, sample_annot = NULL,
-                                    outliers = c(), output_dir = plots_dir) {
-
-  cat("\n--- Creating grouped heatmap: ", contrast_name, " ---\n", sep = "")
-
-  if (!file.exists(de_file)) {
-    cat("[WARN] DE file not found: ", de_file, "\n")
+  if (length(ora_files) == 0) {
+    cat("[WARN] No ORA file found for pattern: ", ora_pattern, "\n")
     return(NULL)
   }
+  ora_file <- ora_files[1]
 
+  ## Find DE file
+  de_pattern <- paste0("^DE_tissue_", contrast_name, "_.*\\.csv$")
+  de_files <- list.files(tables_dir, pattern = de_pattern, full.names = TRUE)
+
+  if (length(de_files) == 0) {
+    cat("[WARN] No DE file found for pattern: ", de_pattern, "\n")
+    return(NULL)
+  }
+  de_file <- de_files[1]
+
+  ## Load data
+  ora_data <- read.csv(ora_file, stringsAsFactors = FALSE)
   de_data <- read.csv(de_file, row.names = 1, stringsAsFactors = FALSE)
 
-  ## Find genes in data
-  all_category_genes <- unique(unlist(gene_categories))
-  genes_in_data <- intersect(all_category_genes, rownames(de_data))
-
-  cat("[INFO] Category genes found: ", length(genes_in_data), "/",
-      length(all_category_genes), "\n", sep = "")
-
-  if (length(genes_in_data) < 3) {
-    cat("[WARN] Too few genes found for heatmap\n")
+  ## Get log2FC column
+  if ("log2FoldChange" %in% colnames(de_data)) {
+    lfc_col <- "log2FoldChange"
+  } else if ("logFC" %in% colnames(de_data)) {
+    lfc_col <- "logFC"
+  } else {
+    cat("[WARN] Cannot find log2FC column\n")
     return(NULL)
   }
 
-  ## Map genes to categories
-  gene_to_category <- character(length(genes_in_data))
-  names(gene_to_category) <- genes_in_data
-
-  for (cat_name in names(gene_categories)) {
-    cat_genes <- intersect(gene_categories[[cat_name]], genes_in_data)
-    for (g in cat_genes) {
-      if (gene_to_category[g] == "") {
-        gene_to_category[g] <- cat_name
-      }
-    }
+  ## Get padj column
+  if ("padj" %in% colnames(de_data)) {
+    padj_col <- "padj"
+  } else if ("adj.P.Val" %in% colnames(de_data)) {
+    padj_col <- "adj.P.Val"
+  } else {
+    padj_col <- NULL
   }
 
-  gene_to_category <- gene_to_category[gene_to_category != ""]
-  genes_to_plot <- names(gene_to_category)
+  ## Filter significant pathways and select top by FDR
+  sig_pathways <- ora_data %>%
+    dplyr::filter(p.adjust < 0.05, Count >= 3) %>%
+    dplyr::arrange(p.adjust) %>%
+    dplyr::slice_head(n = top_pathways)
 
-  if (length(genes_to_plot) < 3) {
-    cat("[WARN] Too few categorized genes for heatmap\n")
+  if (nrow(sig_pathways) == 0) {
+    cat("[WARN] No significant pathways (FDR<0.05, Count>=3)\n")
     return(NULL)
   }
 
-  ## Determine depot from contrast name
-  depot <- NA
-  if (grepl("iWAT", contrast_name)) depot <- "iWAT"
-  if (grepl("gWAT", contrast_name)) depot <- "gWAT"
+  cat("[INFO] Using top ", nrow(sig_pathways), " pathways\n", sep = "")
 
-  mat <- NULL
-  legend_title <- "Z-score"
+  ## Build gene-to-pathway mapping
+  gene_pathway_list <- list()
+  pathway_order <- c()
 
-  ## Try to use expression data if available
-  if (!is.null(counts_raw) && !is.null(sample_annot) && !is.na(depot)) {
+  for (i in seq_len(nrow(sig_pathways))) {
+    pathway_name <- sig_pathways$Description[i]
+    pathway_fdr <- sig_pathways$p.adjust[i]
+    gene_str <- sig_pathways$geneID[i]
 
-    ## Check if gene_id column exists
-    if ("gene_id" %in% colnames(counts_raw)) {
-      rownames(counts_raw) <- counts_raw$gene_id
-    }
+    if (is.na(gene_str) || gene_str == "") next
 
-    ## Check if genes are in counts
-    genes_in_counts <- intersect(genes_to_plot, rownames(counts_raw))
+    ## Parse genes (typically "/" separated)
+    genes <- unlist(strsplit(gene_str, "/"))
+    genes <- trimws(genes)
+    genes <- genes[genes %in% rownames(de_data)]
 
-    if (length(genes_in_counts) >= 3) {
-      cat("[INFO] Using expression data for ", length(genes_in_counts), " genes\n", sep = "")
+    if (length(genes) == 0) next
 
-      ## Get samples for this depot (excluding outliers)
-      depot_samples <- sample_annot %>%
-        dplyr::filter(Depot == depot, !Sample %in% outliers)
-
-      ctl_samples <- depot_samples %>% dplyr::filter(Genotype == "CTL") %>% dplyr::pull(Sample)
-      kd_samples <- depot_samples %>% dplyr::filter(Genotype == "KAT8KD") %>% dplyr::pull(Sample)
-
-      ## Check samples exist in counts
-      ctl_samples <- intersect(ctl_samples, colnames(counts_raw))
-      kd_samples <- intersect(kd_samples, colnames(counts_raw))
-
-      if (length(ctl_samples) >= 2 && length(kd_samples) >= 2) {
-
-        ## Extract expression for genes of interest
-        expr_raw <- counts_raw[genes_in_counts, c(ctl_samples, kd_samples), drop = FALSE]
-        expr_raw <- as.matrix(expr_raw)
-
-        ## Log2 transform (pseudocount of 1)
-        expr_log <- log2(expr_raw + 1)
-
-        ## Calculate group means
-        ctl_mean <- rowMeans(expr_log[, ctl_samples, drop = FALSE], na.rm = TRUE)
-        kd_mean <- rowMeans(expr_log[, kd_samples, drop = FALSE], na.rm = TRUE)
-
-        ## Z-score across both group means
-        combined <- cbind(ctl_mean, kd_mean)
-        row_means <- rowMeans(combined, na.rm = TRUE)
-        row_sds <- apply(combined, 1, sd, na.rm = TRUE)
-        row_sds[row_sds == 0] <- 1  ## Avoid division by zero
-
-        mat <- (combined - row_means) / row_sds
-        colnames(mat) <- c("CTL", "KAT8KD")
-
-        ## Update genes_to_plot to only include those in counts
-        genes_to_plot <- genes_in_counts
-        gene_to_category <- gene_to_category[genes_to_plot]
-
-        cat("[INFO] Created z-scored group means heatmap\n")
-      }
-    }
-  }
-
-  ## Fallback: use log2FC with pseudo two-column approach
-  if (is.null(mat)) {
-    cat("[INFO] Using log2FC-based heatmap\n")
-
-    if ("log2FoldChange" %in% colnames(de_data)) {
-      lfc_col <- "log2FoldChange"
-    } else if ("logFC" %in% colnames(de_data)) {
-      lfc_col <- "logFC"
-    } else {
-      cat("[WARN] Cannot find logFC column\n")
-      return(NULL)
-    }
-
-    ## Create two columns: CTL = -FC/2, KD = +FC/2
-    ## This centers the data so both columns show color
-    log2fc_values <- de_data[genes_to_plot, lfc_col]
-    mat <- cbind(
-      CTL = -log2fc_values / 2,
-      KAT8KD = log2fc_values / 2
+    ## Create gene info with ordering metrics
+    gene_info <- data.frame(
+      gene = genes,
+      log2FC = de_data[genes, lfc_col],
+      stringsAsFactors = FALSE
     )
-    rownames(mat) <- genes_to_plot
-    legend_title <- "Relative\nExpression"
+
+    if (!is.null(padj_col)) {
+      gene_info$padj <- de_data[genes, padj_col]
+    } else {
+      gene_info$padj <- 1
+    }
+
+    gene_info$abs_log2FC <- abs(gene_info$log2FC)
+
+    ## Order genes: padj ascending, then |log2FC| descending
+    gene_info <- gene_info %>%
+      dplyr::arrange(padj, desc(abs_log2FC)) %>%
+      dplyr::slice_head(n = max_genes)
+
+    ## Wrap long pathway names
+    pathway_label <- str_wrap(pathway_name, width = 35)
+
+    gene_pathway_list[[pathway_label]] <- gene_info
+    pathway_order <- c(pathway_order, pathway_label)
   }
 
-  ## Order by category
-  gene_order <- names(sort(gene_to_category))
-  mat <- mat[gene_order, , drop = FALSE]
-  gene_to_category <- gene_to_category[gene_order]
+  if (length(gene_pathway_list) == 0) {
+    cat("[WARN] No genes found in pathways\n")
+    return(NULL)
+  }
 
-  ## Color scale (symmetric, teal-white-orange)
-  max_val <- max(abs(mat), na.rm = TRUE)
-  if (max_val == 0 || is.na(max_val)) max_val <- 1
-  max_val <- ceiling(max_val * 2) / 2
+  ## Build matrix: genes as rows, CTL and KAT8KD as columns
+  ## CTL = 0 (reference), KAT8KD = log2FC
+  all_genes <- c()
+  gene_to_pathway <- c()
+  lfc_values <- c()
 
+  for (pathway in pathway_order) {
+    gene_info <- gene_pathway_list[[pathway]]
+    all_genes <- c(all_genes, gene_info$gene)
+    gene_to_pathway <- c(gene_to_pathway, rep(pathway, nrow(gene_info)))
+    lfc_values <- c(lfc_values, gene_info$log2FC)
+  }
+
+  ## Create matrix
+  mat <- cbind(
+    CTL = rep(0, length(all_genes)),
+    KAT8KD = lfc_values
+  )
+  rownames(mat) <- all_genes
+
+  ## Handle duplicate gene names (can occur across pathways)
+  if (any(duplicated(rownames(mat)))) {
+    rownames(mat) <- make.unique(rownames(mat), sep = "_")
+  }
+
+  ## Clip values at ±lfc_clip
+  mat[mat > lfc_clip] <- lfc_clip
+  mat[mat < -lfc_clip] <- -lfc_clip
+
+  cat("[INFO] Heatmap: ", length(all_genes), " genes across ",
+      length(unique(gene_to_pathway)), " pathways\n", sep = "")
+
+  ## Color scale: blue-white-red, centered at 0
   col_fun <- colorRamp2(
-    c(-max_val, 0, max_val),
-    c("#0072B2", "white", "#E69F00")
+    c(-lfc_clip, 0, lfc_clip),
+    c("#2166AC", "white", "#B2182B")  ## Blue-white-red
+  )
+
+  ## Create pathway factor for row splitting
+  pathway_factor <- factor(gene_to_pathway, levels = pathway_order)
+
+  ## Direction label for title
+  direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
+  plot_title <- paste0(contrast_name, "\n", direction_label, " Pathways (", database, ")")
+
+  ## Parameter caption for bottom annotation
+  param_caption <- paste0(
+    "Cutoffs: Pathway FDR < 0.05 | Count \u2265 3 | Top ", top_pathways, " pathways | ",
+    "Max ", max_genes, " genes/pathway | log2FC clipped at \u00b1", lfc_clip
   )
 
   ## Create heatmap
   ht <- Heatmap(
     mat,
     col = col_fun,
-    name = legend_title,
+    name = "log2FC\n(DESeq2)",
     cluster_rows = FALSE,
     cluster_columns = FALSE,
     show_row_names = TRUE,
     show_column_names = TRUE,
     column_names_rot = 0,
     column_names_centered = TRUE,
-    row_split = factor(gene_to_category, levels = names(gene_categories)),
-    row_gap = unit(1.5, "mm"),
+    row_split = pathway_factor,
+    row_gap = unit(2, "mm"),
     row_title_rot = 0,
-    row_title_gp = gpar(fontsize = 9, fontface = "bold"),
-    row_names_gp = gpar(fontsize = 8),
+    row_title_gp = gpar(fontsize = 7, fontface = "bold", lineheight = 0.9),
+    row_names_gp = gpar(fontsize = 7, fontface = "italic"),
     column_names_gp = gpar(fontsize = 9, fontface = "bold"),
-    column_title = contrast_name,
-    column_title_gp = gpar(fontsize = 11, fontface = "bold"),
+    column_title = plot_title,
+    column_title_gp = gpar(fontsize = 10, fontface = "bold", lineheight = 1.1),
     border = TRUE,
-    border_gp = gpar(col = "black", lwd = 0.8),
-    rect_gp = gpar(col = "white", lwd = 0.5),
-    width = unit(2.5, "cm"),
+    border_gp = gpar(col = "black", lwd = 0.5),
+    rect_gp = gpar(col = "grey80", lwd = 0.3),
+    width = unit(2.2, "cm"),
     heatmap_legend_param = list(
-      title = legend_title,
+      title = "log2 fold change\n(DESeq2)",
       title_position = "topcenter",
-      title_gp = gpar(fontsize = 8, fontface = "bold"),
-      labels_gp = gpar(fontsize = 7),
+      title_gp = gpar(fontsize = 7, fontface = "bold"),
+      labels_gp = gpar(fontsize = 6),
       legend_height = unit(2.5, "cm"),
-      at = c(-max_val, 0, max_val)
+      at = c(-lfc_clip, 0, lfc_clip),
+      labels = c(paste0("≤", -lfc_clip), "0", paste0("≥", lfc_clip))
     )
   )
 
   ## Save
-  plot_file <- paste0("Heatmap_grouped_", contrast_name, "_", run_tag, ".png")
-  n_genes <- length(genes_to_plot)
-  n_categories <- length(unique(gene_to_category))
+  db_tag <- gsub(":", "", database)
+  plot_file <- paste0("Heatmap_pathways_", db_tag, "_", contrast_name, "_", direction, "_", run_tag, ".png")
+  n_genes <- length(all_genes)
+  n_pathways <- length(unique(gene_to_pathway))
 
   png(file.path(output_dir, plot_file),
-      width = 600,
-      height = max(400, n_genes * 18 + n_categories * 30),
+      width = 650,
+      height = max(450, n_genes * 14 + n_pathways * 40 + 120),
       res = 150)
-  draw(ht, padding = unit(c(2, 12, 2, 2), "mm"))
+  draw(ht, padding = unit(c(5, 15, 12, 5), "mm"))
+  ## Add parameter caption at bottom
+  grid.text(
+    param_caption,
+    x = 0.5, y = unit(3, "mm"),
+    just = "center",
+    gp = gpar(fontsize = 6, col = "grey40")
+  )
   dev.off()
 
-  cat("[OK] Saved heatmap: ", plot_file, "\n", sep = "")
+  cat("[OK] Saved: ", plot_file, "\n", sep = "")
 
   return(ht)
 }
 
-## Create heatmaps for each contrast
-de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
+## Create pathway heatmaps for all contrasts and directions
+cat("\n--- Generating pathway heatmaps ---\n")
 
-for (de_file in de_files) {
-  filename <- basename(de_file)
-  contrast <- str_match(filename, "DE_tissue_(.+)_[0-9]+_[0-9]+\\.csv")[2]
-  if (!is.na(contrast)) {
-    create_grouped_heatmap(
-      de_file, contrast, gene_categories,
-      counts_raw = counts_raw,
-      sample_annot = sample_annot,
-      outliers = outlier_samples
-    )
+## Get unique contrasts from DE files
+de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
+contrasts <- unique(sapply(de_files, function(f) {
+  str_match(basename(f), "DE_tissue_(.+)_[0-9]+_[0-9]+\\.csv")[2]
+}))
+contrasts <- contrasts[!is.na(contrasts)]
+
+## Generate heatmaps for GO:BP (both Up and Down)
+for (contrast in contrasts) {
+  for (direction in c("Up", "Down")) {
+    create_pathway_heatmap(contrast, direction, database = "GO:BP")
+  }
+}
+
+## Generate heatmaps for KEGG (both Up and Down)
+for (contrast in contrasts) {
+  for (direction in c("Up", "Down")) {
+    create_pathway_heatmap(contrast, direction, database = "KEGG")
   }
 }
 
