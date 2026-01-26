@@ -61,12 +61,19 @@ plots_dir <- file.path(outdir, "plots")
 ## ============================================================
 ## SECTION 1: DOT PLOTS FOR ORA PATHWAY ENRICHMENT
 ## ============================================================
+## Nature / Cell Metabolism style:
+## - Size = Gene Ratio
+## - Color = -log10(FDR)
+## - Most significant at TOP
+## - Separate plots for Up/Down
+## - GO:BP: top 15, KEGG: top 10
+## ============================================================
 
 cat("\n=== CREATING ORA ENRICHMENT DOT PLOTS ===\n")
 
 create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
                                        database = "GO:BP",
-                                       top_n = 15, output_dir = plots_dir) {
+                                       output_dir = plots_dir) {
 
   if (!file.exists(ora_file)) {
     cat("[WARN] File not found: ", ora_file, "\n")
@@ -80,6 +87,9 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
     return(NULL)
   }
 
+  ## Set top_n based on database
+  top_n <- if (database == "KEGG") 10 else 15
+
   ## Parse GeneRatio to numeric
   if ("GeneRatio" %in% colnames(ora_data) && is.character(ora_data$GeneRatio)) {
     ora_data$GeneRatio_numeric <- sapply(strsplit(ora_data$GeneRatio, "/"), function(x) {
@@ -90,82 +100,125 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
     })
   }
 
-  ## Get gene count
+  ## Get gene count if not present
   if (!"Count" %in% colnames(ora_data)) {
     ora_data$Count <- sapply(strsplit(ora_data$GeneRatio, "/"), function(x) {
       as.numeric(x[1])
     })
   }
 
-  ## Select top pathways by p-value, order by p-value for display
+  ## Calculate -log10(FDR) for color mapping
+  ora_data$neg_log10_fdr <- -log10(ora_data$p.adjust)
+
+  ## Filter and select top pathways
+  ## - FDR < 0.05
+  ## - Count >= 3
+  ## - Rank by p.adjust (ascending), break ties by GeneRatio (descending)
   plot_data <- ora_data %>%
-    dplyr::filter(p.adjust < 0.05) %>%
-    dplyr::arrange(p.adjust) %>%
-    dplyr::slice_head(n = top_n) %>%
-    dplyr::arrange(desc(p.adjust)) %>%
-    dplyr::mutate(
-      Description = str_wrap(Description, width = 42),
-      Description = factor(Description, levels = Description)
-    )
+    dplyr::filter(p.adjust < 0.05, Count >= 3) %>%
+    dplyr::arrange(p.adjust, desc(GeneRatio_numeric)) %>%
+    dplyr::slice_head(n = top_n)
 
   if (nrow(plot_data) == 0) {
-    cat("[WARN] No significant pathways for dotplot\n")
+    cat("[WARN] No significant pathways meeting criteria (FDR<0.05, Count>=3)\n")
     return(NULL)
   }
 
-  ## Direction-specific colors
+  ## Clip extreme -log10(FDR) values to prevent one pathway dominating color scale
+  ## Cap at 99th percentile or max of 10, whichever is smaller
+  fdr_cap <- min(quantile(plot_data$neg_log10_fdr, 0.99, na.rm = TRUE), 10)
+  plot_data$neg_log10_fdr_clipped <- pmin(plot_data$neg_log10_fdr, fdr_cap)
+
+  ## Order y-axis: most significant at TOP
+  ## Factor levels in reverse order of p-value (smallest p = top)
+  plot_data <- plot_data %>%
+    dplyr::arrange(desc(p.adjust)) %>%
+    dplyr::mutate(
+      Description = str_wrap(Description, width = 45),
+      Description = factor(Description, levels = Description)
+    )
+
+  ## Direction-specific color gradient (cool to warm, light to dark)
   if (direction == "Up") {
-    color_low <- "#FDBE85"
-    color_high <- "#D94701"
+    ## Orange gradient for upregulated
+    color_low <- "#FEE8C8"   ## Light
+    color_high <- "#B30000"  ## Dark red-orange
   } else {
-    color_low <- "#9ECAE1"
-    color_high <- "#08519C"
+    ## Blue gradient for downregulated
+    color_low <- "#DEEBF7"   ## Light
+    color_high <- "#08306B"  ## Dark blue
   }
 
+  ## Build title in journal format
+  ## Example: "GO:BP Enrichment (KAT8KD vs CTL, iWAT, Upregulated)"
+  direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
+  plot_title <- paste0(database, " Enrichment\n(", contrast_name, ", ", direction_label, ")")
+
+  ## Create dot plot
+  ## Size = GeneRatio, Color = -log10(FDR)
   p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
-    geom_point(aes(size = Count, color = p.adjust)) +
+    geom_point(aes(size = GeneRatio_numeric, color = neg_log10_fdr_clipped)) +
     scale_color_gradient(
-      low = color_high,
-      high = color_low,
-      name = "Adj.\nP-value"
+      low = color_low,
+      high = color_high,
+      name = expression(-log[10](FDR)),
+      limits = c(min(plot_data$neg_log10_fdr_clipped), fdr_cap)
     ) +
     scale_size_continuous(
-      name = "Gene\nCount",
-      range = c(1.5, 5),
-      breaks = pretty(plot_data$Count, n = 3)
+      name = "Gene Ratio",
+      range = c(2, 6),
+      breaks = pretty(plot_data$GeneRatio_numeric, n = 3)
     ) +
-    scale_x_continuous(expand = expansion(mult = c(0.02, 0.08))) +
+    scale_x_continuous(
+      expand = expansion(mult = c(0.02, 0.1)),
+      labels = scales::number_format(accuracy = 0.01)
+    ) +
     labs(
-      title = paste0(database, ": ", contrast_name, " (", direction, ")"),
+      title = plot_title,
       x = "Gene Ratio",
       y = NULL
     ) +
     theme_bw(base_size = 10) +
     theme(
-      plot.title = element_text(face = "bold", hjust = 0.5, size = 11),
+      ## Title
+      plot.title = element_text(face = "bold", hjust = 0.5, size = 11, lineheight = 1.1),
+      ## Axes
       axis.text.y = element_text(size = 8, color = "black"),
       axis.text.x = element_text(size = 8, color = "black"),
-      axis.title.x = element_text(size = 9, face = "bold"),
-      panel.grid.major = element_line(color = "grey92", linewidth = 0.3),
+      axis.title.x = element_text(size = 9, face = "bold", margin = margin(t = 5)),
+      axis.ticks = element_line(color = "black", linewidth = 0.3),
+      ## Grid - minimal
+      panel.grid.major.x = element_line(color = "grey90", linewidth = 0.2),
+      panel.grid.major.y = element_blank(),
       panel.grid.minor = element_blank(),
-      panel.border = element_rect(color = "black", linewidth = 0.5),
+      ## Border
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.6),
+      ## Legend
       legend.title = element_text(size = 8, face = "bold"),
       legend.text = element_text(size = 7),
-      legend.key.size = unit(0.35, "cm"),
-      plot.margin = margin(8, 8, 8, 8)
+      legend.key.size = unit(0.4, "cm"),
+      legend.background = element_blank(),
+      legend.box.background = element_blank(),
+      ## Margins
+      plot.margin = margin(10, 10, 10, 10)
+    ) +
+    guides(
+      color = guide_colorbar(order = 1, barwidth = 0.8, barheight = 3),
+      size = guide_legend(order = 2)
     )
 
+  ## Save
   db_short <- gsub(":", "", database)
   plot_file <- paste0("Dotplot_", db_short, "_", contrast_name, "_", direction, "_", run_tag, ".png")
   ggsave(
     file.path(output_dir, plot_file),
     plot = p,
-    width = 7,
-    height = max(3.5, nrow(plot_data) * 0.22 + 1),
+    width = 7.5,
+    height = max(4, nrow(plot_data) * 0.25 + 1.5),
     dpi = 300,
     bg = "white"
   )
-  cat("[OK] Saved dot plot: ", plot_file, "\n", sep = "")
+  cat("[OK] Saved: ", plot_file, " (", nrow(plot_data), " pathways)\n", sep = "")
 
   return(p)
 }
