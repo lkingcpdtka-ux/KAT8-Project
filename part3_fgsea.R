@@ -95,7 +95,7 @@ fdr_cut   <- 0.05
 ## This combines similar pathways (like ORA) - recommended for GO:BP
 simplify_go_bp <- TRUE
 simplify_go_cutoff <- 0.7
-top_n_per_direction <- 10
+top_n_per_direction <- 15
 
 gsea_params <- list(
   min_gs_size  = 5,

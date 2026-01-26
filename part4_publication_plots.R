@@ -60,7 +60,7 @@ plots_dir <- file.path(outdir, "plots")
 ora_dotplot_params <- list(
   fdr_cutoff  = 0.05,
   min_count   = 3,
-  top_n       = list("GO:BP" = 15, "KEGG" = 10),
+  top_n       = list("GO:BP" = 15, "KEGG" = 15),
   default_top_n = 15,
   order_by    = "adj. p-value",
   tie_breaker = "gene ratio"
@@ -128,19 +128,36 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   ## Calculate -log10(FDR) for color mapping
   ora_data$neg_log10_fdr <- -log10(ora_data$p.adjust)
 
+  ## Determine thresholds from file metadata if available
+  plot_fdr_cutoff <- ora_dotplot_params$fdr_cutoff
+  if ("fdr_cutoff" %in% colnames(ora_data)) {
+    fdr_vals <- unique(na.omit(ora_data$fdr_cutoff))
+    if (length(fdr_vals) > 0) {
+      plot_fdr_cutoff <- fdr_vals[1]
+    }
+  }
+
+  plot_logfc_cutoff <- NULL
+  if ("logFC_cutoff" %in% colnames(ora_data)) {
+    logfc_vals <- unique(na.omit(ora_data$logFC_cutoff))
+    if (length(logfc_vals) > 0) {
+      plot_logfc_cutoff <- logfc_vals[1]
+    }
+  }
+
   ## Filter and select top pathways
-  ## - FDR < 0.05
+  ## - FDR < cutoff
   ## - Count >= 3 (minimum genes for reliable enrichment)
   ## - Rank by p.adjust (ascending), break ties by GeneRatio (descending)
   plot_data <- ora_data %>%
-    dplyr::filter(p.adjust < ora_dotplot_params$fdr_cutoff, Count >= ora_dotplot_params$min_count) %>%
+    dplyr::filter(p.adjust < plot_fdr_cutoff, Count >= ora_dotplot_params$min_count) %>%
     dplyr::arrange(p.adjust, desc(GeneRatio_numeric)) %>%
     dplyr::slice_head(n = top_n)
 
   if (nrow(plot_data) == 0) {
     cat(
       "[WARN] No significant pathways meeting criteria (FDR<",
-      ora_dotplot_params$fdr_cutoff,
+      plot_fdr_cutoff,
       ", Count>=",
       ora_dotplot_params$min_count,
       ")\n",
@@ -179,14 +196,26 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   plot_title <- paste0(database, " Enrichment\n(", contrast_name, ", ", direction_label, ")")
 
   ## Parameter caption for bottom of plot
-  param_caption <- paste(
-    paste0(
-      "FDR < ", ora_dotplot_params$fdr_cutoff,
-      " | Top ", top_n, " pathways"
-    ),
-    paste0("Ordered by ", ora_dotplot_params$order_by),
-    sep = "\n"
-  )
+  if (!is.null(plot_logfc_cutoff)) {
+    param_caption <- paste(
+      paste0(
+        "FDR < ", plot_fdr_cutoff,
+        " | |log2FC| > ", plot_logfc_cutoff,
+        " | Top ", top_n, " pathways"
+      ),
+      paste0("Ordered by ", ora_dotplot_params$order_by),
+      sep = "\n"
+    )
+  } else {
+    param_caption <- paste(
+      paste0(
+        "FDR < ", plot_fdr_cutoff,
+        " | Top ", top_n, " pathways"
+      ),
+      paste0("Ordered by ", ora_dotplot_params$order_by),
+      sep = "\n"
+    )
+  }
 
   ## Create dot plot
   ## Size = Count, Color = -log10(FDR)

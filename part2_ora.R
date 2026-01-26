@@ -534,6 +534,10 @@ tryCatch({
         
         ## Remove duplicate columns before saving
         sig_results <- sig_results[, !duplicated(colnames(sig_results)), drop = FALSE]
+
+        ## Record analysis thresholds for downstream captions
+        sig_results$logFC_cutoff <- logfc_cutoff
+        sig_results$fdr_cutoff <- fdr_cutoff
         
         ## Save table
         table_file <- paste0("ORA_", db_name, "_", contrast_name, "_", direction, "_", run_tag, ".csv")
