@@ -166,8 +166,9 @@ run_hallmark <- TRUE      # MSigDB Hallmark (50 well-defined signatures)
 ##     * Size: ~17,000+ terms (large, comprehensive)
 ##     * Simplification: Yes (cutoff=0.7, semantic similarity via GOSemSim)
 ##   - KEGG: Kyoto Encyclopedia of Genes and Genomes
-##     * Source: msigdbr (MSigDB C2 collection, KEGG_ prefix)
-##     * Size: ~180 pathways (curated, metabolic focus)
+##     * Source: clusterProfiler::gseKEGG() (UPDATED - was msigdbr)
+##     * Now matches ORA's enrichKEGG() for consistency
+##     * Requires ENTREZID mapping
 ##   - WikiPathways: Community-curated pathways
 ##     * Source: msigdbr (C2:CP:WIKIPATHWAYS)
 ##     * Size: ~600+ pathways (diverse biological processes)
@@ -288,54 +289,16 @@ tryCatch({
     cat("[INFO] GO:BP gene sets disabled (run_go_bp = FALSE)\n")
   }
   
-  ## KEGG gene sets (disabled for now)
-  kegg_list <- NULL
+  ## ============================================================
+  ## KEGG GSEA: Now uses clusterProfiler::gseKEGG() instead of fgsea+msigdbr
+  ## This ensures consistency with ORA (which uses enrichKEGG)
+  ## No pre-built gene sets needed - gseKEGG queries KEGG API directly
+  ## ============================================================
   if (run_kegg) {
-    cat("[INFO] Building KEGG gene sets from msigdbr...\n")
-    tryCatch({
-      ## Get all C2 (curated gene sets) for mouse
-      msigdb_c2 <- msigdbr(species = "Mus musculus", collection = "C2")
-      
-      ## Filter for KEGG pathways (gs_subcat is empty for KEGG, but gs_name starts with "KEGG_")
-      kegg_msigdb <- msigdb_c2 %>%
-        dplyr::filter(grepl("^KEGG_", gs_name))
-      
-      if (nrow(kegg_msigdb) == 0) {
-        cat("[WARN] No KEGG pathways found in msigdbr C2\n")
-      } else {
-        ## Convert to named list
-        kegg_list <- split(kegg_msigdb$gene_symbol, kegg_msigdb$gs_name)
-        
-        ## Filter for gene set size
-        kegg_list <- kegg_list[sapply(kegg_list, length) >= 5 & sapply(kegg_list, length) <= 500]
-        
-        cat("[OK] KEGG gene sets: ", length(kegg_list), " pathways\n", sep = "")
-      }
-    }, error = function(e) {
-      cat("[WARN] msigdbr KEGG failed: ", conditionMessage(e), "\n")
-      cat("[INFO] Falling back to org.Mm.eg.db PATH mapping...\n")
-      
-      ## Fallback: build from org.Mm.eg.db
-      tryCatch({
-        kegg_genes <- AnnotationDbi::select(
-          org.Mm.eg.db,
-          keys = keys(org.Mm.eg.db, keytype = "PATH"),
-          columns = c("SYMBOL", "PATH"),
-          keytype = "PATH"
-        )
-        kegg_genes <- kegg_genes %>% dplyr::filter(!is.na(SYMBOL), !is.na(PATH))
-        kegg_list <- split(kegg_genes$SYMBOL, paste0("mmu", kegg_genes$PATH))
-        
-        ## Filter for gene set size
-        kegg_list <- kegg_list[sapply(kegg_list, length) >= 5 & sapply(kegg_list, length) <= 500]
-        
-        cat("[OK] KEGG gene sets (from org.Mm.eg.db): ", length(kegg_list), " pathways\n", sep = "")
-      }, error = function(e2) {
-        cat("[ERROR] KEGG fallback also failed: ", conditionMessage(e2), "\n")
-      })
-    })
+    cat("[INFO] KEGG GSEA will use clusterProfiler::gseKEGG() (not msigdbr)\n")
+    cat("[INFO] This matches ORA's enrichKEGG() for consistency\n")
   } else {
-    cat("[INFO] KEGG gene sets disabled (run_kegg = FALSE)\n")
+    cat("[INFO] KEGG GSEA disabled (run_kegg = FALSE)\n")
   }
   
   ## WikiPathways gene sets
@@ -386,8 +349,10 @@ tryCatch({
   log_time("Completed gene set construction")
   
   ## 4.3) fgsea analysis function ----------------------------
+  ## NOTE: KEGG now uses gseKEGG (clusterProfiler) instead of fgsea+msigdbr
   run_fgsea_analysis <- function(ranked_genes, contrast_name,
-                                 go_bp_list, go_bp_term2gene, kegg_list, wikipathways_list, hallmark_list,
+                                 go_bp_list, go_bp_term2gene, wikipathways_list, hallmark_list,
+                                 de_table,  ## Added: full DE table for ENTREZID mapping
                                  run_tag, outdir, fdr_cutoff = 0.05,
                                  simplify_go = FALSE, simplify_cutoff = 0.7,
                                  top_n_per_direction = 10) {
@@ -513,52 +478,112 @@ tryCatch({
       cat("[WARN] GO:BP gene sets not available\n")
     }
     
-    ## KEGG fgsea
-    if (run_kegg && !is.null(kegg_list) && length(kegg_list) > 0) {
-      log_time(paste0("Starting KEGG fgsea for ", contrast_name))
+    ## ============================================================
+    ## KEGG GSEA using clusterProfiler::gseKEGG()
+    ## UPDATED: Replaced fgsea+msigdbr with gseKEGG for consistency with ORA
+    ## ============================================================
+    if (run_kegg) {
+      log_time(paste0("Starting KEGG gseKEGG for ", contrast_name))
       tryCatch({
-        cat("[INFO] Running fgsea for KEGG (", length(kegg_list), " gene sets)...\n", sep = "")
-        
-        fgsea_kegg <- fgsea(
-          pathways = kegg_list,
-          stats    = ranked_genes,
-          minSize  = 5,
-          maxSize  = 500,
-          nPermSimple = 10000
+        cat("[INFO] Running clusterProfiler::gseKEGG() (organism = mmu)...\n")
+
+        ## Step 1: Map SYMBOL to ENTREZID
+        ## gseKEGG requires ENTREZID as gene identifiers
+        gene_symbols <- names(ranked_genes)
+
+        symbol_to_entrez <- AnnotationDbi::select(
+          org.Mm.eg.db,
+          keys = gene_symbols,
+          columns = c("SYMBOL", "ENTREZID"),
+          keytype = "SYMBOL"
         )
-        
-        if (!is.null(fgsea_kegg) && nrow(fgsea_kegg) > 0) {
-          ## Add pathway descriptions
-          fgsea_kegg <- fgsea_kegg %>%
+
+        ## Remove NA mappings
+        symbol_to_entrez <- symbol_to_entrez %>%
+          dplyr::filter(!is.na(ENTREZID), !is.na(SYMBOL))
+
+        ## Create mapping: add ranking values
+        symbol_to_entrez$rank_value <- ranked_genes[symbol_to_entrez$SYMBOL]
+
+        ## Handle duplicates: keep gene with largest absolute rank value
+        symbol_to_entrez <- symbol_to_entrez %>%
+          dplyr::group_by(ENTREZID) %>%
+          dplyr::slice_max(order_by = abs(rank_value), n = 1, with_ties = FALSE) %>%
+          dplyr::ungroup()
+
+        ## Create named vector: ENTREZID -> rank value (sorted decreasing)
+        kegg_genelist <- setNames(symbol_to_entrez$rank_value, symbol_to_entrez$ENTREZID)
+        kegg_genelist <- sort(kegg_genelist, decreasing = TRUE)
+
+        cat("[INFO] Mapped ", length(kegg_genelist), " genes to ENTREZID for gseKEGG\n", sep = "")
+
+        ## Step 2: Run gseKEGG
+        gsea_kegg <- gseKEGG(
+          geneList     = kegg_genelist,
+          organism     = "mmu",
+          minGSSize    = 5,
+          maxGSSize    = 500,
+          pvalueCutoff = 0.1,        ## Initial filter (will use fdr_cutoff for final)
+          pAdjustMethod = "BH",
+          verbose      = FALSE,
+          seed         = TRUE        ## For reproducibility
+        )
+
+        if (!is.null(gsea_kegg) && nrow(gsea_kegg@result) > 0) {
+          ## Convert to data frame
+          kegg_results <- as.data.frame(gsea_kegg)
+
+          ## Rename columns to match fgsea output format
+          kegg_results <- kegg_results %>%
+            dplyr::rename(
+              pathway = ID,
+              padj = p.adjust,
+              leadingEdge = core_enrichment
+            ) %>%
             dplyr::mutate(
-              Description = gsub("^KEGG_|^mmu", "", pathway),  ## Clean up pathway names
-              Description = gsub("_", " ", Description)
+              ## Clean pathway IDs for display
+              pathway_display = paste0("mmu", pathway)
             ) %>%
             dplyr::arrange(padj)
-          
-          results$kegg <- fgsea_kegg
-          n_sig <- sum(fgsea_kegg$padj < fdr_cutoff, na.rm = TRUE)
-          n_sig_up <- sum(fgsea_kegg$padj < fdr_cutoff & fgsea_kegg$NES > 0, na.rm = TRUE)
-          n_sig_down <- sum(fgsea_kegg$padj < fdr_cutoff & fgsea_kegg$NES < 0, na.rm = TRUE)
-          cat("[OK] fgsea KEGG: ", nrow(fgsea_kegg), " pathways tested, ",
+
+          results$kegg <- kegg_results
+          n_sig <- sum(kegg_results$padj < fdr_cutoff, na.rm = TRUE)
+          n_sig_up <- sum(kegg_results$padj < fdr_cutoff & kegg_results$NES > 0, na.rm = TRUE)
+          n_sig_down <- sum(kegg_results$padj < fdr_cutoff & kegg_results$NES < 0, na.rm = TRUE)
+          cat("[OK] gseKEGG: ", nrow(kegg_results), " pathways tested, ",
               n_sig, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
-          
+
           fgsea_sanity_tracker <<- rbind(
             fgsea_sanity_tracker,
             data.frame(
               Contrast = contrast_name,
               Database = "KEGG",
-              N_Input_Genes = length(ranked_genes),
-              N_Pathways_Tested = nrow(fgsea_kegg),
+              N_Input_Genes = length(kegg_genelist),
+              N_Pathways_Tested = nrow(kegg_results),
               N_Sig_Pathways = n_sig,
               N_Sig_Up = n_sig_up,
               N_Sig_Down = n_sig_down,
               stringsAsFactors = FALSE
             )
           )
+        } else {
+          cat("[INFO] gseKEGG returned no results\n")
+          fgsea_sanity_tracker <<- rbind(
+            fgsea_sanity_tracker,
+            data.frame(
+              Contrast = contrast_name,
+              Database = "KEGG",
+              N_Input_Genes = length(kegg_genelist),
+              N_Pathways_Tested = 0,
+              N_Sig_Pathways = 0,
+              N_Sig_Up = 0,
+              N_Sig_Down = 0,
+              stringsAsFactors = FALSE
+            )
+          )
         }
       }, error = function(e) {
-        cat("[WARN] fgsea KEGG failed: ", conditionMessage(e), "\n", sep = "")
+        cat("[WARN] gseKEGG failed: ", conditionMessage(e), "\n", sep = "")
         fgsea_sanity_tracker <<- rbind(
           fgsea_sanity_tracker,
           data.frame(
@@ -573,9 +598,7 @@ tryCatch({
           )
         )
       })
-      log_time(paste0("Completed KEGG fgsea for ", contrast_name))
-    } else if (run_kegg) {
-      cat("[WARN] KEGG gene sets not available\n")
+      log_time(paste0("Completed KEGG gseKEGG for ", contrast_name))
     }
     
     ## WikiPathways fgsea
@@ -716,7 +739,7 @@ tryCatch({
           dplyr::arrange(padj)
         
         if (nrow(sig_results) == 0) {
-          cat("[INFO] No significant fgsea pathways in ", db_name, "\n", sep = "")
+          cat("[INFO] No significant GSEA pathways in ", db_name, "\n", sep = "")
           next
         }
         if (!"Description" %in% colnames(sig_results)) {
@@ -769,6 +792,8 @@ tryCatch({
           param_caption <- paste0("FDR < ", fdr_cutoff, " | Top ", top_n_per_direction, " per direction | Ranked by genes")
 
           ## Use consistent colors: orange for up, blue for down
+          ## Title shows "GSEA" (gseKEGG for KEGG, fgsea for others)
+          method_label <- if (db_name == "kegg") "GSEA" else "fgsea"
           p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = Direction)) +
             geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
             scale_fill_manual(
@@ -776,7 +801,7 @@ tryCatch({
               name = "Direction"
             ) +
             labs(
-              title = paste0("fgsea ", toupper(db_name), ": ", contrast_name),
+              title = paste0(method_label, " ", toupper(db_name), ": ", contrast_name),
               x = "Normalized Enrichment Score (NES)",
               y = NULL,
               caption = param_caption
@@ -849,16 +874,16 @@ tryCatch({
     
     cat("[INFO] Ranked gene list for fgsea: ", length(ranked_vec), " genes\n", sep = "")
     
-    ## Run fgsea
+    ## Run fgsea (and gseKEGG for KEGG)
     if (length(ranked_vec) >= 10) {
       run_fgsea_analysis(
         ranked_genes  = ranked_vec,
         contrast_name = contrast_name,
         go_bp_list    = go_bp_list,
         go_bp_term2gene = go_bp_term2gene,
-        kegg_list     = kegg_list,
         wikipathways_list = wikipathways_list,
         hallmark_list = hallmark_list,
+        de_table      = de_table,    ## Added for ENTREZID mapping in gseKEGG
         run_tag       = run_tag,
         outdir        = outdir,
         fdr_cutoff    = fdr_cut,
@@ -866,9 +891,9 @@ tryCatch({
         simplify_cutoff = simplify_go_cutoff,
         top_n_per_direction = top_n_per_direction
       )
-      log_time(paste0("Completed fgsea for contrast: ", contrast_name))
+      log_time(paste0("Completed fgsea/gseKEGG for contrast: ", contrast_name))
     } else {
-      cat("[WARN] Too few genes for fgsea\n")
+      cat("[WARN] Too few genes for GSEA\n")
     }
   }
   
@@ -879,9 +904,12 @@ tryCatch({
   
   ## 4.6) Print comprehensive sanity check summary -----------
   cat("\n==========================================================\n")
-  cat("=== SANITY CHECK SUMMARY: fgsea PATHWAY ANALYSIS ===\n")
+  cat("=== SANITY CHECK SUMMARY: GSEA PATHWAY ANALYSIS ===\n")
   cat("==========================================================\n")
-  cat("Note: fgsea uses ranked gene list as universe (no separate background needed)\n")
+  cat("Methods:\n")
+  cat("  - GO:BP, WikiPathways, Hallmark: fgsea (permutation-based)\n")
+  cat("  - KEGG: clusterProfiler::gseKEGG() (matches ORA's enrichKEGG)\n")
+  cat("Note: GSEA uses ranked gene list as universe (no separate background needed)\n")
   cat("Ranking metric: DESeq2 Wald statistic\n\n")
   
   ## Summarize across all contrasts
@@ -905,7 +933,11 @@ tryCatch({
   cat("==========================================================\n\n")
   
   cat("\n======================================\n")
-  cat("=== PART 3 (fgsea) COMPLETE ===\n")
+  cat("=== PART 3 (GSEA) COMPLETE ===\n")
+  cat("======================================\n")
+  cat("Methods used:\n")
+  cat("  - GO:BP, WikiPathways, Hallmark: fgsea\n")
+  cat("  - KEGG: clusterProfiler::gseKEGG()\n")
   cat("======================================\n\n")
 
   ## 4.7) Save session info for reproducibility -------------
@@ -914,7 +946,8 @@ tryCatch({
   cat("=== R SESSION INFORMATION ===\n\n")
   print(sessionInfo())
   cat("\n=== KEY PACKAGE VERSIONS ===\n\n")
-  key_pkgs <- c("fgsea", "clusterProfiler", "org.Mm.eg.db", "dplyr", "ggplot2", "GOSemSim")
+  ## clusterProfiler used for: gseKEGG (KEGG GSEA)
+  key_pkgs <- c("fgsea", "clusterProfiler", "org.Mm.eg.db", "dplyr", "ggplot2", "GOSemSim", "msigdbr")
   print(installed.packages()[intersect(key_pkgs, rownames(installed.packages())), c("Version", "Built")])
   sink()
   cat("[INFO] Session info saved to: ", session_file, "\n", sep = "")
@@ -941,4 +974,4 @@ tryCatch({
   stop(e)
 })
 
-cat("\n=== Part 3 (fgsea) finished ===\n")
+cat("\n=== Part 3 (GSEA) finished ===\n")
