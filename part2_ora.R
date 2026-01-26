@@ -551,13 +551,17 @@ tryCatch({
           )
         }
         
+        ## Parameter caption
+        param_caption <- paste0("FDR < 0.05 | Top 15 pathways | Ordered by gene ratio")
+
         p_pathway <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description, fill = p.adjust)) +
           geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
           fill_scale +
           labs(
             title = paste0(toupper(db_name), " Pathways (ORA - ", direction, ")\n", contrast_name),
             x     = "Gene Ratio",
-            y     = NULL
+            y     = NULL,
+            caption = param_caption
           ) +
           theme_classic(base_size = 12) +
           theme(
@@ -568,7 +572,8 @@ tryCatch({
             legend.title    = element_text(size = 10, face = "bold"),
             legend.text     = element_text(size = 9),
             legend.position = "right",
-            panel.border    = element_rect(color = "black", fill = NA, linewidth = 1)
+            panel.border    = element_rect(color = "black", fill = NA, linewidth = 1),
+            plot.caption    = element_text(size = 8, color = "grey40", hjust = 0.5, margin = margin(t = 8))
           )
         
         plot_file <- paste0("ORA_barplot_", db_name, "_", contrast_name, "_", direction, "_", run_tag, ".png")
