@@ -4,7 +4,7 @@
 ## KAT8 bulk RNA-seq - PART 4: PUBLICATION QUALITY PLOTS
 ## =========================================================
 ## This script creates publication-quality visualizations:
-## 1. Dot plots for ORA pathway enrichment
+## 1. Dot plots for ORA pathway enrichment (GO:BP + KEGG)
 ## 2. Grouped heatmaps with custom gene categories
 ##
 ## Run AFTER parts 1-3 have completed
@@ -62,13 +62,16 @@ plots_dir <- file.path(outdir, "plots")
 ## ============================================================
 ## SECTION 1: DOT PLOTS FOR ORA PATHWAY ENRICHMENT
 ## ============================================================
-## Style: Matches your orange/teal color scheme
-## Ordering: By gene ratio (highest at bottom, like PDIA3 paper)
+## - Processes both GO:BP and KEGG results
+## - Filled dots (no outline)
+## - Ordered by gene ratio (highest at bottom)
+## - Color = adjusted p-value (standard for enrichment)
 ## ============================================================
 
 cat("\n=== CREATING ORA ENRICHMENT DOT PLOTS ===\n")
 
 create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
+                                       database = "GO:BP",
                                        top_n = 20, output_dir = plots_dir) {
 
   if (!file.exists(ora_file)) {
@@ -105,10 +108,10 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
     dplyr::filter(p.adjust < 0.05) %>%
     dplyr::arrange(p.adjust) %>%
     dplyr::slice_head(n = top_n) %>%
-    dplyr::arrange(GeneRatio_numeric) %>%  ## Order by gene ratio (lowest first)
+    dplyr::arrange(GeneRatio_numeric) %>%
     dplyr::mutate(
-      Description = str_wrap(Description, width = 45),
-      Description = factor(Description, levels = Description)  ## Keeps order (highest at top)
+      Description = str_wrap(Description, width = 40),
+      Description = factor(Description, levels = Description)
     )
 
   if (nrow(plot_data) == 0) {
@@ -116,57 +119,57 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
     return(NULL)
   }
 
-  ## Direction-specific colors (matching your scheme: orange=up, teal=down)
+  ## Direction-specific colors (orange=up, teal=down)
   if (direction == "Up") {
-    color_gradient <- c("#FDD49E", "#E69F00", "#B35900")  ## Light to dark orange
+    color_low <- "#FDBE85"
+    color_high <- "#D94701"
   } else {
-    color_gradient <- c("#9ECAE1", "#0072B2", "#004466")  ## Light to dark teal
+    color_low <- "#9ECAE1"
+    color_high <- "#08519C"
   }
 
-  ## Create dot plot (PDIA3 paper style)
+  ## Create dot plot
   p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
-    geom_point(aes(size = Count, fill = p.adjust), shape = 21, color = "black", stroke = 0.5) +
-    scale_fill_gradientn(
-      colors = rev(color_gradient),  ## Dark = low p-value (more significant)
-      name = "P-value",
-      trans = "log10",
-      labels = scales::scientific
+    geom_point(aes(size = Count, color = p.adjust)) +
+    scale_color_gradient(
+      low = color_high,
+      high = color_low,
+      name = "Adj.\nP-value"
     ) +
     scale_size_continuous(
-      name = "Gene\nNumber",
-      range = c(3, 10),
-      breaks = pretty(plot_data$Count, n = 4)
+      name = "Gene\nCount",
+      range = c(2, 7),
+      breaks = pretty(plot_data$Count, n = 3)
     ) +
-    scale_x_continuous(expand = expansion(mult = c(0.02, 0.1))) +
+    scale_x_continuous(expand = expansion(mult = c(0.02, 0.08))) +
     labs(
-      title = paste0(contrast_name, " (", direction, "-regulated)"),
+      title = paste0(database, ": ", contrast_name, " (", direction, ")"),
       x = "Gene Ratio",
       y = NULL
     ) +
-    theme_classic(base_size = 11) +
+    theme_bw(base_size = 10) +
     theme(
-      plot.title = element_text(face = "bold", hjust = 0.5, size = 13),
-      axis.text.y = element_text(size = 9, color = "black"),
-      axis.text.x = element_text(size = 9, color = "black"),
-      axis.title.x = element_text(size = 10, face = "bold"),
-      axis.line = element_line(color = "black", linewidth = 0.5),
-      legend.title = element_text(size = 9, face = "bold"),
-      legend.text = element_text(size = 8),
-      legend.key.size = unit(0.4, "cm"),
-      plot.margin = margin(10, 10, 10, 10)
-    ) +
-    guides(
-      fill = guide_colorbar(order = 1),
-      size = guide_legend(order = 2)
+      plot.title = element_text(face = "bold", hjust = 0.5, size = 11),
+      axis.text.y = element_text(size = 8, color = "black"),
+      axis.text.x = element_text(size = 8, color = "black"),
+      axis.title.x = element_text(size = 9, face = "bold"),
+      panel.grid.major = element_line(color = "grey92", linewidth = 0.3),
+      panel.grid.minor = element_blank(),
+      panel.border = element_rect(color = "black", linewidth = 0.5),
+      legend.title = element_text(size = 8, face = "bold"),
+      legend.text = element_text(size = 7),
+      legend.key.size = unit(0.35, "cm"),
+      plot.margin = margin(8, 8, 8, 8)
     )
 
   ## Save
-  plot_file <- paste0("Dotplot_GO_", contrast_name, "_", direction, "_", run_tag, ".png")
+  db_short <- gsub(":", "", database)
+  plot_file <- paste0("Dotplot_", db_short, "_", contrast_name, "_", direction, "_", run_tag, ".png")
   ggsave(
     file.path(output_dir, plot_file),
     plot = p,
-    width = 8,
-    height = max(5, nrow(plot_data) * 0.28),
+    width = 7,
+    height = max(4, nrow(plot_data) * 0.22 + 1),
     dpi = 300,
     bg = "white"
   )
@@ -175,16 +178,31 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   return(p)
 }
 
-## Process all ORA GO:BP results
-ora_files <- list.files(tables_dir, pattern = "^ORA_gobp_.*\\.csv$", full.names = TRUE)
+## Process GO:BP results
+cat("\n--- Processing GO:BP results ---\n")
+gobp_files <- list.files(tables_dir, pattern = "^ORA_gobp_.*\\.csv$", full.names = TRUE)
 
-for (ora_file in ora_files) {
+for (ora_file in gobp_files) {
   filename <- basename(ora_file)
   parts <- str_match(filename, "ORA_gobp_(.+)_(Up|Down)_[0-9]+_[0-9]+\\.csv")
   if (!is.na(parts[1])) {
     contrast <- parts[2]
     direction <- parts[3]
-    create_enrichment_dotplot(ora_file, contrast, direction)
+    create_enrichment_dotplot(ora_file, contrast, direction, database = "GO:BP")
+  }
+}
+
+## Process KEGG results
+cat("\n--- Processing KEGG results ---\n")
+kegg_files <- list.files(tables_dir, pattern = "^ORA_kegg_.*\\.csv$", full.names = TRUE)
+
+for (ora_file in kegg_files) {
+  filename <- basename(ora_file)
+  parts <- str_match(filename, "ORA_kegg_(.+)_(Up|Down)_[0-9]+_[0-9]+\\.csv")
+  if (!is.na(parts[1])) {
+    contrast <- parts[2]
+    direction <- parts[3]
+    create_enrichment_dotplot(ora_file, contrast, direction, database = "KEGG")
   }
 }
 
@@ -192,8 +210,10 @@ for (ora_file in ora_files) {
 ## ============================================================
 ## SECTION 2: GROUPED HEATMAPS WITH CUSTOM GENE CATEGORIES
 ## ============================================================
-## Style: Two columns showing CTL and KD expression
-## Colors: Teal (low) - White - Orange (high)
+## - Shows relative expression for CTL and KD groups
+## - Uses centered log2FC so both columns have meaningful colors
+## - CTL = -log2FC/2, KD = +log2FC/2 (difference = log2FC)
+## - Color scale: Teal (down) - White (center) - Orange (up)
 ## ============================================================
 
 cat("\n=== CREATING GROUPED GENE HEATMAPS ===\n")
@@ -208,15 +228,12 @@ cat("\n=== CREATING GROUPED GENE HEATMAPS ===\n")
 ## 3. Use \n for line breaks in category names
 ## 4. Add gene symbols exactly as they appear in your DE results
 ##
-## Example format:
-##   "Category\nName" = c("Gene1", "Gene2", "Gene3", ...)
-##
 ## ============================================================
 
 gene_categories <- list(
 
   ## ------------------------------------------------------------
-  ## INFLAMMATION GENES - add/remove genes as needed
+  ## INFLAMMATION GENES
   ## ------------------------------------------------------------
   "Inflammatory\nResponse" = c(
     "Il1b", "Il6", "Tnf", "Il1a"
@@ -261,10 +278,6 @@ gene_categories <- list(
   ## ------------------------------------------------------------
   ## ADD MORE CATEGORIES BELOW
   ## ------------------------------------------------------------
-  ##
-  ## "Your Category\nName" = c(
-  ##   "Gene1", "Gene2", "Gene3"
-  ## )
 
 )
 
@@ -273,7 +286,7 @@ gene_categories <- list(
 ## ============================================================
 
 
-## Function to create grouped heatmap with CTL and KD columns
+## Function to create grouped heatmap
 create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
                                     output_dir = plots_dir) {
 
@@ -290,13 +303,12 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   all_category_genes <- unique(unlist(gene_categories))
   genes_in_data <- intersect(all_category_genes, rownames(de_data))
 
-  cat("[INFO] Category genes found in data: ", length(genes_in_data), "/",
+  cat("[INFO] Category genes found: ", length(genes_in_data), "/",
       length(all_category_genes), "\n", sep = "")
 
-  ## Show missing genes
   missing_genes <- setdiff(all_category_genes, rownames(de_data))
-  if (length(missing_genes) > 0 && length(missing_genes) <= 20) {
-    cat("[INFO] Missing genes: ", paste(missing_genes, collapse = ", "), "\n", sep = "")
+  if (length(missing_genes) > 0 && length(missing_genes) <= 15) {
+    cat("[INFO] Missing: ", paste(missing_genes, collapse = ", "), "\n", sep = "")
   }
 
   if (length(genes_in_data) < 3) {
@@ -335,12 +347,14 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
     return(NULL)
   }
 
-  ## Create TWO-COLUMN matrix: CTL (baseline=0) and KD (=log2FC)
-  ## This shows the relative change: CTL is reference, KD shows fold change
+  ## Create matrix with CENTERED values so both columns show color
+  ## CTL = -log2FC/2, KD = +log2FC/2
+  ## This way: KD - CTL = log2FC (the actual fold change)
+  ## And both columns have meaningful colors relative to the overall mean
   log2fc_values <- de_data[genes_to_plot, lfc_col]
   mat <- cbind(
-    CTL = rep(0, length(genes_to_plot)),
-    KAT8KD = log2fc_values
+    CTL = -log2fc_values / 2,
+    KAT8KD = log2fc_values / 2
   )
   rownames(mat) <- genes_to_plot
 
@@ -349,19 +363,22 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   mat <- mat[gene_order, , drop = FALSE]
   gene_to_category <- gene_to_category[gene_order]
 
-  ## Color scale (teal-white-orange, symmetric)
+  ## Color scale (symmetric, teal-white-orange)
   max_val <- max(abs(mat), na.rm = TRUE)
   if (max_val == 0 || is.na(max_val)) max_val <- 1
+  ## Round up for cleaner legend
+  max_val <- ceiling(max_val * 2) / 2
+
   col_fun <- colorRamp2(
     c(-max_val, 0, max_val),
     c("#0072B2", "white", "#E69F00")
   )
 
-  ## Create heatmap (no significance stars, clean look)
+  ## Create heatmap
   ht <- Heatmap(
     mat,
     col = col_fun,
-    name = "Z-score",
+    name = "Expression",
     cluster_rows = FALSE,
     cluster_columns = FALSE,
     show_row_names = TRUE,
@@ -369,25 +386,24 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
     column_names_rot = 0,
     column_names_centered = TRUE,
     row_split = factor(gene_to_category, levels = names(gene_categories)),
-    row_gap = unit(2, "mm"),
+    row_gap = unit(1.5, "mm"),
     row_title_rot = 0,
-    row_title_gp = gpar(fontsize = 10, fontface = "bold"),
-    row_names_gp = gpar(fontsize = 9),
-    column_names_gp = gpar(fontsize = 10, fontface = "bold"),
+    row_title_gp = gpar(fontsize = 9, fontface = "bold"),
+    row_names_gp = gpar(fontsize = 8),
+    column_names_gp = gpar(fontsize = 9, fontface = "bold"),
     column_title = contrast_name,
-    column_title_gp = gpar(fontsize = 12, fontface = "bold"),
+    column_title_gp = gpar(fontsize = 11, fontface = "bold"),
     border = TRUE,
-    border_gp = gpar(col = "black", lwd = 1),
-    rect_gp = gpar(col = "grey80", lwd = 0.5),
-    width = unit(2.5, "cm"),
+    border_gp = gpar(col = "black", lwd = 0.8),
+    rect_gp = gpar(col = "white", lwd = 0.5),
+    width = unit(2, "cm"),
     heatmap_legend_param = list(
       title = "Relative\nExpression",
       title_position = "topcenter",
-      title_gp = gpar(fontsize = 9, fontface = "bold"),
-      labels_gp = gpar(fontsize = 8),
-      legend_height = unit(3, "cm"),
-      at = c(-round(max_val, 1), 0, round(max_val, 1)),
-      labels = c("Low", "0", "High")
+      title_gp = gpar(fontsize = 8, fontface = "bold"),
+      labels_gp = gpar(fontsize = 7),
+      legend_height = unit(2.5, "cm"),
+      at = c(-max_val, 0, max_val)
     )
   )
 
@@ -397,14 +413,13 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   n_categories <- length(unique(gene_to_category))
 
   png(file.path(output_dir, plot_file),
-      width = 700,
-      height = max(500, n_genes * 20 + n_categories * 35),
+      width = 600,
+      height = max(400, n_genes * 18 + n_categories * 30),
       res = 150)
-  draw(ht, padding = unit(c(2, 15, 2, 2), "mm"))
+  draw(ht, padding = unit(c(2, 12, 2, 2), "mm"))
   dev.off()
 
-  cat("[OK] Saved grouped heatmap: ", plot_file, "\n", sep = "")
-  cat("[INFO] Genes plotted: ", n_genes, " in ", n_categories, " categories\n", sep = "")
+  cat("[OK] Saved heatmap: ", plot_file, "\n", sep = "")
 
   return(ht)
 }
@@ -422,9 +437,10 @@ for (de_file in de_files) {
 
 
 cat("\n======================================\n")
-cat("=== PART 4 (Publication Plots) COMPLETE ===\n")
+cat("=== PART 4 COMPLETE ===\n")
 cat("======================================\n")
 cat("Created:\n")
-cat("  - ORA enrichment dot plots (ordered by gene ratio)\n")
-cat("  - Grouped gene heatmaps (CTL vs KD columns)\n")
+cat("  - GO:BP enrichment dot plots\n")
+cat("  - KEGG enrichment dot plots\n")
+cat("  - Grouped gene heatmaps\n")
 cat("\nAll plots saved to: ", plots_dir, "\n\n", sep = "")
