@@ -92,8 +92,24 @@ if (!dir.exists(file.path(outdir, "plots"))) {
 }
 
 ## 3) Parameters --------------------------------------------
-logFC_cut <- 1
-fdr_cut   <- 0.05
+## ============================================================
+## DEPOT-SPECIFIC CUTOFFS
+## ============================================================
+## Set different thresholds for iWAT vs gWAT if desired
+## This allows relaxed cutoffs for gWAT while keeping iWAT stringent
+## ============================================================
+
+## iWAT cutoffs (stringent - strong signal)
+iWAT_logFC_cut <- 1.0
+iWAT_fdr_cut   <- 0.05
+
+## gWAT cutoffs (can be relaxed if needed)
+gWAT_logFC_cut <- 1.0
+gWAT_fdr_cut   <- 0.05
+
+## Default cutoffs (for any other contrasts)
+default_logFC_cut <- 1.0
+default_fdr_cut   <- 0.05
 
 ## ============================================================
 ## IMPORTANT: ORA Universe/Background Setting
@@ -581,10 +597,25 @@ tryCatch({
     contrast_name <- gsub("^DE_tissue_(.+)_[0-9]{8}_[0-9]{6}\\.csv$", "\\1", de_filename)
     
     cat("\n=== Processing contrast: ", contrast_name, " ===\n", sep = "")
-    
+
+    ## Select depot-specific cutoffs
+    if (grepl("iWAT", contrast_name, ignore.case = TRUE)) {
+      logFC_cut <- iWAT_logFC_cut
+      fdr_cut <- iWAT_fdr_cut
+      cat("[INFO] Using iWAT cutoffs: FDR < ", fdr_cut, ", |logFC| > ", logFC_cut, "\n", sep = "")
+    } else if (grepl("gWAT", contrast_name, ignore.case = TRUE)) {
+      logFC_cut <- gWAT_logFC_cut
+      fdr_cut <- gWAT_fdr_cut
+      cat("[INFO] Using gWAT cutoffs: FDR < ", fdr_cut, ", |logFC| > ", logFC_cut, "\n", sep = "")
+    } else {
+      logFC_cut <- default_logFC_cut
+      fdr_cut <- default_fdr_cut
+      cat("[INFO] Using default cutoffs: FDR < ", fdr_cut, ", |logFC| > ", logFC_cut, "\n", sep = "")
+    }
+
     ## Load DE table
     de_table <- read.csv(de_file, row.names = 1, stringsAsFactors = FALSE)
-    
+
     ## Ensure column names are correct
     if (!"adj.P.Val" %in% colnames(de_table)) {
       if ("padj" %in% colnames(de_table)) {
@@ -594,7 +625,7 @@ tryCatch({
         next
       }
     }
-    
+
     if (!"logFC" %in% colnames(de_table)) {
       if ("log2FoldChange" %in% colnames(de_table)) {
         de_table$logFC <- de_table$log2FoldChange
@@ -603,17 +634,17 @@ tryCatch({
         next
       }
     }
-    
-    ## Get up-regulated genes
+
+    ## Get up-regulated genes (using depot-specific cutoffs)
     up_genes <- de_table %>%
       dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut, logFC > logFC_cut) %>%
       rownames()
-    
-    ## Get down-regulated genes
+
+    ## Get down-regulated genes (using depot-specific cutoffs)
     down_genes <- de_table %>%
       dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut, logFC < -logFC_cut) %>%
       rownames()
-    
+
     cat("[INFO] Up-regulated DEGs: ", length(up_genes), "\n", sep = "")
     cat("[INFO] Down-regulated DEGs: ", length(down_genes), "\n", sep = "")
     

@@ -3,9 +3,8 @@
 ## =========================================================
 ## KAT8 bulk RNA-seq - PART 4: PUBLICATION QUALITY PLOTS
 ## =========================================================
-## This script creates publication-quality visualizations:
 ## 1. Dot plots for ORA pathway enrichment (GO:BP + KEGG)
-## 2. Grouped heatmaps with custom gene categories
+## 2. Grouped heatmaps with two columns (CTL vs KAT8KD)
 ##
 ## Run AFTER parts 1-3 have completed
 ## =========================================================
@@ -62,11 +61,6 @@ plots_dir <- file.path(outdir, "plots")
 ## ============================================================
 ## SECTION 1: DOT PLOTS FOR ORA PATHWAY ENRICHMENT
 ## ============================================================
-## - Processes both GO:BP and KEGG results
-## - Ordered by adjusted p-value (most significant at bottom)
-## - Top 15 pathways
-## - Small filled dots
-## ============================================================
 
 cat("\n=== CREATING ORA ENRICHMENT DOT PLOTS ===\n")
 
@@ -108,7 +102,7 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
     dplyr::filter(p.adjust < 0.05) %>%
     dplyr::arrange(p.adjust) %>%
     dplyr::slice_head(n = top_n) %>%
-    dplyr::arrange(desc(p.adjust)) %>%  ## Reverse so most significant at bottom
+    dplyr::arrange(desc(p.adjust)) %>%
     dplyr::mutate(
       Description = str_wrap(Description, width = 42),
       Description = factor(Description, levels = Description)
@@ -119,7 +113,7 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
     return(NULL)
   }
 
-  ## Direction-specific colors (orange=up, teal=down)
+  ## Direction-specific colors
   if (direction == "Up") {
     color_low <- "#FDBE85"
     color_high <- "#D94701"
@@ -128,7 +122,6 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
     color_high <- "#08519C"
   }
 
-  ## Create dot plot
   p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
     geom_point(aes(size = Count, color = p.adjust)) +
     scale_color_gradient(
@@ -162,7 +155,6 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
       plot.margin = margin(8, 8, 8, 8)
     )
 
-  ## Save
   db_short <- gsub(":", "", database)
   plot_file <- paste0("Dotplot_", db_short, "_", contrast_name, "_", direction, "_", run_tag, ".png")
   ggsave(
@@ -208,11 +200,10 @@ for (ora_file in kegg_files) {
 
 
 ## ============================================================
-## SECTION 2: GROUPED HEATMAPS WITH CUSTOM GENE CATEGORIES
+## SECTION 2: GROUPED HEATMAPS WITH TWO COLUMNS
 ## ============================================================
-## - If counts.txt exists: loads expression data, calculates z-scores
-## - If not: shows log2 fold change (single column, correct representation)
-## - Color scale: Teal (down) - White (center) - Orange (up)
+## Shows mean expression per group (CTL vs KAT8KD)
+## Z-score normalized across both groups
 ## ============================================================
 
 cat("\n=== CREATING GROUPED GENE HEATMAPS ===\n")
@@ -225,30 +216,25 @@ gene_categories <- list(
 
   "Inflammatory\nResponse" = c(
     "Il1b", "Il6", "Tnf", "Il1a"
-    ## ADD MORE HERE
   ),
 
   "Chemotaxis" = c(
     "Ccl2", "Ccl7", "Cxcl12"
-    ## ADD MORE HERE
   ),
 
   "ECM /\nCollagens" = c(
     "Col1a1", "Col1a2", "Col3a1", "Col4a1", "Col4a2",
     "Col5a1", "Col5a3", "Col6a1", "Col6a2", "Col6a3",
     "Col6a6", "Col15a1"
-    ## ADD MORE HERE
   ),
 
   "Matrix\nRemodeling" = c(
     "Fn1", "Mmp2", "Mmp3", "Mmp9", "Mmp12", "Mmp14",
     "Timp1", "Timp2", "Timp3", "Timp4"
-    ## ADD MORE HERE
   ),
 
   "Adipocyte\nMarkers" = c(
     "Lep", "Adipoq", "Pparg", "Ppargc1a", "Fabp4", "Plin1"
-    ## ADD MORE HERE
   )
 
 )
@@ -258,20 +244,53 @@ gene_categories <- list(
 ## ============================================================
 
 
-## Check if counts.txt exists for expression-based heatmaps
+## Sample annotation (matching part1_main_analysis.R)
+sample_ids <- paste0("JS_", sprintf("%02d", 1:40))
+sample_annot <- data.frame(
+  Sample   = sample_ids,
+  Depot    = c(rep("iWAT", 10), rep("iWAT", 10), rep("gWAT", 10), rep("gWAT", 10)),
+  Sex      = c(
+    rep("F", 5), rep("F", 5),
+    rep("M", 5), rep("M", 5),
+    rep("F", 5), rep("F", 5),
+    rep("M", 5), rep("M", 5)
+  ),
+  Genotype = c(
+    rep("CTL", 5), rep("KAT8KD", 5),
+    rep("CTL", 5), rep("KAT8KD", 5),
+    rep("CTL", 5), rep("KAT8KD", 5),
+    rep("CTL", 5), rep("KAT8KD", 5)
+  ),
+  stringsAsFactors = FALSE
+)
+rownames(sample_annot) <- sample_annot$Sample
+
+## Outliers to exclude
+outlier_samples <- c("JS_08", "JS_28")
+
+
+## Check if counts.txt exists
 counts_file <- file.path(getwd(), "counts.txt")
 has_counts <- file.exists(counts_file)
 
 if (has_counts) {
-  cat("[INFO] Found counts.txt - will create expression-based heatmaps\n")
+  cat("[INFO] Found counts.txt - loading expression data\n")
+  counts_raw <- tryCatch({
+    read.delim(counts_file, header = TRUE, stringsAsFactors = FALSE, check.names = FALSE)
+  }, error = function(e) {
+    cat("[WARN] Failed to load counts.txt: ", conditionMessage(e), "\n")
+    NULL
+  })
 } else {
-  cat("[INFO] No counts.txt found - will show log2 fold change heatmaps\n")
+  cat("[INFO] No counts.txt found - will use log2FC values\n")
+  counts_raw <- NULL
 }
 
 
-## Function to create grouped heatmap
+## Function to create grouped heatmap with two columns
 create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
-                                    counts_file = NULL, output_dir = plots_dir) {
+                                    counts_raw = NULL, sample_annot = NULL,
+                                    outliers = c(), output_dir = plots_dir) {
 
   cat("\n--- Creating grouped heatmap: ", contrast_name, " ---\n", sep = "")
 
@@ -320,48 +339,69 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   if (grepl("iWAT", contrast_name)) depot <- "iWAT"
   if (grepl("gWAT", contrast_name)) depot <- "gWAT"
 
-  ## Try to load expression data if counts file exists
   mat <- NULL
-  col_labels <- NULL
-  legend_title <- "log2FC"
+  legend_title <- "Z-score"
 
-  if (!is.null(counts_file) && file.exists(counts_file)) {
-    cat("[INFO] Loading expression data from counts.txt\n")
+  ## Try to use expression data if available
+  if (!is.null(counts_raw) && !is.null(sample_annot) && !is.na(depot)) {
 
-    counts <- tryCatch({
-      read.delim(counts_file, row.names = 1, check.names = FALSE)
-    }, error = function(e) NULL)
+    ## Check if gene_id column exists
+    if ("gene_id" %in% colnames(counts_raw)) {
+      rownames(counts_raw) <- counts_raw$gene_id
+    }
 
-    if (!is.null(counts) && all(genes_to_plot %in% rownames(counts))) {
-      ## Log2 transform (add 1 pseudocount)
-      log_counts <- log2(counts + 1)
+    ## Check if genes are in counts
+    genes_in_counts <- intersect(genes_to_plot, rownames(counts_raw))
 
-      ## Get sample metadata from column names
-      ## Expected format: JS_XX where samples can be identified
-      ## For now, assume we need sample annotation - check if it's in the DE file path
-      ## or we can infer from part1 parameters
+    if (length(genes_in_counts) >= 3) {
+      cat("[INFO] Using expression data for ", length(genes_in_counts), " genes\n", sep = "")
 
-      ## Simple approach: look for CTL vs KAT8KD patterns in sample names
-      ## This is project-specific - adjust as needed
-      sample_cols <- colnames(log_counts)
+      ## Get samples for this depot (excluding outliers)
+      depot_samples <- sample_annot %>%
+        dplyr::filter(Depot == depot, !Sample %in% outliers)
 
-      ## Filter to genes of interest
-      expr_mat <- log_counts[genes_to_plot, , drop = FALSE]
+      ctl_samples <- depot_samples %>% dplyr::filter(Genotype == "CTL") %>% dplyr::pull(Sample)
+      kd_samples <- depot_samples %>% dplyr::filter(Genotype == "KAT8KD") %>% dplyr::pull(Sample)
 
-      ## Z-score per gene (across all samples)
-      expr_z <- t(scale(t(expr_mat)))
+      ## Check samples exist in counts
+      ctl_samples <- intersect(ctl_samples, colnames(counts_raw))
+      kd_samples <- intersect(kd_samples, colnames(counts_raw))
 
-      ## For a proper heatmap, we'd need sample group info
-      ## For now, show per-sample z-scores
-      mat <- expr_z
-      legend_title <- "Z-score"
-      cat("[INFO] Using z-scored expression data\n")
+      if (length(ctl_samples) >= 2 && length(kd_samples) >= 2) {
+
+        ## Extract expression for genes of interest
+        expr_raw <- counts_raw[genes_in_counts, c(ctl_samples, kd_samples), drop = FALSE]
+        expr_raw <- as.matrix(expr_raw)
+
+        ## Log2 transform (pseudocount of 1)
+        expr_log <- log2(expr_raw + 1)
+
+        ## Calculate group means
+        ctl_mean <- rowMeans(expr_log[, ctl_samples, drop = FALSE], na.rm = TRUE)
+        kd_mean <- rowMeans(expr_log[, kd_samples, drop = FALSE], na.rm = TRUE)
+
+        ## Z-score across both group means
+        combined <- cbind(ctl_mean, kd_mean)
+        row_means <- rowMeans(combined, na.rm = TRUE)
+        row_sds <- apply(combined, 1, sd, na.rm = TRUE)
+        row_sds[row_sds == 0] <- 1  ## Avoid division by zero
+
+        mat <- (combined - row_means) / row_sds
+        colnames(mat) <- c("CTL", "KAT8KD")
+
+        ## Update genes_to_plot to only include those in counts
+        genes_to_plot <- genes_in_counts
+        gene_to_category <- gene_to_category[genes_to_plot]
+
+        cat("[INFO] Created z-scored group means heatmap\n")
+      }
     }
   }
 
-  ## Fallback: use log2FC from DE results
+  ## Fallback: use log2FC with pseudo two-column approach
   if (is.null(mat)) {
-    ## Get logFC column
+    cat("[INFO] Using log2FC-based heatmap\n")
+
     if ("log2FoldChange" %in% colnames(de_data)) {
       lfc_col <- "log2FoldChange"
     } else if ("logFC" %in% colnames(de_data)) {
@@ -371,12 +411,15 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
       return(NULL)
     }
 
-    ## Single column showing fold change
+    ## Create two columns: CTL = -FC/2, KD = +FC/2
+    ## This centers the data so both columns show color
     log2fc_values <- de_data[genes_to_plot, lfc_col]
-    mat <- matrix(log2fc_values, ncol = 1)
+    mat <- cbind(
+      CTL = -log2fc_values / 2,
+      KAT8KD = log2fc_values / 2
+    )
     rownames(mat) <- genes_to_plot
-    colnames(mat) <- "log2FC"
-    legend_title <- "log2FC"
+    legend_title <- "Relative\nExpression"
   }
 
   ## Order by category
@@ -387,15 +430,12 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   ## Color scale (symmetric, teal-white-orange)
   max_val <- max(abs(mat), na.rm = TRUE)
   if (max_val == 0 || is.na(max_val)) max_val <- 1
-  max_val <- ceiling(max_val * 2) / 2  ## Round for cleaner legend
+  max_val <- ceiling(max_val * 2) / 2
 
   col_fun <- colorRamp2(
     c(-max_val, 0, max_val),
     c("#0072B2", "white", "#E69F00")
   )
-
-  ## Adjust width based on number of columns
-  heatmap_width <- unit(max(1.5, ncol(mat) * 0.4), "cm")
 
   ## Create heatmap
   ht <- Heatmap(
@@ -406,19 +446,20 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
     cluster_columns = FALSE,
     show_row_names = TRUE,
     show_column_names = TRUE,
-    column_names_rot = 45,
+    column_names_rot = 0,
+    column_names_centered = TRUE,
     row_split = factor(gene_to_category, levels = names(gene_categories)),
     row_gap = unit(1.5, "mm"),
     row_title_rot = 0,
     row_title_gp = gpar(fontsize = 9, fontface = "bold"),
     row_names_gp = gpar(fontsize = 8),
-    column_names_gp = gpar(fontsize = 8, fontface = "bold"),
+    column_names_gp = gpar(fontsize = 9, fontface = "bold"),
     column_title = contrast_name,
     column_title_gp = gpar(fontsize = 11, fontface = "bold"),
     border = TRUE,
     border_gp = gpar(col = "black", lwd = 0.8),
-    rect_gp = gpar(col = "grey90", lwd = 0.3),
-    width = heatmap_width,
+    rect_gp = gpar(col = "white", lwd = 0.5),
+    width = unit(2.5, "cm"),
     heatmap_legend_param = list(
       title = legend_title,
       title_position = "topcenter",
@@ -435,7 +476,7 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   n_categories <- length(unique(gene_to_category))
 
   png(file.path(output_dir, plot_file),
-      width = max(500, 300 + ncol(mat) * 80),
+      width = 600,
       height = max(400, n_genes * 18 + n_categories * 30),
       res = 150)
   draw(ht, padding = unit(c(2, 12, 2, 2), "mm"))
@@ -455,7 +496,9 @@ for (de_file in de_files) {
   if (!is.na(contrast)) {
     create_grouped_heatmap(
       de_file, contrast, gene_categories,
-      counts_file = if (has_counts) counts_file else NULL
+      counts_raw = counts_raw,
+      sample_annot = sample_annot,
+      outliers = outlier_samples
     )
   }
 }
@@ -465,7 +508,7 @@ cat("\n======================================\n")
 cat("=== PART 4 COMPLETE ===\n")
 cat("======================================\n")
 cat("Created:\n")
-cat("  - GO:BP enrichment dot plots (top 15, ordered by p-value)\n")
-cat("  - KEGG enrichment dot plots (top 15, ordered by p-value)\n")
-cat("  - Grouped gene heatmaps\n")
+cat("  - GO:BP enrichment dot plots\n")
+cat("  - KEGG enrichment dot plots\n")
+cat("  - Grouped gene heatmaps (CTL vs KAT8KD)\n")
 cat("\nAll plots saved to: ", plots_dir, "\n\n", sep = "")
