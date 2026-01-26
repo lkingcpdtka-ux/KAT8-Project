@@ -97,11 +97,9 @@ simplify_go_bp <- TRUE
 simplify_go_cutoff <- 0.7
 top_n_per_direction <- 10
 
-fgsea_params <- list(
-  min_size     = 5,
-  max_size     = 500,
-  n_perm_simple = 10000,
-  score_type   = "std",
+gsea_params <- list(
+  min_gs_size  = 5,
+  max_gs_size  = 500,
   rank_metric  = "Wald statistic"
 )
 
@@ -124,12 +122,9 @@ gse_kegg_params <- list(
 ##
 ## 2. RELAX GENE SET SIZES (allow smaller pathways):
 ##    In gseGO/gseKEGG calls below, change:
-##    minSize = 3  # Was 5
+##    minGSSize = 3  # Was 5
 ##
-## 3. INCREASE PERMUTATIONS (more power):
-##    nPermSimple = 50000  # Was 10000
-##
-## 4. USE DIFFERENT RANKING METRIC:
+## 3. USE DIFFERENT RANKING METRIC:
 ##    Instead of Wald stat, try: -log10(pvalue) * sign(logFC)
 ##
 ## Note: GSEA doesn't need hard DEG cutoffs - it uses the full
@@ -163,12 +158,8 @@ run_hallmark <- FALSE     # MSigDB Hallmark (50 well-defined signatures)
 ##   - Alternative: -log10(pvalue) * sign(logFC) (mentioned in troubleshooting)
 ##
 ## GSEA CORE PARAMETERS:
-##   - minSize: 5 (minimum genes in pathway, smaller pathways excluded)
-##   - maxSize: 500 (maximum genes in pathway, larger pathways excluded)
-##   - nPermSimple: 10000 (number of permutations for p-value calculation)
-##     * More permutations = more accurate p-values but slower
-##     * 10000 is standard; can increase to 50000 for more power
-##   - scoreType: "std" (default, standard enrichment score)
+##   - minGSSize: 5 (minimum genes in pathway, smaller pathways excluded)
+##   - maxGSSize: 500 (maximum genes in pathway, larger pathways excluded)
 ##
 ## SIGNIFICANCE THRESHOLDS:
 ##   - FDR cutoff: 0.05 (Benjamini-Hochberg adjusted p-value)
@@ -361,8 +352,8 @@ tryCatch({
           OrgDb        = org.Mm.eg.db,
           ont          = "BP",
           keyType      = "ENTREZID",
-          minGSSize    = fgsea_params$min_size,
-          maxGSSize    = fgsea_params$max_size,
+          minGSSize    = gsea_params$min_gs_size,
+          maxGSSize    = gsea_params$max_gs_size,
           pvalueCutoff = 1.0,
           pAdjustMethod = "BH",
           verbose      = FALSE,
@@ -691,7 +682,7 @@ tryCatch({
             param_caption <- paste(
               paste0(
                 "FDR < ", fdr_cutoff,
-                " | Top ", top_n_per_direction, " per direction | Ranked by ", fgsea_params$rank_metric
+                " | Top ", top_n_per_direction, " per direction | Ranked by ", gsea_params$rank_metric
               ),
               paste0("Method: gseKEGG (", gse_kegg_params$organism, ")"),
               sep = "\n"
@@ -700,7 +691,7 @@ tryCatch({
             param_caption <- paste(
               paste0(
                 "FDR < ", fdr_cutoff,
-                " | Top ", top_n_per_direction, " per direction | Ranked by ", fgsea_params$rank_metric
+                " | Top ", top_n_per_direction, " per direction | Ranked by ", gsea_params$rank_metric
               ),
               "Method: gseGO (BP)",
               sep = "\n"
@@ -709,7 +700,7 @@ tryCatch({
             param_caption <- paste(
               paste0(
                 "FDR < ", fdr_cutoff,
-                " | Top ", top_n_per_direction, " per direction | Ranked by ", fgsea_params$rank_metric
+                " | Top ", top_n_per_direction, " per direction | Ranked by ", gsea_params$rank_metric
               ),
               "Method: GSEA",
               sep = "\n"
