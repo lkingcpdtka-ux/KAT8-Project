@@ -841,12 +841,7 @@ tryCatch({
                 "FDR < ", fdr_cutoff,
                 " | Top ", top_n_per_direction, " per direction | Ranked by ", fgsea_params$rank_metric
               ),
-              paste0(
-                "gseKEGG minGSSize=", gse_kegg_params$min_gs_size,
-                " maxGSSize=", gse_kegg_params$max_gs_size,
-                " | pvalueCutoff=", gse_kegg_params$pvalue_cutoff,
-                " | pAdjustMethod=", gse_kegg_params$p_adjust_method
-              ),
+              paste0("Method: gseKEGG (", gse_kegg_params$organism, ")"),
               sep = "\n"
             )
           } else {
@@ -855,17 +850,7 @@ tryCatch({
                 "FDR < ", fdr_cutoff,
                 " | Top ", top_n_per_direction, " per direction | Ranked by ", fgsea_params$rank_metric
               ),
-              paste0(
-                "fgsea minSize=", fgsea_params$min_size,
-                " maxSize=", fgsea_params$max_size,
-                " | nPermSimple=", fgsea_params$n_perm_simple,
-                " | scoreType=", fgsea_params$score_type
-              ),
-              if (db_name == "gobp" && simplify_go) {
-                paste0("GO simplify: TRUE (cutoff=", simplify_cutoff, ")")
-              } else {
-                NULL
-              },
+              paste0("Method: fgsea"),
               sep = "\n"
             )
           }

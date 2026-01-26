@@ -583,12 +583,6 @@ tryCatch({
             " | |log2FC| > ", logfc_cutoff,
             " | Top ", ora_plot_params$top_n, " pathways"
           ),
-          paste0(
-            "pvalueCutoff=", ora_enrich_params$pvalue_cutoff,
-            " | qvalueCutoff=", ora_enrich_params$qvalue_cutoff,
-            " | minGSSize=", ora_enrich_params$min_gs_size,
-            " maxGSSize=", ora_enrich_params$max_gs_size
-          ),
           paste0("Ordered by ", ora_plot_params$order_by, " | ", universe_label),
           sep = "\n"
         )

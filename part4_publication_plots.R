@@ -182,14 +182,9 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   param_caption <- paste(
     paste0(
       "FDR < ", ora_dotplot_params$fdr_cutoff,
-      " | Count \u2265 ", ora_dotplot_params$min_count,
       " | Top ", top_n, " pathways"
     ),
-    paste0(
-      "Ordered by ", ora_dotplot_params$order_by,
-      " (tie-breaker: ", ora_dotplot_params$tie_breaker, ")",
-      " | -log10(FDR) cap=", round(fdr_cap, 2)
-    ),
+    paste0("Ordered by ", ora_dotplot_params$order_by),
     sep = "\n"
   )
 
