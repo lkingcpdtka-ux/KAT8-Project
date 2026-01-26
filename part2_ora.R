@@ -111,7 +111,7 @@ fdr_cut   <- 0.05
 ##   - Standard approach in many publications
 ##
 ## CURRENT SETTING:
-use_universe <- FALSE  ## Change to TRUE for statistical rigor
+use_universe <- TRUE   ## Using background gene set (statistically rigorous)
 ## ============================================================
 
 ## ============================================================
