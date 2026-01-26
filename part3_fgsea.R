@@ -100,6 +100,23 @@ simplify_go_bp <- TRUE
 simplify_go_cutoff <- 0.7
 top_n_per_direction <- 10
 
+fgsea_params <- list(
+  min_size     = 5,
+  max_size     = 500,
+  n_perm_simple = 10000,
+  score_type   = "std",
+  rank_metric  = "Wald statistic"
+)
+
+gse_kegg_params <- list(
+  min_gs_size     = 5,
+  max_gs_size     = 500,
+  pvalue_cutoff   = 0.1,
+  p_adjust_method = "BH",
+  organism        = "mmu",
+  seed            = TRUE
+)
+
 ## ============================================================
 ## TROUBLESHOOTING: If GWAT has few down-regulated pathways
 ## ============================================================
@@ -376,9 +393,9 @@ tryCatch({
         fgsea_go <- fgsea(
           pathways = go_bp_list,
           stats    = ranked_genes,
-          minSize  = 5,
-          maxSize  = 500,
-          nPermSimple = 10000
+          minSize  = fgsea_params$min_size,
+          maxSize  = fgsea_params$max_size,
+          nPermSimple = fgsea_params$n_perm_simple
         )
         
         if (!is.null(fgsea_go) && nrow(fgsea_go) > 0) {
@@ -520,13 +537,13 @@ tryCatch({
         ## Step 2: Run gseKEGG
         gsea_kegg <- gseKEGG(
           geneList     = kegg_genelist,
-          organism     = "mmu",
-          minGSSize    = 5,
-          maxGSSize    = 500,
-          pvalueCutoff = 0.1,        ## Initial filter (will use fdr_cutoff for final)
-          pAdjustMethod = "BH",
+          organism     = gse_kegg_params$organism,
+          minGSSize    = gse_kegg_params$min_gs_size,
+          maxGSSize    = gse_kegg_params$max_gs_size,
+          pvalueCutoff = gse_kegg_params$pvalue_cutoff,        ## Initial filter (will use fdr_cutoff for final)
+          pAdjustMethod = gse_kegg_params$p_adjust_method,
           verbose      = FALSE,
-          seed         = TRUE        ## For reproducibility
+          seed         = gse_kegg_params$seed        ## For reproducibility
         )
 
         if (!is.null(gsea_kegg) && nrow(gsea_kegg@result) > 0) {
@@ -539,7 +556,36 @@ tryCatch({
               pathway = ID,
               padj = p.adjust,
               leadingEdge = core_enrichment
-            ) %>%
+            )
+
+          ## Remove duplicate/legacy columns if present
+          if ("leading_edge" %in% colnames(kegg_results)) {
+            kegg_results <- kegg_results %>% dplyr::select(-leading_edge)
+          }
+
+          ## Map KEGG leading edge Entrez IDs back to gene symbols
+          entrez_to_symbol <- symbol_to_entrez %>%
+            dplyr::distinct(ENTREZID, SYMBOL)
+          if ("leadingEdge" %in% colnames(kegg_results)) {
+            kegg_results$leadingEdge_symbols <- vapply(
+              kegg_results$leadingEdge,
+              function(ids) {
+                if (is.na(ids) || ids == "") {
+                  return(NA_character_)
+                }
+                id_vec <- unlist(strsplit(ids, "/", fixed = TRUE))
+                symbol_vec <- entrez_to_symbol$SYMBOL[match(id_vec, entrez_to_symbol$ENTREZID)]
+                symbol_vec <- symbol_vec[!is.na(symbol_vec)]
+                if (length(symbol_vec) == 0) {
+                  return(NA_character_)
+                }
+                paste(symbol_vec, collapse = ";")
+              },
+              character(1)
+            )
+          }
+
+          kegg_results <- kegg_results %>%
             dplyr::mutate(
               ## Clean pathway IDs for display
               pathway_display = paste0("mmu", pathway)
@@ -610,9 +656,9 @@ tryCatch({
         fgsea_wp <- fgsea(
           pathways = wikipathways_list,
           stats    = ranked_genes,
-          minSize  = 5,
-          maxSize  = 500,
-          nPermSimple = 10000
+          minSize  = fgsea_params$min_size,
+          maxSize  = fgsea_params$max_size,
+          nPermSimple = fgsea_params$n_perm_simple
         )
         
         if (!is.null(fgsea_wp) && nrow(fgsea_wp) > 0) {
@@ -674,9 +720,9 @@ tryCatch({
         fgsea_hallmark <- fgsea(
           pathways = hallmark_list,
           stats    = ranked_genes,
-          minSize  = 5,
-          maxSize  = 500,
-          nPermSimple = 10000
+          minSize  = fgsea_params$min_size,
+          maxSize  = fgsea_params$max_size,
+          nPermSimple = fgsea_params$n_perm_simple
         )
         
         if (!is.null(fgsea_hallmark) && nrow(fgsea_hallmark) > 0) {
@@ -789,7 +835,40 @@ tryCatch({
         
         if (nrow(plot_data) > 0) {
           ## Parameter caption
-          param_caption <- paste0("FDR < ", fdr_cutoff, " | Top ", top_n_per_direction, " per direction | Ranked by genes")
+          if (db_name == "kegg") {
+            param_caption <- paste(
+              paste0(
+                "FDR < ", fdr_cutoff,
+                " | Top ", top_n_per_direction, " per direction | Ranked by ", fgsea_params$rank_metric
+              ),
+              paste0(
+                "gseKEGG minGSSize=", gse_kegg_params$min_gs_size,
+                " maxGSSize=", gse_kegg_params$max_gs_size,
+                " | pvalueCutoff=", gse_kegg_params$pvalue_cutoff,
+                " | pAdjustMethod=", gse_kegg_params$p_adjust_method
+              ),
+              sep = "\n"
+            )
+          } else {
+            param_caption <- paste(
+              paste0(
+                "FDR < ", fdr_cutoff,
+                " | Top ", top_n_per_direction, " per direction | Ranked by ", fgsea_params$rank_metric
+              ),
+              paste0(
+                "fgsea minSize=", fgsea_params$min_size,
+                " maxSize=", fgsea_params$max_size,
+                " | nPermSimple=", fgsea_params$n_perm_simple,
+                " | scoreType=", fgsea_params$score_type
+              ),
+              if (db_name == "gobp" && simplify_go) {
+                paste0("GO simplify: TRUE (cutoff=", simplify_cutoff, ")")
+              } else {
+                NULL
+              },
+              sep = "\n"
+            )
+          }
 
           ## Use consistent colors: orange for up, blue for down
           ## Title shows "GSEA" (gseKEGG for KEGG, fgsea for others)

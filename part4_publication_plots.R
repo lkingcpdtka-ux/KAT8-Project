@@ -57,6 +57,21 @@ cat("[INFO] Run tag: ", run_tag, "\n", sep = "")
 tables_dir <- file.path(outdir, "tables")
 plots_dir <- file.path(outdir, "plots")
 
+ora_dotplot_params <- list(
+  fdr_cutoff  = 0.05,
+  min_count   = 3,
+  top_n       = list("GO:BP" = 15, "KEGG" = 10),
+  default_top_n = 15,
+  order_by    = "adj. p-value",
+  tie_breaker = "gene ratio"
+)
+
+heatmap_params <- list(
+  lfc_clip    = 2.0,
+  lfc_label   = "log2FC (DESeq2)",
+  reference   = "CTL=0 reference"
+)
+
 
 ## ============================================================
 ## SECTION 1: DOT PLOTS FOR ORA PATHWAY ENRICHMENT
@@ -88,7 +103,10 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   }
 
   ## Set top_n based on database
-  top_n <- if (database == "KEGG") 10 else 15
+  top_n <- ora_dotplot_params$top_n[[database]]
+  if (is.null(top_n)) {
+    top_n <- ora_dotplot_params$default_top_n
+  }
 
   ## Parse GeneRatio to numeric
   if ("GeneRatio" %in% colnames(ora_data) && is.character(ora_data$GeneRatio)) {
@@ -115,12 +133,19 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   ## - Count >= 3 (minimum genes for reliable enrichment)
   ## - Rank by p.adjust (ascending), break ties by GeneRatio (descending)
   plot_data <- ora_data %>%
-    dplyr::filter(p.adjust < 0.05, Count >= 3) %>%
+    dplyr::filter(p.adjust < ora_dotplot_params$fdr_cutoff, Count >= ora_dotplot_params$min_count) %>%
     dplyr::arrange(p.adjust, desc(GeneRatio_numeric)) %>%
     dplyr::slice_head(n = top_n)
 
   if (nrow(plot_data) == 0) {
-    cat("[WARN] No significant pathways meeting criteria (FDR<0.05, Count>=3)\n")
+    cat(
+      "[WARN] No significant pathways meeting criteria (FDR<",
+      ora_dotplot_params$fdr_cutoff,
+      ", Count>=",
+      ora_dotplot_params$min_count,
+      ")\n",
+      sep = ""
+    )
     return(NULL)
   }
 
@@ -153,8 +178,20 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
   plot_title <- paste0(database, " Enrichment\n(", contrast_name, ", ", direction_label, ")")
 
-  ## Parameter caption for bottom of plot (simplified)
-  param_caption <- paste0("FDR < 0.05 | Top ", top_n, " pathways | Ordered by adj. p-value")
+  ## Parameter caption for bottom of plot
+  param_caption <- paste(
+    paste0(
+      "FDR < ", ora_dotplot_params$fdr_cutoff,
+      " | Count \u2265 ", ora_dotplot_params$min_count,
+      " | Top ", top_n, " pathways"
+    ),
+    paste0(
+      "Ordered by ", ora_dotplot_params$order_by,
+      " (tie-breaker: ", ora_dotplot_params$tie_breaker, ")",
+      " | -log10(FDR) cap=", round(fdr_cap, 2)
+    ),
+    sep = "\n"
+  )
 
   ## Create dot plot
   ## Size = Count, Color = -log10(FDR)
@@ -271,7 +308,7 @@ cat("\n=== CREATING GROUPED GENE HEATMAPS ===\n")
 ## ============================================================
 ## HEATMAP SETTINGS
 ## ============================================================
-heatmap_lfc_clip <- 2.0       ## Clip log2FC at ±2 (use 1.5 for subtle effects)
+heatmap_lfc_clip <- heatmap_params$lfc_clip       ## Clip log2FC at ±2 (use 1.5 for subtle effects)
 ## ============================================================
 
 ## ============================================================
@@ -396,7 +433,13 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   )
 
   ## Parameter caption
-  param_caption <- paste0("log2FC (DESeq2) | Clipped at \u00b1", lfc_clip)
+  param_caption <- paste0(
+    heatmap_params$lfc_label,
+    " | ",
+    heatmap_params$reference,
+    " | Clipped at \u00b1",
+    lfc_clip
+  )
 
   ## Create heatmap
   ht <- Heatmap(

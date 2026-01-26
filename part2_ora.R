@@ -130,6 +130,20 @@ default_fdr_cut   <- 0.05
 use_universe <- TRUE   ## Using background gene set (statistically rigorous)
 ## ============================================================
 
+## Plot/output parameters (used in captions)
+ora_enrich_params <- list(
+  pvalue_cutoff  = 0.1,
+  qvalue_cutoff  = 0.2,
+  min_gs_size    = 5,
+  max_gs_size    = 500,
+  simplify_cutoff = 0.7
+)
+
+ora_plot_params <- list(
+  top_n    = 15,
+  order_by = "gene ratio"
+)
+
 ## ============================================================
 ## COMPLETE ORA PARAMETER DOCUMENTATION
 ## ============================================================
@@ -256,7 +270,8 @@ tryCatch({
   
   ## 4.3) ORA analysis function ------------------------------
   run_ora_analysis <- function(gene_list, direction, contrast_name,
-                               universe_entrez, run_tag, outdir, fdr_cutoff = 0.05) {
+                               universe_entrez, run_tag, outdir, fdr_cutoff = 0.05,
+                               logfc_cutoff = 1.0) {
 
     cat("\n--- ORA Pathway enrichment: ", direction, " genes (", contrast_name, ") ---\n", sep = "")
     cat("[INFO] Input gene count: ", length(gene_list), " genes\n", sep = "")
@@ -335,11 +350,11 @@ tryCatch({
           gene          = entrez_ids,
           OrgDb         = org.Mm.eg.db,
           ont           = "BP",
-          pvalueCutoff  = 0.1,
-          qvalueCutoff  = 0.2,
+          pvalueCutoff  = ora_enrich_params$pvalue_cutoff,
+          qvalueCutoff  = ora_enrich_params$qvalue_cutoff,
           readable      = TRUE,
-          minGSSize     = 5,
-          maxGSSize     = 500,
+          minGSSize     = ora_enrich_params$min_gs_size,
+          maxGSSize     = ora_enrich_params$max_gs_size,
           universe      = universe_entrez
         )
       } else {
@@ -347,15 +362,20 @@ tryCatch({
           gene          = entrez_ids,
           OrgDb         = org.Mm.eg.db,
           ont           = "BP",
-          pvalueCutoff  = 0.1,
-          qvalueCutoff  = 0.2,
+          pvalueCutoff  = ora_enrich_params$pvalue_cutoff,
+          qvalueCutoff  = ora_enrich_params$qvalue_cutoff,
           readable      = TRUE,
-          minGSSize     = 5,
-          maxGSSize     = 500
+          minGSSize     = ora_enrich_params$min_gs_size,
+          maxGSSize     = ora_enrich_params$max_gs_size
         )
       }
       if (!is.null(enrich_go) && nrow(enrich_go@result) > 0) {
-        enrich_go_simp <- simplify(enrich_go, cutoff = 0.7, by = "p.adjust", select_fun = min)
+        enrich_go_simp <- simplify(
+          enrich_go,
+          cutoff = ora_enrich_params$simplify_cutoff,
+          by = "p.adjust",
+          select_fun = min
+        )
         results$gobp <- enrich_go_simp
         n_sig <- sum(enrich_go_simp@result$p.adjust < fdr_cutoff, na.rm = TRUE)
         cat("[OK] GO:BP enrichment: ", nrow(enrich_go_simp@result), " terms (simplified), ",
@@ -414,20 +434,20 @@ tryCatch({
         enrichKEGG(
           gene         = entrez_ids,
           organism     = "mmu",
-          pvalueCutoff = 0.1,
-          qvalueCutoff = 0.2,
-          minGSSize    = 5,
-          maxGSSize    = 500,
+          pvalueCutoff = ora_enrich_params$pvalue_cutoff,
+          qvalueCutoff = ora_enrich_params$qvalue_cutoff,
+          minGSSize    = ora_enrich_params$min_gs_size,
+          maxGSSize    = ora_enrich_params$max_gs_size,
           universe     = universe_entrez
         )
       } else {
         enrichKEGG(
           gene         = entrez_ids,
           organism     = "mmu",
-          pvalueCutoff = 0.1,
-          qvalueCutoff = 0.2,
-          minGSSize    = 5,
-          maxGSSize    = 500
+          pvalueCutoff = ora_enrich_params$pvalue_cutoff,
+          qvalueCutoff = ora_enrich_params$qvalue_cutoff,
+          minGSSize    = ora_enrich_params$min_gs_size,
+          maxGSSize    = ora_enrich_params$max_gs_size
         )
       }
       
@@ -522,7 +542,7 @@ tryCatch({
         
         ## Create bar plot (top 15 terms) - ordered by gene ratio, direction-specific colors
         plot_data <- sig_results %>%
-          dplyr::slice_head(n = 15)
+          dplyr::slice_head(n = ora_plot_params$top_n)
         
         ## Parse GeneRatio to numeric
         plot_data$GeneRatio_numeric <- sapply(strsplit(plot_data$GeneRatio, "/"), function(x) {
@@ -552,7 +572,26 @@ tryCatch({
         }
         
         ## Parameter caption
-        param_caption <- paste0("FDR < 0.05 | Top 15 pathways | Ordered by gene ratio")
+        universe_label <- if (is.null(universe_entrez)) {
+          "Universe: all genes (default)"
+        } else {
+          paste0("Universe: ", length(universe_entrez), " DESeq2-tested genes")
+        }
+        param_caption <- paste(
+          paste0(
+            "FDR < ", fdr_cutoff,
+            " | |log2FC| > ", logfc_cutoff,
+            " | Top ", ora_plot_params$top_n, " pathways"
+          ),
+          paste0(
+            "pvalueCutoff=", ora_enrich_params$pvalue_cutoff,
+            " | qvalueCutoff=", ora_enrich_params$qvalue_cutoff,
+            " | minGSSize=", ora_enrich_params$min_gs_size,
+            " maxGSSize=", ora_enrich_params$max_gs_size
+          ),
+          paste0("Ordered by ", ora_plot_params$order_by, " | ", universe_label),
+          sep = "\n"
+        )
 
         p_pathway <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description, fill = p.adjust)) +
           geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
@@ -662,7 +701,8 @@ tryCatch({
         universe_entrez = universe_entrez,
         run_tag         = run_tag,
         outdir          = outdir,
-        fdr_cutoff      = fdr_cut
+        fdr_cutoff      = fdr_cut,
+        logfc_cutoff    = logFC_cut
       )
     } else {
       cat("[WARN] Too few up-regulated genes for ORA\n")
@@ -677,7 +717,8 @@ tryCatch({
         universe_entrez = universe_entrez,
         run_tag         = run_tag,
         outdir          = outdir,
-        fdr_cutoff      = fdr_cut
+        fdr_cutoff      = fdr_cut,
+        logfc_cutoff    = logFC_cut
       )
     } else {
       cat("[WARN] Too few down-regulated genes for ORA\n")
