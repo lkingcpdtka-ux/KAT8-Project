@@ -848,7 +848,7 @@ tryCatch({
       cat("  ", row$Database, ":\n", sep = "")
       cat("    Ranked gene list size: ", row$N_Input_Genes, "\n", sep = "")
       cat("    Pathways tested: ", row$N_Pathways_Tested, "\n", sep = "")
-      cat("    Significant pathways (padj<0.05): ", row$N_Sig_Pathways, "\n", sep = "")
+      cat("    Significant pathways (padj<", fdr_cut, "): ", row$N_Sig_Pathways, "\n", sep = "")
       if (row$N_Sig_Pathways > 0) {
         cat("      Up-regulated (NES>0): ", row$N_Sig_Up, "\n", sep = "")
         cat("      Down-regulated (NES<0): ", row$N_Sig_Down, "\n", sep = "")
