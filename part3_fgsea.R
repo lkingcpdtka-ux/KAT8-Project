@@ -765,6 +765,9 @@ tryCatch({
           )
         
         if (nrow(plot_data) > 0) {
+          ## Parameter caption
+          param_caption <- paste0("FDR < ", fdr_cutoff, " | Top ", top_n_per_direction, " per direction | Ranked by genes")
+
           ## Use consistent colors: orange for up, blue for down
           p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = Direction)) +
             geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
@@ -775,7 +778,8 @@ tryCatch({
             labs(
               title = paste0("fgsea ", toupper(db_name), ": ", contrast_name),
               x = "Normalized Enrichment Score (NES)",
-              y = NULL
+              y = NULL,
+              caption = param_caption
             ) +
             theme_classic(base_size = 12) +
             theme(
@@ -786,7 +790,8 @@ tryCatch({
               legend.title = element_text(size = 10, face = "bold"),
               legend.text = element_text(size = 9),
               legend.position = "right",
-              panel.border = element_rect(color = "black", fill = NA, linewidth = 1)
+              panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+              plot.caption = element_text(size = 8, color = "grey40", hjust = 0.5, margin = margin(t = 8))
             ) +
             geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5)
           
