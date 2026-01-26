@@ -166,12 +166,12 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   ## Direction-specific color gradient (cool to warm, light to dark)
   if (direction == "Up") {
     ## Orange gradient for upregulated
-    color_low <- "#FEE8C8"   ## Light
-    color_high <- "#B30000"  ## Dark red-orange
+    color_low <- "#FDD49E"   ## Light orange
+    color_high <- "#E69F00"  ## Orange
   } else {
     ## Blue gradient for downregulated
-    color_low <- "#DEEBF7"   ## Light
-    color_high <- "#08306B"  ## Dark blue
+    color_low <- "#9ECAE1"   ## Light blue
+    color_high <- "#0072B2"  ## Blue
   }
 
   ## Build title in journal format
