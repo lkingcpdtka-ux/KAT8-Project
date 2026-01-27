@@ -581,11 +581,17 @@ tryCatch({
         } else {
           paste0("Universe: ", length(universe_entrez), " DESeq2-tested genes")
         }
+        ## Add simplification info for GO:BP
+        simplify_label <- if (db_name == "gobp") {
+          paste0(" | Simplified (cutoff=", ora_enrich_params$simplify_cutoff, ")")
+        } else {
+          ""
+        }
         param_caption <- paste(
           paste0(
             "FDR < ", fdr_cutoff,
             " | |log2FC| > ", logfc_cutoff,
-            " | Top ", ora_plot_params$top_n, " pathways"
+            " | Top ", ora_plot_params$top_n, " pathways", simplify_label
           ),
           paste0("Ordered by ", ora_plot_params$order_by, " | ", universe_label),
           sep = "\n"
