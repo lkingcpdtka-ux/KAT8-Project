@@ -141,7 +141,7 @@ ora_enrich_params <- list(
 
 ora_plot_params <- list(
   top_n    = 15,
-  order_by = "gene ratio"
+  order_by = "adj. p-value"
 )
 
 ## ============================================================
@@ -544,7 +544,7 @@ tryCatch({
         write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
         cat("[OK] Saved pathway table: ", table_file, " (", nrow(sig_results), " terms)\n", sep = "")
         
-        ## Create bar plot (top 15 terms) - ordered by gene ratio, direction-specific colors
+        ## Create bar plot (top 15 terms) - ordered by adjusted p-value, direction-specific colors
         plot_data <- sig_results %>%
           dplyr::slice_head(n = ora_plot_params$top_n)
         
@@ -555,9 +555,9 @@ tryCatch({
           num / denom
         })
         
-        ## Order by gene ratio ascending, then reverse for plotting (largest at top)
+        ## Order by adjusted p-value (most significant at top)
         plot_data <- plot_data %>%
-          dplyr::arrange(GeneRatio_numeric) %>%
+          dplyr::arrange(dplyr::desc(p.adjust)) %>%
           dplyr::mutate(Description = factor(Description, levels = Description))
         
         ## Direction-specific color gradient (orange for Up, blue for Down)
