@@ -557,13 +557,21 @@ tryCatch({
   contrast_names <- names(contrast_definitions)
   
   ## 4.13) Containers ---------------------------------------
+  ## DEG_summary: Uses AUTHORITATIVE DEG definition
+  ## DEG = gene with padj < fdr_cutoff AND |log2FoldChange| > logFC_cutoff
+  ## N_DEG = N_Up + N_Down (no FDR-only counts - that would be misleading)
   deg_summary <- data.frame(
-    Contrast          = contrast_names,
-    N_DEG_FDR_lt_0_05 = NA_integer_,
-    N_Up              = NA_integer_,
-    N_Down            = NA_integer_,
-    stringsAsFactors  = FALSE
+    Contrast     = contrast_names,
+    N_DEG        = NA_integer_,
+    N_Up         = NA_integer_,
+    N_Down       = NA_integer_,
+    logFC_cutoff = logFC_cut_tissue,
+    fdr_cutoff   = fdr_cut_tissue,
+    stringsAsFactors = FALSE
   )
+
+  ## Container for authoritative DEG lists (for downstream ORA/fgsea)
+  authoritative_deg_lists <- list()
   
   tt_list <- vector("list", length(contrast_names))
   names(tt_list) <- contrast_names
@@ -621,9 +629,26 @@ tryCatch({
     cat("DE table written: ", file.path(outdir, "tables", de_file), "\n", sep = "")
     cat("==========================================================\n\n")
     
-    deg_summary$N_DEG_FDR_lt_0_05[deg_summary$Contrast == cn] <- n_fdr_only
+    ## Record AUTHORITATIVE DEG counts (padj + logFC thresholds)
+    ## N_DEG = N_Up + N_Down (no FDR-only counts to avoid confusion)
+    deg_summary$N_DEG[deg_summary$Contrast == cn] <- n_both
     deg_summary$N_Up[deg_summary$Contrast == cn] <- n_up_both
     deg_summary$N_Down[deg_summary$Contrast == cn] <- n_down_both
+
+    ## Store authoritative DEG lists for downstream ORA/fgsea scripts
+    up_genes <- tt %>%
+      dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut_tissue, logFC > logFC_cut_tissue) %>%
+      rownames()
+    down_genes <- tt %>%
+      dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut_tissue, logFC < -logFC_cut_tissue) %>%
+      rownames()
+
+    authoritative_deg_lists[[cn]] <- list(
+      up = up_genes,
+      down = down_genes,
+      logFC_cutoff = logFC_cut_tissue,
+      fdr_cutoff = fdr_cut_tissue
+    )
     
     ## Volcano
     tt_plot <- tt %>%
@@ -1026,6 +1051,27 @@ tryCatch({
   deg_summary_file <- paste0("DEG_summary_tissue_", run_tag, ".csv")
   write.csv(deg_summary, file = file.path(outdir, "tables", deg_summary_file), row.names = FALSE)
   cat("\nDEG summary written: ", file.path(outdir, "tables", deg_summary_file), "\n", sep = "")
+
+  ## 4.15b) Export authoritative DEG lists for downstream ORA/fgsea ----
+  ## This ensures ORA and fgsea use IDENTICAL gene sets (no drift)
+  deg_lists_file <- paste0("DEG_lists_authoritative_", run_tag, ".rds")
+  saveRDS(authoritative_deg_lists, file = file.path(outdir, "tables", deg_lists_file))
+  cat("Authoritative DEG lists saved: ", file.path(outdir, "tables", deg_lists_file), "\n", sep = "")
+
+  ## Also print validation summary
+  cat("\n==========================================================\n")
+  cat("=== VALIDATION: AUTHORITATIVE DEG DEFINITION ===\n")
+  cat("==========================================================\n")
+  cat("DEG definition: padj < ", fdr_cut_tissue, " AND |log2FC| > ", logFC_cut_tissue, "\n", sep = "")
+  cat("\nSUMMARY CHECK: N_DEG = N_Up + N_Down\n")
+  for (cn in contrast_names) {
+    n_deg <- deg_summary$N_DEG[deg_summary$Contrast == cn]
+    n_up <- deg_summary$N_Up[deg_summary$Contrast == cn]
+    n_down <- deg_summary$N_Down[deg_summary$Contrast == cn]
+    check <- ifelse(n_deg == n_up + n_down, "PASS", "FAIL")
+    cat("  ", cn, ": N_DEG=", n_deg, " (Up=", n_up, " + Down=", n_down, ") [", check, "]\n", sep = "")
+  }
+  cat("==========================================================\n")
   
   ## 4.16) save_core bookkeeping ----------------------------
   if (!is.null(hero_volcano_file)) {
