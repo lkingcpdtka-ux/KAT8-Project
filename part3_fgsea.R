@@ -1,14 +1,14 @@
 #!/usr/bin/env Rscript
 
 ## =========================================================
-## KAT8 bulk RNA-seq - PART 3: FGSEA PATHWAY ANALYSIS
+## KAT8 bulk RNA-seq - PART 3: GSEA PATHWAY ANALYSIS
 ## =========================================================
-## This script performs Gene Set Enrichment Analysis (fgsea)
+## This script performs Gene Set Enrichment Analysis (gseGO/gseKEGG)
 ## for GO:BP and KEGG pathways using ranked gene lists from Part 1
 ##
 ## FIXES APPLIED:
 ## - Use DESeq2 Wald statistic for ranking
-## - Fix msigdbr KEGG subcategory filtering
+## - Align GO/KEGG GSEA via clusterProfiler
 ## - Better error handling
 ## - Direction-specific pathway bar plots
 ## =========================================================
@@ -17,12 +17,11 @@
 ## setwd("C:/Users/lking/OneDrive - Louisiana State University/PBRC/Bioinformatics/KAT8KD_RNAseq")
 
 ## 1) Packages ----------------------------------------------
-required_pkgs <- c("dplyr", "ggplot2", "msigdbr")
+required_pkgs <- c("dplyr", "ggplot2")
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
 if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
 
 required_bioc_pkgs <- c(
-  "fgsea",
   "org.Mm.eg.db",
   "AnnotationDbi",
   "GO.db",
@@ -37,12 +36,10 @@ if (length(to_install_bioc) > 0) BiocManager::install(to_install_bioc, ask = FAL
 suppressPackageStartupMessages({
   library(dplyr)
   library(ggplot2)
-  library(fgsea)
   library(org.Mm.eg.db)
   library(AnnotationDbi)
   library(GO.db)
   library(clusterProfiler)
-  library(msigdbr)
 })
 
 ## 2) save_core utilities -----------------------------------
@@ -98,7 +95,22 @@ fdr_cut   <- 0.05
 ## This combines similar pathways (like ORA) - recommended for GO:BP
 simplify_go_bp <- TRUE
 simplify_go_cutoff <- 0.7
-top_n_per_direction <- 10
+top_n_per_direction <- 15
+
+gsea_params <- list(
+  min_gs_size  = 5,
+  max_gs_size  = 500,
+  rank_metric  = "Wald statistic"
+)
+
+gse_kegg_params <- list(
+  min_gs_size     = 5,
+  max_gs_size     = 500,
+  pvalue_cutoff   = 0.1,
+  p_adjust_method = "BH",
+  organism        = "mmu",
+  seed            = TRUE
+)
 
 ## ============================================================
 ## TROUBLESHOOTING: If GWAT has few down-regulated pathways
@@ -109,16 +121,13 @@ top_n_per_direction <- 10
 ##    fdr_cut <- 0.1  # More lenient (was 0.05)
 ##
 ## 2. RELAX GENE SET SIZES (allow smaller pathways):
-##    In fgsea() calls below, change:
-##    minSize = 3  # Was 5
+##    In gseGO/gseKEGG calls below, change:
+##    minGSSize = 3  # Was 5
 ##
-## 3. INCREASE PERMUTATIONS (more power):
-##    nPermSimple = 50000  # Was 10000
-##
-## 4. USE DIFFERENT RANKING METRIC:
+## 3. USE DIFFERENT RANKING METRIC:
 ##    Instead of Wald stat, try: -log10(pvalue) * sign(logFC)
 ##
-## Note: fgsea doesn't need hard DEG cutoffs - it uses the full
+## Note: GSEA doesn't need hard DEG cutoffs - it uses the full
 ## ranked gene list, so it's MORE SENSITIVE than ORA for finding
 ## pathways with subtle shifts.
 ## ============================================================
@@ -128,16 +137,16 @@ top_n_per_direction <- 10
 ## These were previously disabled, which limited pathway discovery
 run_go_bp <- TRUE         # GO Biological Process (large, comprehensive)
 run_kegg <- TRUE          # KEGG pathways (curated, metabolic focus)
-run_wikipathways <- TRUE  # WikiPathways (community-curated)
-run_hallmark <- TRUE      # MSigDB Hallmark (50 well-defined signatures)
+run_wikipathways <- FALSE # WikiPathways (community-curated)
+run_hallmark <- FALSE     # MSigDB Hallmark (50 well-defined signatures)
 
 ## ============================================================
-## COMPLETE FGSEA PARAMETER DOCUMENTATION
+## COMPLETE GSEA PARAMETER DOCUMENTATION
 ## ============================================================
-## This section documents all fgsea parameters for reference
+## This section documents all GSEA parameters for reference
 ##
-## METHOD: Fast Gene Set Enrichment Analysis (fgsea)
-##   - Permutation-based enrichment test (Korotkevich et al. 2021)
+## METHOD: Gene Set Enrichment Analysis (clusterProfiler)
+##   - Rank-based enrichment test
 ##   - Tests if pathway genes are enriched at top/bottom of ranked list
 ##   - Uses ALL genes (not just DEGs) - more sensitive than ORA
 ##   - Calculates Enrichment Score (ES) and Normalized ES (NES)
@@ -148,17 +157,13 @@ run_hallmark <- TRUE      # MSigDB Hallmark (50 well-defined signatures)
 ##   - Positive = up-regulated, Negative = down-regulated
 ##   - Alternative: -log10(pvalue) * sign(logFC) (mentioned in troubleshooting)
 ##
-## FGSEA CORE PARAMETERS:
-##   - minSize: 5 (minimum genes in pathway, smaller pathways excluded)
-##   - maxSize: 500 (maximum genes in pathway, larger pathways excluded)
-##   - nPermSimple: 10000 (number of permutations for p-value calculation)
-##     * More permutations = more accurate p-values but slower
-##     * 10000 is standard; can increase to 50000 for more power
-##   - scoreType: "std" (default, standard enrichment score)
+## GSEA CORE PARAMETERS:
+##   - minGSSize: 5 (minimum genes in pathway, smaller pathways excluded)
+##   - maxGSSize: 500 (maximum genes in pathway, larger pathways excluded)
 ##
 ## SIGNIFICANCE THRESHOLDS:
 ##   - FDR cutoff: 0.05 (Benjamini-Hochberg adjusted p-value)
-##   - No logFC threshold (fgsea uses continuous ranking, not cutoffs)
+##   - No logFC threshold (GSEA uses continuous ranking, not cutoffs)
 ##
 ## DATABASES ANALYZED:
 ##   - GO:BP: Gene Ontology Biological Process
@@ -166,15 +171,9 @@ run_hallmark <- TRUE      # MSigDB Hallmark (50 well-defined signatures)
 ##     * Size: ~17,000+ terms (large, comprehensive)
 ##     * Simplification: Yes (cutoff=0.7, semantic similarity via GOSemSim)
 ##   - KEGG: Kyoto Encyclopedia of Genes and Genomes
-##     * Source: clusterProfiler::gseKEGG() (UPDATED - was msigdbr)
-##     * Now matches ORA's enrichKEGG() for consistency
+##     * Source: clusterProfiler::gseKEGG()
+##     * Matches ORA's enrichKEGG() for consistency
 ##     * Requires ENTREZID mapping
-##   - WikiPathways: Community-curated pathways
-##     * Source: msigdbr (C2:CP:WIKIPATHWAYS)
-##     * Size: ~600+ pathways (diverse biological processes)
-##   - Hallmark: MSigDB Hallmark gene sets
-##     * Source: msigdbr (H collection)
-##     * Size: 50 pathways (well-defined biological states/processes)
 ##
 ## GO:BP SIMPLIFICATION (OPTIONAL):
 ##   - Enabled: simplify_go_bp = TRUE
@@ -250,7 +249,7 @@ tryCatch({
   cat("[INFO] Found ", length(de_files), " DE tables\n")
   
   ## 4.2) Build gene sets ------------------------------------
-  cat("\n=== BUILDING GENE SETS FOR fgsea ===\n")
+  cat("\n=== BUILDING GENE SETS ===\n")
   log_time("Starting gene set construction")
   
   ## GO:BP gene sets (disabled for now)
@@ -301,55 +300,11 @@ tryCatch({
     cat("[INFO] KEGG GSEA disabled (run_kegg = FALSE)\n")
   }
   
-  ## WikiPathways gene sets
-  wikipathways_list <- NULL
-  if (run_wikipathways) {
-    cat("[INFO] Building WikiPathways gene sets from msigdbr...\n")
-    tryCatch({
-      msigdb_wp <- msigdbr(
-        species = "Mus musculus",
-        collection = "C2",
-        subcollection = "CP:WIKIPATHWAYS"
-      )
-      if (nrow(msigdb_wp) == 0) {
-        cat("[WARN] No WikiPathways gene sets found in msigdbr\n")
-      } else {
-        wikipathways_list <- split(msigdb_wp$gene_symbol, msigdb_wp$gs_name)
-        wikipathways_list <- wikipathways_list[
-          sapply(wikipathways_list, length) >= 5 & sapply(wikipathways_list, length) <= 500
-        ]
-        cat("[OK] WikiPathways gene sets: ", length(wikipathways_list), " pathways\n", sep = "")
-      }
-    }, error = function(e) {
-      cat("[WARN] msigdbr WikiPathways failed: ", conditionMessage(e), "\n")
-    })
-  } else {
-    cat("[INFO] WikiPathways gene sets disabled (run_wikipathways = FALSE)\n")
-  }
-  
-  ## Hallmark gene sets
-  hallmark_list <- NULL
-  if (run_hallmark) {
-    cat("[INFO] Building Hallmark gene sets from msigdbr...\n")
-    tryCatch({
-      msigdb_hallmark <- msigdbr(species = "Mus musculus", collection = "H")
-      if (nrow(msigdb_hallmark) == 0) {
-        cat("[WARN] No Hallmark gene sets found in msigdbr\n")
-      } else {
-        hallmark_list <- split(msigdb_hallmark$gene_symbol, msigdb_hallmark$gs_name)
-        hallmark_list <- hallmark_list[sapply(hallmark_list, length) >= 5 & sapply(hallmark_list, length) <= 500]
-        cat("[OK] Hallmark gene sets: ", length(hallmark_list), " pathways\n", sep = "")
-      }
-    }, error = function(e) {
-      cat("[WARN] msigdbr Hallmark failed: ", conditionMessage(e), "\n")
-    })
-  } else {
-    cat("[INFO] Hallmark gene sets disabled (run_hallmark = FALSE)\n")
-  }
+  ## WikiPathways/Hallmark gene sets are disabled in this workflow.
   log_time("Completed gene set construction")
   
-  ## 4.3) fgsea analysis function ----------------------------
-  ## NOTE: KEGG now uses gseKEGG (clusterProfiler) instead of fgsea+msigdbr
+  ## 4.3) GSEA analysis function ----------------------------
+  ## NOTE: GO:BP uses gseGO and KEGG uses gseKEGG (clusterProfiler)
   run_fgsea_analysis <- function(ranked_genes, contrast_name,
                                  go_bp_list, go_bp_term2gene, wikipathways_list, hallmark_list,
                                  de_table,  ## Added: full DE table for ENTREZID mapping
@@ -357,86 +312,118 @@ tryCatch({
                                  simplify_go = FALSE, simplify_cutoff = 0.7,
                                  top_n_per_direction = 10) {
     
-    cat("\n--- fgsea (GSEA): ", contrast_name, " ---\n", sep = "")
+    cat("\n--- GSEA: ", contrast_name, " ---\n", sep = "")
     cat("[INFO] Ranked gene list size: ", length(ranked_genes), " genes\n", sep = "")
     
     if (length(ranked_genes) < 10) {
-      cat("[WARN] Too few genes for fgsea\n")
+      cat("[WARN] Too few genes for GSEA\n")
       return(NULL)
     }
     
     results <- list()
     
-    ## GO:BP fgsea
-    if (run_go_bp && !is.null(go_bp_list) && length(go_bp_list) > 0) {
-      log_time(paste0("Starting GO:BP fgsea for ", contrast_name))
+    ## GO:BP GSEA using clusterProfiler::gseGO()
+    if (run_go_bp) {
+      log_time(paste0("Starting GO:BP gseGO for ", contrast_name))
       tryCatch({
-        cat("[INFO] Running fgsea for GO:BP (", length(go_bp_list), " gene sets)...\n", sep = "")
-        
-        fgsea_go <- fgsea(
-          pathways = go_bp_list,
-          stats    = ranked_genes,
-          minSize  = 5,
-          maxSize  = 500,
-          nPermSimple = 10000
+        cat("[INFO] Running clusterProfiler::gseGO() (ont = BP)...\n")
+
+        ## Map SYMBOL to ENTREZID for gseGO
+        go_symbols <- names(ranked_genes)
+        go_symbol_to_entrez <- AnnotationDbi::select(
+          org.Mm.eg.db,
+          keys = go_symbols,
+          columns = c("SYMBOL", "ENTREZID"),
+          keytype = "SYMBOL"
+        ) %>%
+          dplyr::filter(!is.na(ENTREZID), !is.na(SYMBOL))
+
+        go_symbol_to_entrez$rank_value <- ranked_genes[go_symbol_to_entrez$SYMBOL]
+        go_symbol_to_entrez <- go_symbol_to_entrez %>%
+          dplyr::group_by(ENTREZID) %>%
+          dplyr::slice_max(order_by = abs(rank_value), n = 1, with_ties = FALSE) %>%
+          dplyr::ungroup()
+
+        go_genelist <- setNames(go_symbol_to_entrez$rank_value, go_symbol_to_entrez$ENTREZID)
+        go_genelist <- sort(go_genelist, decreasing = TRUE)
+
+        gsea_go <- gseGO(
+          geneList     = go_genelist,
+          OrgDb        = org.Mm.eg.db,
+          ont          = "BP",
+          keyType      = "ENTREZID",
+          minGSSize    = gsea_params$min_gs_size,
+          maxGSSize    = gsea_params$max_gs_size,
+          pvalueCutoff = 1.0,
+          pAdjustMethod = "BH",
+          verbose      = FALSE,
+          seed         = TRUE
         )
-        
-        if (!is.null(fgsea_go) && nrow(fgsea_go) > 0) {
-          ## Add GO term descriptions from GO.db
-          go_terms <- AnnotationDbi::select(
-            GO.db,
-            keys = fgsea_go$pathway,
-            columns = "TERM",
-            keytype = "GOID"
-          )
-          
-          fgsea_go <- fgsea_go %>%
-            dplyr::left_join(
-              go_terms %>% dplyr::rename(pathway = GOID, Description = TERM),
-              by = "pathway"
+
+        if (!is.null(gsea_go) && nrow(gsea_go@result) > 0) {
+          go_results <- as.data.frame(gsea_go) %>%
+            dplyr::rename(
+              pathway = ID,
+              padj = p.adjust,
+              leadingEdge = core_enrichment
             ) %>%
             dplyr::arrange(padj)
-          
-          results$gobp <- fgsea_go
-          n_sig <- sum(fgsea_go$padj < fdr_cutoff, na.rm = TRUE)
-          n_sig_up <- sum(fgsea_go$padj < fdr_cutoff & fgsea_go$NES > 0, na.rm = TRUE)
-          n_sig_down <- sum(fgsea_go$padj < fdr_cutoff & fgsea_go$NES < 0, na.rm = TRUE)
-          cat("[OK] fgsea GO:BP: ", nrow(fgsea_go), " pathways tested, ",
+
+          go_entrez_to_symbol <- go_symbol_to_entrez %>%
+            dplyr::distinct(ENTREZID, SYMBOL)
+          if ("leadingEdge" %in% colnames(go_results)) {
+            go_results$leadingEdge_symbols <- vapply(
+              go_results$leadingEdge,
+              function(ids) {
+                if (is.na(ids) || ids == "") {
+                  return(NA_character_)
+                }
+                id_vec <- unlist(strsplit(ids, "/", fixed = TRUE))
+                symbol_vec <- go_entrez_to_symbol$SYMBOL[match(id_vec, go_entrez_to_symbol$ENTREZID)]
+                symbol_vec <- symbol_vec[!is.na(symbol_vec)]
+                if (length(symbol_vec) == 0) {
+                  return(NA_character_)
+                }
+                paste(symbol_vec, collapse = ";")
+              },
+              character(1)
+            )
+          }
+
+          results$gobp <- go_results
+          n_sig <- sum(go_results$padj < fdr_cutoff, na.rm = TRUE)
+          n_sig_up <- sum(go_results$padj < fdr_cutoff & go_results$NES > 0, na.rm = TRUE)
+          n_sig_down <- sum(go_results$padj < fdr_cutoff & go_results$NES < 0, na.rm = TRUE)
+          cat("[OK] gseGO GO:BP: ", nrow(go_results), " pathways tested, ",
               n_sig, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
-          
+
           ## Track in sanity checker
           fgsea_sanity_tracker <<- rbind(
             fgsea_sanity_tracker,
             data.frame(
               Contrast = contrast_name,
               Database = "GO:BP",
-              N_Input_Genes = length(ranked_genes),
-              N_Pathways_Tested = nrow(fgsea_go),
+              N_Input_Genes = length(go_genelist),
+              N_Pathways_Tested = nrow(go_results),
               N_Sig_Pathways = n_sig,
               N_Sig_Up = n_sig_up,
               N_Sig_Down = n_sig_down,
               stringsAsFactors = FALSE
             )
           )
-          
+
           ## Optionally simplify GO:BP results to reduce redundancy
-          if (simplify_go && nrow(fgsea_go) > 0) {
+          if (simplify_go && nrow(go_results) > 0) {
             cat("[INFO] Simplifying GO:BP results (removing redundant terms)...\n")
             tryCatch({
-              ## Convert fgsea results to enrichResult object for simplify()
-              ## Create a minimal enrichResult-like structure
-              sig_go <- fgsea_go %>% dplyr::filter(padj < fdr_cutoff)
+              sig_go <- go_results %>% dplyr::filter(padj < fdr_cutoff)
               if (nrow(sig_go) > 0) {
-                ## For simplification, we need pathway-to-gene mapping
-                ## Use semantic similarity to remove redundant GO terms
                 require(GOSemSim)
                 godata <- godata('org.Mm.eg.db', ont = "BP", computeIC = TRUE)
 
-                ## Calculate semantic similarity matrix
                 go_ids <- sig_go$pathway
                 sim_mat <- mgoSim(go_ids, go_ids, semData = godata, measure = "Wang")
 
-                ## Find redundant terms (similarity > cutoff)
                 keep_terms <- c()
                 for (i in seq_along(go_ids)) {
                   if (i == 1 || all(sim_mat[i, keep_terms] < simplify_cutoff)) {
@@ -444,21 +431,22 @@ tryCatch({
                   }
                 }
 
-                fgsea_go_simplified <- sig_go[keep_terms, ]
-                n_removed <- nrow(sig_go) - nrow(fgsea_go_simplified)
+                go_results_simplified <- sig_go[keep_terms, ]
+                n_removed <- nrow(sig_go) - nrow(go_results_simplified)
                 cat("[OK] Removed ", n_removed, " redundant GO:BP terms\n", sep = "")
-                cat("[OK] Simplified GO:BP results: ", nrow(fgsea_go_simplified), " terms\n", sep = "")
+                cat("[OK] Simplified GO:BP results: ", nrow(go_results_simplified), " terms\n", sep = "")
 
-                ## Save simplified results
-                results$gobp_simplified <- fgsea_go_simplified
+                results$gobp_simplified <- go_results_simplified
               }
             }, error = function(e) {
               cat("[WARN] GO:BP simplification failed: ", conditionMessage(e), "\n", sep = "")
             })
           }
+        } else {
+          cat("[INFO] gseGO returned no results\n")
         }
       }, error = function(e) {
-        cat("[WARN] fgsea GO:BP failed: ", conditionMessage(e), "\n", sep = "")
+        cat("[WARN] gseGO GO:BP failed: ", conditionMessage(e), "\n", sep = "")
         fgsea_sanity_tracker <<- rbind(
           fgsea_sanity_tracker,
           data.frame(
@@ -473,9 +461,7 @@ tryCatch({
           )
         )
       })
-      log_time(paste0("Completed GO:BP fgsea for ", contrast_name))
-    } else if (run_go_bp) {
-      cat("[WARN] GO:BP gene sets not available\n")
+      log_time(paste0("Completed GO:BP gseGO for ", contrast_name))
     }
     
     ## ============================================================
@@ -520,13 +506,13 @@ tryCatch({
         ## Step 2: Run gseKEGG
         gsea_kegg <- gseKEGG(
           geneList     = kegg_genelist,
-          organism     = "mmu",
-          minGSSize    = 5,
-          maxGSSize    = 500,
-          pvalueCutoff = 0.1,        ## Initial filter (will use fdr_cutoff for final)
-          pAdjustMethod = "BH",
+          organism     = gse_kegg_params$organism,
+          minGSSize    = gse_kegg_params$min_gs_size,
+          maxGSSize    = gse_kegg_params$max_gs_size,
+          pvalueCutoff = gse_kegg_params$pvalue_cutoff,        ## Initial filter (will use fdr_cutoff for final)
+          pAdjustMethod = gse_kegg_params$p_adjust_method,
           verbose      = FALSE,
-          seed         = TRUE        ## For reproducibility
+          seed         = gse_kegg_params$seed        ## For reproducibility
         )
 
         if (!is.null(gsea_kegg) && nrow(gsea_kegg@result) > 0) {
@@ -539,7 +525,36 @@ tryCatch({
               pathway = ID,
               padj = p.adjust,
               leadingEdge = core_enrichment
-            ) %>%
+            )
+
+          ## Remove duplicate/legacy columns if present
+          if ("leading_edge" %in% colnames(kegg_results)) {
+            kegg_results <- kegg_results %>% dplyr::select(-leading_edge)
+          }
+
+          ## Map KEGG leading edge Entrez IDs back to gene symbols
+          entrez_to_symbol <- symbol_to_entrez %>%
+            dplyr::distinct(ENTREZID, SYMBOL)
+          if ("leadingEdge" %in% colnames(kegg_results)) {
+            kegg_results$leadingEdge_symbols <- vapply(
+              kegg_results$leadingEdge,
+              function(ids) {
+                if (is.na(ids) || ids == "") {
+                  return(NA_character_)
+                }
+                id_vec <- unlist(strsplit(ids, "/", fixed = TRUE))
+                symbol_vec <- entrez_to_symbol$SYMBOL[match(id_vec, entrez_to_symbol$ENTREZID)]
+                symbol_vec <- symbol_vec[!is.na(symbol_vec)]
+                if (length(symbol_vec) == 0) {
+                  return(NA_character_)
+                }
+                paste(symbol_vec, collapse = ";")
+              },
+              character(1)
+            )
+          }
+
+          kegg_results <- kegg_results %>%
             dplyr::mutate(
               ## Clean pathway IDs for display
               pathway_display = paste0("mmu", pathway)
@@ -601,133 +616,7 @@ tryCatch({
       log_time(paste0("Completed KEGG gseKEGG for ", contrast_name))
     }
     
-    ## WikiPathways fgsea
-    if (run_wikipathways && !is.null(wikipathways_list) && length(wikipathways_list) > 0) {
-      log_time(paste0("Starting WikiPathways fgsea for ", contrast_name))
-      tryCatch({
-        cat("[INFO] Running fgsea for WikiPathways (", length(wikipathways_list), " gene sets)...\n", sep = "")
-        
-        fgsea_wp <- fgsea(
-          pathways = wikipathways_list,
-          stats    = ranked_genes,
-          minSize  = 5,
-          maxSize  = 500,
-          nPermSimple = 10000
-        )
-        
-        if (!is.null(fgsea_wp) && nrow(fgsea_wp) > 0) {
-          fgsea_wp <- fgsea_wp %>%
-            dplyr::mutate(
-              Description = gsub("^WIKIPATHWAYS_|^WP", "", pathway),
-              Description = gsub("_", " ", Description)
-            ) %>%
-            dplyr::arrange(padj)
-          
-          results$wikipathways <- fgsea_wp
-          n_sig <- sum(fgsea_wp$padj < fdr_cutoff, na.rm = TRUE)
-          n_sig_up <- sum(fgsea_wp$padj < fdr_cutoff & fgsea_wp$NES > 0, na.rm = TRUE)
-          n_sig_down <- sum(fgsea_wp$padj < fdr_cutoff & fgsea_wp$NES < 0, na.rm = TRUE)
-          cat("[OK] fgsea WikiPathways: ", nrow(fgsea_wp), " pathways tested, ",
-              n_sig, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
-          
-          fgsea_sanity_tracker <<- rbind(
-            fgsea_sanity_tracker,
-            data.frame(
-              Contrast = contrast_name,
-              Database = "WikiPathways",
-              N_Input_Genes = length(ranked_genes),
-              N_Pathways_Tested = nrow(fgsea_wp),
-              N_Sig_Pathways = n_sig,
-              N_Sig_Up = n_sig_up,
-              N_Sig_Down = n_sig_down,
-              stringsAsFactors = FALSE
-            )
-          )
-        }
-      }, error = function(e) {
-        cat("[WARN] fgsea WikiPathways failed: ", conditionMessage(e), "\n", sep = "")
-        fgsea_sanity_tracker <<- rbind(
-          fgsea_sanity_tracker,
-          data.frame(
-            Contrast = contrast_name,
-            Database = "WikiPathways",
-            N_Input_Genes = length(ranked_genes),
-            N_Pathways_Tested = 0,
-            N_Sig_Pathways = 0,
-            N_Sig_Up = 0,
-            N_Sig_Down = 0,
-            stringsAsFactors = FALSE
-          )
-        )
-      })
-      log_time(paste0("Completed WikiPathways fgsea for ", contrast_name))
-    } else if (run_wikipathways) {
-      cat("[WARN] WikiPathways gene sets not available\n")
-    }
-    
-    ## Hallmark fgsea
-    if (run_hallmark && !is.null(hallmark_list) && length(hallmark_list) > 0) {
-      log_time(paste0("Starting Hallmark fgsea for ", contrast_name))
-      tryCatch({
-        cat("[INFO] Running fgsea for Hallmark (", length(hallmark_list), " gene sets)...\n", sep = "")
-        
-        fgsea_hallmark <- fgsea(
-          pathways = hallmark_list,
-          stats    = ranked_genes,
-          minSize  = 5,
-          maxSize  = 500,
-          nPermSimple = 10000
-        )
-        
-        if (!is.null(fgsea_hallmark) && nrow(fgsea_hallmark) > 0) {
-          fgsea_hallmark <- fgsea_hallmark %>%
-            dplyr::mutate(
-              Description = gsub("^HALLMARK_", "", pathway),
-              Description = gsub("_", " ", Description)
-            ) %>%
-            dplyr::arrange(padj)
-          
-          results$hallmark <- fgsea_hallmark
-          n_sig <- sum(fgsea_hallmark$padj < fdr_cutoff, na.rm = TRUE)
-          n_sig_up <- sum(fgsea_hallmark$padj < fdr_cutoff & fgsea_hallmark$NES > 0, na.rm = TRUE)
-          n_sig_down <- sum(fgsea_hallmark$padj < fdr_cutoff & fgsea_hallmark$NES < 0, na.rm = TRUE)
-          cat("[OK] fgsea Hallmark: ", nrow(fgsea_hallmark), " pathways tested, ",
-              n_sig, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
-          
-          fgsea_sanity_tracker <<- rbind(
-            fgsea_sanity_tracker,
-            data.frame(
-              Contrast = contrast_name,
-              Database = "Hallmark",
-              N_Input_Genes = length(ranked_genes),
-              N_Pathways_Tested = nrow(fgsea_hallmark),
-              N_Sig_Pathways = n_sig,
-              N_Sig_Up = n_sig_up,
-              N_Sig_Down = n_sig_down,
-              stringsAsFactors = FALSE
-            )
-          )
-        }
-      }, error = function(e) {
-        cat("[WARN] fgsea Hallmark failed: ", conditionMessage(e), "\n", sep = "")
-        fgsea_sanity_tracker <<- rbind(
-          fgsea_sanity_tracker,
-          data.frame(
-            Contrast = contrast_name,
-            Database = "Hallmark",
-            N_Input_Genes = length(ranked_genes),
-            N_Pathways_Tested = 0,
-            N_Sig_Pathways = 0,
-            N_Sig_Up = 0,
-            N_Sig_Down = 0,
-            stringsAsFactors = FALSE
-          )
-        )
-      })
-      log_time(paste0("Completed Hallmark fgsea for ", contrast_name))
-    } else if (run_hallmark) {
-      cat("[WARN] Hallmark gene sets not available\n")
-    }
+    ## WikiPathways and Hallmark analyses are disabled in this workflow.
     
     ## Save results with direction-specific colors
     if (length(results) > 0) {
@@ -789,11 +678,38 @@ tryCatch({
         
         if (nrow(plot_data) > 0) {
           ## Parameter caption
-          param_caption <- paste0("FDR < ", fdr_cutoff, " | Top ", top_n_per_direction, " per direction | Ranked by genes")
+          if (db_name == "kegg") {
+            param_caption <- paste(
+              paste0(
+                "FDR < ", fdr_cutoff,
+                " | Top ", top_n_per_direction, " per direction | Ranked by ", gsea_params$rank_metric
+              ),
+              paste0("Method: gseKEGG (", gse_kegg_params$organism, ")"),
+              sep = "\n"
+            )
+          } else if (db_name == "gobp") {
+            param_caption <- paste(
+              paste0(
+                "FDR < ", fdr_cutoff,
+                " | Top ", top_n_per_direction, " per direction | Ranked by ", gsea_params$rank_metric
+              ),
+              "Method: gseGO (BP)",
+              sep = "\n"
+            )
+          } else {
+            param_caption <- paste(
+              paste0(
+                "FDR < ", fdr_cutoff,
+                " | Top ", top_n_per_direction, " per direction | Ranked by ", gsea_params$rank_metric
+              ),
+              "Method: GSEA",
+              sep = "\n"
+            )
+          }
 
           ## Use consistent colors: orange for up, blue for down
-          ## Title shows "GSEA" (gseKEGG for KEGG, fgsea for others)
-          method_label <- if (db_name == "kegg") "GSEA" else "fgsea"
+          ## Title shows "GSEA" for gseGO/gseKEGG results
+          method_label <- "GSEA"
           p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = Direction)) +
             geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
             scale_fill_manual(
@@ -832,7 +748,7 @@ tryCatch({
   }
   
   ## 4.4) Process each DE table ------------------------------
-  cat("\n=== RUNNING fgsea FOR ALL CONTRASTS ===\n")
+  cat("\n=== RUNNING GSEA FOR ALL CONTRASTS ===\n")
   
   for (de_file in de_files) {
     
@@ -841,7 +757,7 @@ tryCatch({
     contrast_name <- gsub("^DE_tissue_(.+)_[0-9]{8}_[0-9]{6}\\.csv$", "\\1", de_filename)
     
     cat("\n=== Processing contrast: ", contrast_name, " ===\n", sep = "")
-    log_time(paste0("Starting fgsea for contrast: ", contrast_name))
+    log_time(paste0("Starting GSEA for contrast: ", contrast_name))
     
     ## Load DE table
     de_table <- read.csv(de_file, row.names = 1, stringsAsFactors = FALSE)
@@ -872,9 +788,9 @@ tryCatch({
       cat("[WARN] Low fraction of negative stats; down-regulated pathways may be scarce.\n")
     }
     
-    cat("[INFO] Ranked gene list for fgsea: ", length(ranked_vec), " genes\n", sep = "")
+    cat("[INFO] Ranked gene list for GSEA: ", length(ranked_vec), " genes\n", sep = "")
     
-    ## Run fgsea (and gseKEGG for KEGG)
+    ## Run GSEA (gseGO for GO:BP, gseKEGG for KEGG)
     if (length(ranked_vec) >= 10) {
       run_fgsea_analysis(
         ranked_genes  = ranked_vec,
@@ -891,7 +807,7 @@ tryCatch({
         simplify_cutoff = simplify_go_cutoff,
         top_n_per_direction = top_n_per_direction
       )
-      log_time(paste0("Completed fgsea/gseKEGG for contrast: ", contrast_name))
+      log_time(paste0("Completed GSEA for contrast: ", contrast_name))
     } else {
       cat("[WARN] Too few genes for GSEA\n")
     }
@@ -907,8 +823,9 @@ tryCatch({
   cat("=== SANITY CHECK SUMMARY: GSEA PATHWAY ANALYSIS ===\n")
   cat("==========================================================\n")
   cat("Methods:\n")
-  cat("  - GO:BP, WikiPathways, Hallmark: fgsea (permutation-based)\n")
+  cat("  - GO:BP: clusterProfiler::gseGO() (rank-based GSEA)\n")
   cat("  - KEGG: clusterProfiler::gseKEGG() (matches ORA's enrichKEGG)\n")
+  cat("  - WikiPathways/Hallmark: disabled in this run\n")
   cat("Note: GSEA uses ranked gene list as universe (no separate background needed)\n")
   cat("Ranking metric: DESeq2 Wald statistic\n\n")
   
@@ -922,7 +839,7 @@ tryCatch({
       cat("  ", row$Database, ":\n", sep = "")
       cat("    Ranked gene list size: ", row$N_Input_Genes, "\n", sep = "")
       cat("    Pathways tested: ", row$N_Pathways_Tested, "\n", sep = "")
-      cat("    Significant pathways (padj<0.05): ", row$N_Sig_Pathways, "\n", sep = "")
+      cat("    Significant pathways (padj<", fdr_cut, "): ", row$N_Sig_Pathways, "\n", sep = "")
       if (row$N_Sig_Pathways > 0) {
         cat("      Up-regulated (NES>0): ", row$N_Sig_Up, "\n", sep = "")
         cat("      Down-regulated (NES<0): ", row$N_Sig_Down, "\n", sep = "")
@@ -936,8 +853,9 @@ tryCatch({
   cat("=== PART 3 (GSEA) COMPLETE ===\n")
   cat("======================================\n")
   cat("Methods used:\n")
-  cat("  - GO:BP, WikiPathways, Hallmark: fgsea\n")
+  cat("  - GO:BP: clusterProfiler::gseGO()\n")
   cat("  - KEGG: clusterProfiler::gseKEGG()\n")
+  cat("  - WikiPathways/Hallmark: disabled\n")
   cat("======================================\n\n")
 
   ## 4.7) Save session info for reproducibility -------------
@@ -947,7 +865,7 @@ tryCatch({
   print(sessionInfo())
   cat("\n=== KEY PACKAGE VERSIONS ===\n\n")
   ## clusterProfiler used for: gseKEGG (KEGG GSEA)
-  key_pkgs <- c("fgsea", "clusterProfiler", "org.Mm.eg.db", "dplyr", "ggplot2", "GOSemSim", "msigdbr")
+  key_pkgs <- c("clusterProfiler", "org.Mm.eg.db", "dplyr", "ggplot2", "GOSemSim")
   print(installed.packages()[intersect(key_pkgs, rownames(installed.packages())), c("Version", "Built")])
   sink()
   cat("[INFO] Session info saved to: ", session_file, "\n", sep = "")
@@ -955,14 +873,14 @@ tryCatch({
 }, error = function(e) {
   
   cat("\n======================================\n")
-  cat("=== ERROR IN fgsea PIPELINE ===\n")
+  cat("=== ERROR IN GSEA PIPELINE ===\n")
   cat("======================================\n")
   cat(conditionMessage(e), "\n\n")
   
-  err_file <- paste0("ERROR_fgsea_", run_tag, ".txt")
+  err_file <- paste0("ERROR_gsea_", run_tag, ".txt")
   writeLines(
     c(
-      "fgsea script error:",
+      "gsea script error:",
       conditionMessage(e),
       "",
       "Traceback:",
