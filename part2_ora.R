@@ -602,17 +602,22 @@ tryCatch({
           dplyr::mutate(Description = factor(Description, levels = Description))
         
         ## Direction-specific color gradient (orange for Up, blue for Down)
+        ## Lower p-value = more significant = darker color
         if (direction == "Up") {
           fill_scale <- scale_fill_gradient(
-            low   = "#FDD49E",  ## Light orange
-            high  = "#E69F00",  ## Dark orange
-            name  = "Adj.\nP-value"
+            low   = "#E69F00",  ## Dark orange (most significant)
+            high  = "#FDD49E",  ## Light orange (least significant)
+            name  = "Adj. P-value",
+            labels = function(x) format(x, scientific = TRUE, digits = 2),
+            trans = "log10"
           )
         } else {
           fill_scale <- scale_fill_gradient(
-            low   = "#9ECAE1",  ## Light blue
-            high  = "#0072B2",  ## Dark blue/teal
-            name  = "Adj.\nP-value"
+            low   = "#0072B2",  ## Dark blue (most significant)
+            high  = "#9ECAE1",  ## Light blue (least significant)
+            name  = "Adj. P-value",
+            labels = function(x) format(x, scientific = TRUE, digits = 2),
+            trans = "log10"
           )
         }
         

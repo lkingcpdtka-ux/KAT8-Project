@@ -767,36 +767,51 @@ tryCatch({
           ## This matches the ORA bar plot style
           method_label <- "GSEA"
 
-          ## Create color mapping based on direction and padj
+          ## Separate up and down pathways for color mapping
           ## Lower padj = more significant = darker color
           plot_data <- plot_data %>%
             dplyr::mutate(
-              ## Create a signed padj for color mapping
-              ## Up-regulated: positive values (will map to orange)
-              ## Down-regulated: negative values (will map to blue)
-              padj_signed = ifelse(Direction == "Up-regulated", padj, -padj)
+              ## Use -log10(padj) for color intensity
+              ## Higher value = more significant
+              neg_log10_padj = -log10(padj)
             )
 
-          ## Get the range of padj values for proper color mapping
-          max_padj <- max(plot_data$padj, na.rm = TRUE)
+          ## Calculate nice breaks for the legend (show actual p-values)
           min_padj <- min(plot_data$padj, na.rm = TRUE)
+          max_padj <- max(plot_data$padj, na.rm = TRUE)
 
-          p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = padj_signed)) +
+          ## Create a custom fill aesthetic per row based on direction
+          plot_data <- plot_data %>%
+            dplyr::mutate(
+              fill_value = ifelse(Direction == "Up-regulated", neg_log10_padj, -neg_log10_padj)
+            )
+
+          ## Get range for symmetric scale
+          max_neg_log <- max(abs(plot_data$fill_value), na.rm = TRUE)
+
+          p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = fill_value)) +
             geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
             scale_fill_gradientn(
               colors = c(
                 "#0072B2",  ## Dark blue (most significant down)
                 "#9ECAE1",  ## Light blue (least significant down)
+                "grey95",   ## Near white (threshold)
                 "#FDD49E",  ## Light orange (least significant up)
                 "#E69F00"   ## Dark orange (most significant up)
               ),
-              values = scales::rescale(c(-max_padj, -min_padj, min_padj, max_padj)),
-              limits = c(-max_padj, max_padj),
+              values = scales::rescale(c(-max_neg_log, -1.3, 0, 1.3, max_neg_log)),
+              limits = c(-max_neg_log, max_neg_log),
               name = "Adj. P-value",
-              labels = function(x) format(abs(x), scientific = TRUE, digits = 2),
-              breaks = c(-max_padj, -min_padj, min_padj, max_padj),
+              breaks = c(-max_neg_log, -1.3, 0, 1.3, max_neg_log),
+              labels = function(x) {
+                sapply(x, function(val) {
+                  if (abs(val) < 0.1) return("0.05")
+                  pval <- 10^(-abs(val))
+                  format(pval, scientific = TRUE, digits = 1)
+                })
+              },
               guide = guide_colorbar(
-                title = "Adj. P-value\n(darker = more sig.)",
+                title = "Adj. P-value\n(blue=down, orange=up)",
                 title.position = "top",
                 barwidth = 1,
                 barheight = 4
