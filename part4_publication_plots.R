@@ -63,7 +63,8 @@ ora_dotplot_params <- list(
   top_n       = list("GO:BP" = 15, "KEGG" = 15),
   default_top_n = 15,
   order_by    = "adj. p-value",
-  tie_breaker = "gene ratio"
+  tie_breaker = "gene ratio",
+  gobp_simplify_cutoff = 0.7  ## GO:BP simplification cutoff (from part2_ora.R)
 )
 
 heatmap_params <- list(
@@ -196,12 +197,18 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   plot_title <- paste0(database, " Enrichment\n(", contrast_name, ", ", direction_label, ")")
 
   ## Parameter caption for bottom of plot
+  ## Add simplification info for GO:BP
+  simplify_label <- if (database == "GO:BP") {
+    paste0(" | Simplified (cutoff=", ora_dotplot_params$gobp_simplify_cutoff, ")")
+  } else {
+    ""
+  }
   if (!is.null(plot_logfc_cutoff)) {
     param_caption <- paste(
       paste0(
         "FDR < ", plot_fdr_cutoff,
         " | |log2FC| > ", plot_logfc_cutoff,
-        " | Top ", top_n, " pathways"
+        " | Top ", top_n, " pathways", simplify_label
       ),
       paste0("Ordered by ", ora_dotplot_params$order_by),
       sep = "\n"
@@ -210,7 +217,7 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
     param_caption <- paste(
       paste0(
         "FDR < ", plot_fdr_cutoff,
-        " | Top ", top_n, " pathways"
+        " | Top ", top_n, " pathways", simplify_label
       ),
       paste0("Ordered by ", ora_dotplot_params$order_by),
       sep = "\n"

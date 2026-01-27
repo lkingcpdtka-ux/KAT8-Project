@@ -17,7 +17,7 @@
 ## setwd("C:/Users/lking/OneDrive - Louisiana State University/PBRC/Bioinformatics/KAT8KD_RNAseq")
 
 ## 1) Packages ----------------------------------------------
-required_pkgs <- c("dplyr", "ggplot2")
+required_pkgs <- c("dplyr", "ggplot2", "scales")
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
 if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
 
@@ -36,6 +36,7 @@ if (length(to_install_bioc) > 0) BiocManager::install(to_install_bioc, ask = FAL
 suppressPackageStartupMessages({
   library(dplyr)
   library(ggplot2)
+  library(scales)
   library(org.Mm.eg.db)
   library(AnnotationDbi)
   library(GO.db)
@@ -184,7 +185,7 @@ run_hallmark <- FALSE     # MSigDB Hallmark (50 well-defined signatures)
 ##
 ## VISUALIZATION:
 ##   - Bar plots: Top N pathways per direction (up/down-regulated)
-##   - top_n_per_direction: 10 (shows top 10 up + top 10 down)
+##   - top_n_per_direction: 15 (shows top 15 up + top 15 down)
 ##   - X-axis: NES (Normalized Enrichment Score)
 ##     * Positive NES = pathway enriched in up-regulated genes
 ##     * Negative NES = pathway enriched in down-regulated genes
@@ -684,16 +685,17 @@ tryCatch({
                 "FDR < ", fdr_cutoff,
                 " | Top ", top_n_per_direction, " per direction | Ranked by ", gsea_params$rank_metric
               ),
-              paste0("Method: gseKEGG (", gse_kegg_params$organism, ")"),
+              paste0("Method: gseKEGG (", gse_kegg_params$organism, ") | Color: adj. p-value"),
               sep = "\n"
             )
           } else if (db_name == "gobp") {
+            simplify_label <- if (simplify_go) paste0("Simplified (cutoff=", simplify_cutoff, ")") else "Not simplified"
             param_caption <- paste(
               paste0(
                 "FDR < ", fdr_cutoff,
                 " | Top ", top_n_per_direction, " per direction | Ranked by ", gsea_params$rank_metric
               ),
-              "Method: gseGO (BP)",
+              paste0("Method: gseGO (BP) | ", simplify_label, " | Color: adj. p-value"),
               sep = "\n"
             )
           } else {
@@ -702,19 +704,50 @@ tryCatch({
                 "FDR < ", fdr_cutoff,
                 " | Top ", top_n_per_direction, " per direction | Ranked by ", gsea_params$rank_metric
               ),
-              "Method: GSEA",
+              "Method: GSEA | Color: adj. p-value",
               sep = "\n"
             )
           }
 
-          ## Use consistent colors: orange for up, blue for down
-          ## Title shows "GSEA" for gseGO/gseKEGG results
+          ## Color by adjusted p-value with direction-specific gradients
+          ## Orange gradient for up-regulated, blue gradient for down-regulated
+          ## This matches the ORA bar plot style
           method_label <- "GSEA"
-          p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = Direction)) +
+
+          ## Create color mapping based on direction and padj
+          ## Lower padj = more significant = darker color
+          plot_data <- plot_data %>%
+            dplyr::mutate(
+              ## Create a signed padj for color mapping
+              ## Up-regulated: positive values (will map to orange)
+              ## Down-regulated: negative values (will map to blue)
+              padj_signed = ifelse(Direction == "Up-regulated", padj, -padj)
+            )
+
+          ## Get the range of padj values for proper color mapping
+          max_padj <- max(plot_data$padj, na.rm = TRUE)
+          min_padj <- min(plot_data$padj, na.rm = TRUE)
+
+          p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = padj_signed)) +
             geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
-            scale_fill_manual(
-              values = c("Up-regulated" = "#E69F00", "Down-regulated" = "#0072B2"),
-              name = "Direction"
+            scale_fill_gradientn(
+              colors = c(
+                "#0072B2",  ## Dark blue (most significant down)
+                "#9ECAE1",  ## Light blue (least significant down)
+                "#FDD49E",  ## Light orange (least significant up)
+                "#E69F00"   ## Dark orange (most significant up)
+              ),
+              values = scales::rescale(c(-max_padj, -min_padj, min_padj, max_padj)),
+              limits = c(-max_padj, max_padj),
+              name = "Adj. P-value",
+              labels = function(x) format(abs(x), scientific = TRUE, digits = 2),
+              breaks = c(-max_padj, -min_padj, min_padj, max_padj),
+              guide = guide_colorbar(
+                title = "Adj. P-value\n(darker = more sig.)",
+                title.position = "top",
+                barwidth = 1,
+                barheight = 4
+              )
             ) +
             labs(
               title = paste0(method_label, " ", toupper(db_name), ": ", contrast_name),
@@ -728,13 +761,18 @@ tryCatch({
               axis.text.y = element_text(size = 10, color = "black"),
               axis.text.x = element_text(size = 10, color = "black", face = "bold"),
               axis.title.x = element_text(size = 12, face = "bold"),
-              legend.title = element_text(size = 10, face = "bold"),
-              legend.text = element_text(size = 9),
+              legend.title = element_text(size = 9, face = "bold"),
+              legend.text = element_text(size = 8),
               legend.position = "right",
               panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
               plot.caption = element_text(size = 8, color = "grey40", hjust = 0.5, margin = margin(t = 8))
             ) +
-            geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5)
+            geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5) +
+            ## Add annotation for direction interpretation
+            annotate("text", x = Inf, y = Inf, label = "Up", hjust = 1.1, vjust = -0.5,
+                     size = 3, color = "#E69F00", fontface = "bold") +
+            annotate("text", x = -Inf, y = Inf, label = "Down", hjust = -0.1, vjust = -0.5,
+                     size = 3, color = "#0072B2", fontface = "bold")
           
           plot_file <- paste0("fgsea_plot_", db_name, "_", contrast_name, "_", run_tag, ".png")
           ggsave(file.path(outdir, "plots", plot_file), plot = p_fgsea, width = 12,
