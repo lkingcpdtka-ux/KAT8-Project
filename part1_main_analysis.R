@@ -305,8 +305,38 @@ tryCatch({
   )
   
   ## Save centralized parameters
-  logFC_cut_tissue <- 1
-  fdr_cut_tissue   <- 0.05
+  ## ============================================================
+  ## DEPOT-SPECIFIC CUTOFFS
+  ## ============================================================
+  ## Change these values to adjust DEG thresholds per depot.
+  ## All downstream scripts (ORA, fgsea) and plot captions will
+
+  ## automatically use these values via the authoritative DEG lists.
+  ## ============================================================
+  iWAT_logFC_cut <- 1.0
+  iWAT_fdr_cut   <- 0.05
+
+  gWAT_logFC_cut <- 1.0
+  gWAT_fdr_cut   <- 0.05
+
+  ## Default for any other contrast
+  default_logFC_cut <- 1.0
+  default_fdr_cut   <- 0.05
+
+  ## Helper function to get cutoffs for a given contrast
+  get_cutoffs_for_contrast <- function(contrast_name) {
+    if (grepl("iWAT", contrast_name, ignore.case = TRUE)) {
+      return(list(logFC = iWAT_logFC_cut, fdr = iWAT_fdr_cut))
+    } else if (grepl("gWAT", contrast_name, ignore.case = TRUE)) {
+      return(list(logFC = gWAT_logFC_cut, fdr = gWAT_fdr_cut))
+    } else {
+      return(list(logFC = default_logFC_cut, fdr = default_fdr_cut))
+    }
+  }
+
+  ## Legacy variables for backward compatibility (use iWAT as default)
+  logFC_cut_tissue <- iWAT_logFC_cut
+  fdr_cut_tissue   <- iWAT_fdr_cut
   
   params <- list(
     outlier_samples   = outlier_samples,
@@ -316,8 +346,10 @@ tryCatch({
       description     = "Keep genes with counts >= min_count in at least min_samples (global filtering for chromatin modifier study)"
     ),
     de_thresholds     = list(
-      logFC_cutoff    = logFC_cut_tissue,
-      fdr_cutoff      = fdr_cut_tissue
+      iWAT = list(logFC_cutoff = iWAT_logFC_cut, fdr_cutoff = iWAT_fdr_cut),
+      gWAT = list(logFC_cutoff = gWAT_logFC_cut, fdr_cutoff = gWAT_fdr_cut),
+      default = list(logFC_cutoff = default_logFC_cut, fdr_cutoff = default_fdr_cut),
+      description = "Depot-specific cutoffs; change iWAT_logFC_cut, gWAT_logFC_cut, etc. to adjust"
     ),
     vst              = list(
       blind           = TRUE,
@@ -557,13 +589,21 @@ tryCatch({
   contrast_names <- names(contrast_definitions)
   
   ## 4.13) Containers ---------------------------------------
+  ## DEG_summary: Uses AUTHORITATIVE DEG definition
+  ## DEG = gene with padj < fdr_cutoff AND |log2FoldChange| > logFC_cutoff
+  ## N_DEG = N_Up + N_Down (no FDR-only counts - that would be misleading)
   deg_summary <- data.frame(
-    Contrast          = contrast_names,
-    N_DEG_FDR_lt_0_05 = NA_integer_,
-    N_Up              = NA_integer_,
-    N_Down            = NA_integer_,
-    stringsAsFactors  = FALSE
+    Contrast     = contrast_names,
+    N_DEG        = NA_integer_,
+    N_Up         = NA_integer_,
+    N_Down       = NA_integer_,
+    logFC_cutoff = logFC_cut_tissue,
+    fdr_cutoff   = fdr_cut_tissue,
+    stringsAsFactors = FALSE
   )
+
+  ## Container for authoritative DEG lists (for downstream ORA/fgsea)
+  authoritative_deg_lists <- list()
   
   tt_list <- vector("list", length(contrast_names))
   names(tt_list) <- contrast_names
@@ -579,51 +619,78 @@ tryCatch({
 
     cat("\n=== Contrast: ", cn, " ===\n", sep = "")
 
+    ## Get depot-specific cutoffs for this contrast
+    contrast_cutoffs <- get_cutoffs_for_contrast(cn)
+    cn_logFC_cut <- contrast_cutoffs$logFC
+    cn_fdr_cut <- contrast_cutoffs$fdr
+    cat("[INFO] Using cutoffs: FDR < ", cn_fdr_cut, ", |logFC| > ", cn_logFC_cut, "\n", sep = "")
+
     res <- results(dds_tissue, contrast = contrast_definitions[[cn]])
     res <- res[order(res$pvalue), , drop = FALSE]
-    
+
     tt <- as.data.frame(res)
     tt$logFC     <- tt$log2FoldChange
     tt$P.Value   <- tt$pvalue
     tt$adj.P.Val <- tt$padj
     tt$gene_name <- rownames(tt)
-    
+
     ## Remove duplicate columns
     tt <- tt[, !duplicated(colnames(tt)), drop = FALSE]
-    
+
     tt_list[[cn]] <- tt
-    
+
     de_file <- paste0("DE_tissue_", cn, "_", run_tag, ".csv")
     write.csv(tt, file = file.path(outdir, "tables", de_file), row.names = TRUE)
-    
-    ## Calculate comprehensive DEG statistics
+
+    ## Calculate comprehensive DEG statistics using depot-specific cutoffs
     n_total <- nrow(tt)
     n_valid_pval <- sum(!is.na(tt$adj.P.Val))
-    n_fdr_only <- sum(tt$adj.P.Val < fdr_cut_tissue, na.rm = TRUE)
-    n_up_both <- sum(tt$adj.P.Val < fdr_cut_tissue & tt$logFC > logFC_cut_tissue, na.rm = TRUE)
-    n_down_both <- sum(tt$adj.P.Val < fdr_cut_tissue & tt$logFC < -logFC_cut_tissue, na.rm = TRUE)
+    n_fdr_only <- sum(tt$adj.P.Val < cn_fdr_cut, na.rm = TRUE)
+    n_up_both <- sum(tt$adj.P.Val < cn_fdr_cut & tt$logFC > cn_logFC_cut, na.rm = TRUE)
+    n_down_both <- sum(tt$adj.P.Val < cn_fdr_cut & tt$logFC < -cn_logFC_cut, na.rm = TRUE)
     n_both <- n_up_both + n_down_both
-    
+
     cat("\n==========================================================\n")
     cat("=== SANITY CHECK: ", cn, " ===\n", sep = "")
     cat("==========================================================\n")
     cat("Total genes tested by DESeq2:           ", n_total, "\n", sep = "")
     cat("Genes with valid adjusted p-value:      ", n_valid_pval, "\n", sep = "")
     cat("\n--- DEG Counts at Different Thresholds ---\n")
-    cat("DEGs (FDR < ", fdr_cut_tissue, " only):               ", n_fdr_only, "\n", sep = "")
-    cat("DEGs (FDR < ", fdr_cut_tissue, " AND |logFC| > ", logFC_cut_tissue, "):  ", n_both, "\n", sep = "")
-    cat("  - Up-regulated (logFC > ", logFC_cut_tissue, "):       ", n_up_both, "\n", sep = "")
-    cat("  - Down-regulated (logFC < -", logFC_cut_tissue, "):    ", n_down_both, "\n", sep = "")
+    cat("DEGs (FDR < ", cn_fdr_cut, " only):               ", n_fdr_only, "\n", sep = "")
+    cat("DEGs (FDR < ", cn_fdr_cut, " AND |logFC| > ", cn_logFC_cut, "):  ", n_both, "\n", sep = "")
+    cat("  - Up-regulated (logFC > ", cn_logFC_cut, "):       ", n_up_both, "\n", sep = "")
+    cat("  - Down-regulated (logFC < -", cn_logFC_cut, "):    ", n_down_both, "\n", sep = "")
     cat("\nPercent of tested genes that are DEGs:\n")
     cat("  - FDR-only threshold:                 ", round(100 * n_fdr_only / n_total, 2), "%\n", sep = "")
     cat("  - FDR + logFC threshold:              ", round(100 * n_both / n_total, 2), "%\n", sep = "")
     cat("==========================================================\n")
     cat("DE table written: ", file.path(outdir, "tables", de_file), "\n", sep = "")
     cat("==========================================================\n\n")
-    
-    deg_summary$N_DEG_FDR_lt_0_05[deg_summary$Contrast == cn] <- n_fdr_only
+
+    ## Record AUTHORITATIVE DEG counts (padj + logFC thresholds)
+    ## N_DEG = N_Up + N_Down (no FDR-only counts to avoid confusion)
+    deg_summary$N_DEG[deg_summary$Contrast == cn] <- n_both
     deg_summary$N_Up[deg_summary$Contrast == cn] <- n_up_both
     deg_summary$N_Down[deg_summary$Contrast == cn] <- n_down_both
+    deg_summary$logFC_cutoff[deg_summary$Contrast == cn] <- cn_logFC_cut
+    deg_summary$fdr_cutoff[deg_summary$Contrast == cn] <- cn_fdr_cut
+
+    ## Store authoritative DEG lists for downstream ORA/fgsea scripts
+    ## These lists include the cutoffs used, so downstream scripts
+    ## will automatically use the same parameters and display them in captions
+    up_genes <- tt %>%
+      dplyr::filter(!is.na(adj.P.Val), adj.P.Val < cn_fdr_cut, logFC > cn_logFC_cut) %>%
+      rownames()
+    down_genes <- tt %>%
+      dplyr::filter(!is.na(adj.P.Val), adj.P.Val < cn_fdr_cut, logFC < -cn_logFC_cut) %>%
+      rownames()
+
+    authoritative_deg_lists[[cn]] <- list(
+      up = up_genes,
+      down = down_genes,
+      logFC_cutoff = cn_logFC_cut,
+      fdr_cutoff = cn_fdr_cut
+    )
     
     ## Volcano
     tt_plot <- tt %>%
@@ -633,16 +700,16 @@ tryCatch({
     tt_plot <- tt_plot %>%
       mutate(
         sig_cat = dplyr::case_when(
-          adj.P.Val < fdr_cut_tissue & logFC >=  logFC_cut_tissue ~ "Up",
-          adj.P.Val < fdr_cut_tissue & logFC <= -logFC_cut_tissue ~ "Down",
-          TRUE                                                    ~ "NS"
+          adj.P.Val < cn_fdr_cut & logFC >=  cn_logFC_cut ~ "Up",
+          adj.P.Val < cn_fdr_cut & logFC <= -cn_logFC_cut ~ "Down",
+          TRUE                                            ~ "NS"
         ),
         sig_cat = factor(sig_cat, levels = c("Up", "Down", "NS"))
       )
-    
+
     tt_sig <- tt_plot %>%
-      dplyr::filter(adj.P.Val < fdr_cut_tissue,
-                    abs(logFC) >= logFC_cut_tissue,
+      dplyr::filter(adj.P.Val < cn_fdr_cut,
+                    abs(logFC) >= cn_logFC_cut,
                     sig_cat != "NS")
     
     top_n_fdr <- params$volcano_labels$top_n_by_fdr
@@ -681,8 +748,8 @@ tryCatch({
         point.padding = unit(0.2, "lines"),
         max.overlaps  = Inf
       ) +
-      geom_hline(yintercept = -log10(fdr_cut_tissue), linetype = "dashed", color = "grey40") +
-      geom_vline(xintercept = c(logFC_cut_tissue, -logFC_cut_tissue), linetype = "dashed", color = "grey40") +
+      geom_hline(yintercept = -log10(cn_fdr_cut), linetype = "dashed", color = "grey40") +
+      geom_vline(xintercept = c(cn_logFC_cut, -cn_logFC_cut), linetype = "dashed", color = "grey40") +
       theme_bw(base_size = 14) +
       theme(
         panel.grid      = element_blank(),
@@ -703,7 +770,7 @@ tryCatch({
     
     ## Heatmap (VST) of strongest DEGs using ComplexHeatmap
     de_sig <- tt %>%
-      dplyr::filter(adj.P.Val < fdr_cut_tissue, abs(logFC) > logFC_cut_tissue)
+      dplyr::filter(adj.P.Val < cn_fdr_cut, abs(logFC) > cn_logFC_cut)
     
     if (nrow(de_sig) >= 2) {
       de_sig <- de_sig[order(de_sig$adj.P.Val), , drop = FALSE]
@@ -758,7 +825,7 @@ tryCatch({
             column_gap = unit(2, "mm"),
             row_gap = unit(0, "mm"),
             top_annotation = deg_ha,
-            column_title = paste0("Top DEGs: ", cn, " (FDR<0.05, |logFC|>", logFC_cut_tissue, ")"),
+            column_title = paste0("Top DEGs: ", cn, " (FDR<", cn_fdr_cut, ", |logFC|>", cn_logFC_cut, ")"),
             heatmap_legend_param = list(
               title = "Z-score",
               title_position = "leftcenter-rot",
@@ -959,8 +1026,8 @@ tryCatch({
     ## Only label genes of interest that are SIGNIFICANT (pass both thresholds)
     goi_significant <- volcano_df %>%
       dplyr::filter(gene_name %in% genes_of_interest,
-                    adj.P.Val < fdr_cut_tissue,
-                    abs(logFC) >= logFC_cut_tissue) %>%
+                    adj.P.Val < cn_fdr_cut,
+                    abs(logFC) >= cn_logFC_cut) %>%
       dplyr::pull(gene_name)
     
     cat("[INFO] Genes of interest (total): ", length(genes_of_interest), "\n", sep = "")
@@ -973,14 +1040,14 @@ tryCatch({
       names(keyvals_color) <- rep("NS", nrow(volcano_df))
       
       ## Significant UP (orange)
-      sig_up_idx <- which(volcano_df$adj.P.Val < fdr_cut_tissue &
-                            volcano_df$logFC >= logFC_cut_tissue)
+      sig_up_idx <- which(volcano_df$adj.P.Val < cn_fdr_cut &
+                            volcano_df$logFC >= cn_logFC_cut)
       keyvals_color[sig_up_idx] <- "#E69F00"
       names(keyvals_color)[sig_up_idx] <- "Significant Up"
-      
+
       ## Significant DOWN (teal/blue)
-      sig_down_idx <- which(volcano_df$adj.P.Val < fdr_cut_tissue &
-                              volcano_df$logFC <= -logFC_cut_tissue)
+      sig_down_idx <- which(volcano_df$adj.P.Val < cn_fdr_cut &
+                              volcano_df$logFC <= -cn_logFC_cut)
       keyvals_color[sig_down_idx] <- "#0072B2"
       names(keyvals_color)[sig_down_idx] <- "Significant Down"
       
@@ -992,8 +1059,8 @@ tryCatch({
         y = "adj.P.Val",
         title = paste0("Volcano: ", cn),
         subtitle = "ECM, metabolism, and remodeling genes labeled (significant only)",
-        pCutoff = fdr_cut_tissue,
-        FCcutoff = logFC_cut_tissue,
+        pCutoff = cn_fdr_cut,
+        FCcutoff = cn_logFC_cut,
         pointSize = 2.0,
         labSize = 4.0,
         labCol = "black",
@@ -1026,6 +1093,32 @@ tryCatch({
   deg_summary_file <- paste0("DEG_summary_tissue_", run_tag, ".csv")
   write.csv(deg_summary, file = file.path(outdir, "tables", deg_summary_file), row.names = FALSE)
   cat("\nDEG summary written: ", file.path(outdir, "tables", deg_summary_file), "\n", sep = "")
+
+  ## 4.15b) Export authoritative DEG lists for downstream ORA/fgsea ----
+  ## This ensures ORA and fgsea use IDENTICAL gene sets (no drift)
+  deg_lists_file <- paste0("DEG_lists_authoritative_", run_tag, ".rds")
+  saveRDS(authoritative_deg_lists, file = file.path(outdir, "tables", deg_lists_file))
+  cat("Authoritative DEG lists saved: ", file.path(outdir, "tables", deg_lists_file), "\n", sep = "")
+
+  ## Also print validation summary
+  cat("\n==========================================================\n")
+  cat("=== VALIDATION: AUTHORITATIVE DEG DEFINITION ===\n")
+  cat("==========================================================\n")
+  cat("DEG definition: padj < fdr_cutoff AND |log2FC| > logFC_cutoff\n")
+  cat("(Cutoffs are depot-specific - see per-contrast details below)\n")
+  cat("\nSUMMARY CHECK: N_DEG = N_Up + N_Down\n")
+  for (cn in contrast_names) {
+    n_deg <- deg_summary$N_DEG[deg_summary$Contrast == cn]
+    n_up <- deg_summary$N_Up[deg_summary$Contrast == cn]
+    n_down <- deg_summary$N_Down[deg_summary$Contrast == cn]
+    cn_logfc <- deg_summary$logFC_cutoff[deg_summary$Contrast == cn]
+    cn_fdr <- deg_summary$fdr_cutoff[deg_summary$Contrast == cn]
+    check <- ifelse(n_deg == n_up + n_down, "PASS", "FAIL")
+    cat("  ", cn, ":\n", sep = "")
+    cat("    Cutoffs: FDR < ", cn_fdr, ", |logFC| > ", cn_logfc, "\n", sep = "")
+    cat("    N_DEG=", n_deg, " (Up=", n_up, " + Down=", n_down, ") [", check, "]\n", sep = "")
+  }
+  cat("==========================================================\n")
   
   ## 4.16) save_core bookkeeping ----------------------------
   if (!is.null(hero_volcano_file)) {

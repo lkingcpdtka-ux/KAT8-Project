@@ -225,14 +225,27 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   }
 
   ## Create dot plot
-  ## Size = Count, Color = -log10(FDR)
+  ## Size = Count, Color = -log10(FDR) but labeled as actual p-values
+  ## Generate nice breaks for the color scale
+  color_breaks <- c(
+    min(plot_data$neg_log10_fdr_clipped),
+    (min(plot_data$neg_log10_fdr_clipped) + fdr_cap) / 2,
+    fdr_cap
+  )
+
   p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
     geom_point(aes(size = Count, color = neg_log10_fdr_clipped)) +
     scale_color_gradient(
       low = color_low,
       high = color_high,
-      name = expression(-log[10](FDR)),
-      limits = c(min(plot_data$neg_log10_fdr_clipped), fdr_cap)
+      name = "Adj. P-value",
+      limits = c(min(plot_data$neg_log10_fdr_clipped), fdr_cap),
+      breaks = color_breaks,
+      labels = function(x) {
+        ## Convert -log10(p) back to p-value for display
+        pvals <- 10^(-x)
+        sapply(pvals, function(p) format(p, scientific = TRUE, digits = 1))
+      }
     ) +
     scale_size_continuous(
       name = "Gene Count",

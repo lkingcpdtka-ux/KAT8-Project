@@ -90,6 +90,29 @@ if (!dir.exists(file.path(outdir, "plots"))) {
   stop("plots directory not found in Part 1 run: ", outdir)
 }
 
+## 2.6) Load authoritative DEG lists from Part 1 -----------
+## This ensures fgsea sanity checks can be cross-validated with ORA
+## Note: GSEA uses ALL ranked genes for analysis, but sanity checks
+## should report the authoritative DEG counts for cross-validation
+cat("\n=== LOADING AUTHORITATIVE DEG LISTS FOR VALIDATION ===\n")
+deg_lists_file <- list.files(file.path(outdir, "tables"), pattern = "^DEG_lists_authoritative_.*\\.rds$", full.names = TRUE)
+if (length(deg_lists_file) == 0) {
+  cat("[WARN] No authoritative DEG lists found\n")
+  cat("[WARN] For full cross-validation, re-run part1_main_analysis.R first\n")
+  authoritative_deg_lists <- NULL
+} else {
+  deg_lists_file <- deg_lists_file[order(file.info(deg_lists_file)$mtime, decreasing = TRUE)][1]
+  authoritative_deg_lists <- readRDS(deg_lists_file)
+  cat("[OK] Loaded authoritative DEG lists from: ", basename(deg_lists_file), "\n", sep = "")
+  cat("[INFO] Contrasts available: ", paste(names(authoritative_deg_lists), collapse = ", "), "\n", sep = "")
+  for (cn in names(authoritative_deg_lists)) {
+    cat("  ", cn, ": Up=", length(authoritative_deg_lists[[cn]]$up),
+        ", Down=", length(authoritative_deg_lists[[cn]]$down),
+        " (FDR<", authoritative_deg_lists[[cn]]$fdr_cutoff,
+        ", |logFC|>", authoritative_deg_lists[[cn]]$logFC_cutoff, ")\n", sep = "")
+  }
+}
+
 ## 3) Parameters --------------------------------------------
 fdr_cut   <- 0.05
 ## UPDATED (2026-01-20): Enable GO:BP simplification to reduce redundancy
@@ -218,15 +241,21 @@ log_time <- function(message) {
   cat("[TIME] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), " ", message, "\n", sep = "")
 }
 
-## Sanity check tracker
+## Sanity check tracker - includes DEG counts for cross-validation with ORA
+## Note: N_Input_Genes = ranked genes for GSEA (all genes)
+##       N_DEG_Up/N_DEG_Down = authoritative DEG counts (for cross-validation)
 fgsea_sanity_tracker <- data.frame(
   Contrast = character(),
   Database = character(),
   N_Input_Genes = integer(),
+  N_DEG_Up = integer(),
+  N_DEG_Down = integer(),
   N_Pathways_Tested = integer(),
   N_Sig_Pathways = integer(),
   N_Sig_Up = integer(),
   N_Sig_Down = integer(),
+  logFC_cutoff = numeric(),
+  fdr_cutoff = numeric(),
   stringsAsFactors = FALSE
 )
 
@@ -311,7 +340,11 @@ tryCatch({
                                  de_table,  ## Added: full DE table for ENTREZID mapping
                                  run_tag, outdir, fdr_cutoff = 0.05,
                                  simplify_go = FALSE, simplify_cutoff = 0.7,
-                                 top_n_per_direction = 10) {
+                                 top_n_per_direction = 10,
+                                 deg_up_count = NA,  ## Authoritative DEG count for cross-validation
+                                 deg_down_count = NA,
+                                 logfc_cutoff = NA,
+                                 deg_fdr_cutoff = NA) {
     
     cat("\n--- GSEA: ", contrast_name, " ---\n", sep = "")
     cat("[INFO] Ranked gene list size: ", length(ranked_genes), " genes\n", sep = "")
@@ -398,17 +431,21 @@ tryCatch({
           cat("[OK] gseGO GO:BP: ", nrow(go_results), " pathways tested, ",
               n_sig, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
 
-          ## Track in sanity checker
+          ## Track in sanity checker (includes DEG counts for cross-validation)
           fgsea_sanity_tracker <<- rbind(
             fgsea_sanity_tracker,
             data.frame(
               Contrast = contrast_name,
               Database = "GO:BP",
               N_Input_Genes = length(go_genelist),
+              N_DEG_Up = deg_up_count,
+              N_DEG_Down = deg_down_count,
               N_Pathways_Tested = nrow(go_results),
               N_Sig_Pathways = n_sig,
               N_Sig_Up = n_sig_up,
               N_Sig_Down = n_sig_down,
+              logFC_cutoff = logfc_cutoff,
+              fdr_cutoff = deg_fdr_cutoff,
               stringsAsFactors = FALSE
             )
           )
@@ -454,10 +491,14 @@ tryCatch({
             Contrast = contrast_name,
             Database = "GO:BP",
             N_Input_Genes = length(ranked_genes),
+            N_DEG_Up = deg_up_count,
+            N_DEG_Down = deg_down_count,
             N_Pathways_Tested = 0,
             N_Sig_Pathways = 0,
             N_Sig_Up = 0,
             N_Sig_Down = 0,
+            logFC_cutoff = logfc_cutoff,
+            fdr_cutoff = deg_fdr_cutoff,
             stringsAsFactors = FALSE
           )
         )
@@ -575,10 +616,14 @@ tryCatch({
               Contrast = contrast_name,
               Database = "KEGG",
               N_Input_Genes = length(kegg_genelist),
+              N_DEG_Up = deg_up_count,
+              N_DEG_Down = deg_down_count,
               N_Pathways_Tested = nrow(kegg_results),
               N_Sig_Pathways = n_sig,
               N_Sig_Up = n_sig_up,
               N_Sig_Down = n_sig_down,
+              logFC_cutoff = logfc_cutoff,
+              fdr_cutoff = deg_fdr_cutoff,
               stringsAsFactors = FALSE
             )
           )
@@ -590,10 +635,14 @@ tryCatch({
               Contrast = contrast_name,
               Database = "KEGG",
               N_Input_Genes = length(kegg_genelist),
+              N_DEG_Up = deg_up_count,
+              N_DEG_Down = deg_down_count,
               N_Pathways_Tested = 0,
               N_Sig_Pathways = 0,
               N_Sig_Up = 0,
               N_Sig_Down = 0,
+              logFC_cutoff = logfc_cutoff,
+              fdr_cutoff = deg_fdr_cutoff,
               stringsAsFactors = FALSE
             )
           )
@@ -606,10 +655,14 @@ tryCatch({
             Contrast = contrast_name,
             Database = "KEGG",
             N_Input_Genes = length(ranked_genes),
+            N_DEG_Up = deg_up_count,
+            N_DEG_Down = deg_down_count,
             N_Pathways_Tested = 0,
             N_Sig_Pathways = 0,
             N_Sig_Up = 0,
             N_Sig_Down = 0,
+            logFC_cutoff = logfc_cutoff,
+            fdr_cutoff = deg_fdr_cutoff,
             stringsAsFactors = FALSE
           )
         )
@@ -714,36 +767,51 @@ tryCatch({
           ## This matches the ORA bar plot style
           method_label <- "GSEA"
 
-          ## Create color mapping based on direction and padj
+          ## Separate up and down pathways for color mapping
           ## Lower padj = more significant = darker color
           plot_data <- plot_data %>%
             dplyr::mutate(
-              ## Create a signed padj for color mapping
-              ## Up-regulated: positive values (will map to orange)
-              ## Down-regulated: negative values (will map to blue)
-              padj_signed = ifelse(Direction == "Up-regulated", padj, -padj)
+              ## Use -log10(padj) for color intensity
+              ## Higher value = more significant
+              neg_log10_padj = -log10(padj)
             )
 
-          ## Get the range of padj values for proper color mapping
-          max_padj <- max(plot_data$padj, na.rm = TRUE)
+          ## Calculate nice breaks for the legend (show actual p-values)
           min_padj <- min(plot_data$padj, na.rm = TRUE)
+          max_padj <- max(plot_data$padj, na.rm = TRUE)
 
-          p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = padj_signed)) +
+          ## Create a custom fill aesthetic per row based on direction
+          plot_data <- plot_data %>%
+            dplyr::mutate(
+              fill_value = ifelse(Direction == "Up-regulated", neg_log10_padj, -neg_log10_padj)
+            )
+
+          ## Get range for symmetric scale
+          max_neg_log <- max(abs(plot_data$fill_value), na.rm = TRUE)
+
+          p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = fill_value)) +
             geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
             scale_fill_gradientn(
               colors = c(
                 "#0072B2",  ## Dark blue (most significant down)
                 "#9ECAE1",  ## Light blue (least significant down)
+                "grey95",   ## Near white (threshold)
                 "#FDD49E",  ## Light orange (least significant up)
                 "#E69F00"   ## Dark orange (most significant up)
               ),
-              values = scales::rescale(c(-max_padj, -min_padj, min_padj, max_padj)),
-              limits = c(-max_padj, max_padj),
+              values = scales::rescale(c(-max_neg_log, -1.3, 0, 1.3, max_neg_log)),
+              limits = c(-max_neg_log, max_neg_log),
               name = "Adj. P-value",
-              labels = function(x) format(abs(x), scientific = TRUE, digits = 2),
-              breaks = c(-max_padj, -min_padj, min_padj, max_padj),
+              breaks = c(-max_neg_log, -1.3, 0, 1.3, max_neg_log),
+              labels = function(x) {
+                sapply(x, function(val) {
+                  if (abs(val) < 0.1) return("0.05")
+                  pval <- 10^(-abs(val))
+                  format(pval, scientific = TRUE, digits = 1)
+                })
+              },
               guide = guide_colorbar(
-                title = "Adj. P-value\n(darker = more sig.)",
+                title = "Adj. P-value\n(blue=down, orange=up)",
                 title.position = "top",
                 barwidth = 1,
                 barheight = 4
@@ -828,6 +896,20 @@ tryCatch({
     
     cat("[INFO] Ranked gene list for GSEA: ", length(ranked_vec), " genes\n", sep = "")
     
+    ## Get authoritative DEG counts for this contrast (for cross-validation)
+    deg_up_count <- NA
+    deg_down_count <- NA
+    logfc_cutoff <- NA
+    deg_fdr_cutoff <- NA
+    if (!is.null(authoritative_deg_lists) && contrast_name %in% names(authoritative_deg_lists)) {
+      deg_up_count <- length(authoritative_deg_lists[[contrast_name]]$up)
+      deg_down_count <- length(authoritative_deg_lists[[contrast_name]]$down)
+      logfc_cutoff <- authoritative_deg_lists[[contrast_name]]$logFC_cutoff
+      deg_fdr_cutoff <- authoritative_deg_lists[[contrast_name]]$fdr_cutoff
+      cat("[INFO] Authoritative DEG counts for cross-validation: Up=", deg_up_count,
+          ", Down=", deg_down_count, "\n", sep = "")
+    }
+
     ## Run GSEA (gseGO for GO:BP, gseKEGG for KEGG)
     if (length(ranked_vec) >= 10) {
       run_fgsea_analysis(
@@ -843,7 +925,11 @@ tryCatch({
         fdr_cutoff    = fdr_cut,
         simplify_go = simplify_go_bp,
         simplify_cutoff = simplify_go_cutoff,
-        top_n_per_direction = top_n_per_direction
+        top_n_per_direction = top_n_per_direction,
+        deg_up_count = deg_up_count,
+        deg_down_count = deg_down_count,
+        logfc_cutoff = logfc_cutoff,
+        deg_fdr_cutoff = deg_fdr_cutoff
       )
       log_time(paste0("Completed GSEA for contrast: ", contrast_name))
     } else {
@@ -886,7 +972,104 @@ tryCatch({
     cat("\n")
   }
   cat("==========================================================\n\n")
-  
+
+  ## Cross-validate with DEG_summary and ORA sanity check
+  cat("\n==========================================================\n")
+  cat("=== CROSS-VALIDATION: fgsea vs DEG_summary vs ORA ===\n")
+  cat("==========================================================\n")
+  cat("Note: GSEA uses ALL ranked genes for analysis.\n")
+  cat("      N_DEG_Up/N_DEG_Down are recorded for cross-validation only.\n\n")
+
+  all_pass <- TRUE
+
+  ## Load DEG_summary
+  deg_summary_file <- list.files(file.path(outdir, "tables"), pattern = "^DEG_summary_tissue_.*\\.csv$", full.names = TRUE)
+  if (length(deg_summary_file) > 0) {
+    deg_summary_file <- deg_summary_file[order(file.info(deg_summary_file)$mtime, decreasing = TRUE)][1]
+    deg_summary <- read.csv(deg_summary_file, stringsAsFactors = FALSE)
+    cat("[INFO] Loaded DEG_summary from: ", basename(deg_summary_file), "\n", sep = "")
+  } else {
+    deg_summary <- NULL
+    cat("[WARN] DEG_summary not found\n")
+  }
+
+  ## Load ORA sanity check
+  ora_sanity_file <- list.files(file.path(outdir, "tables"), pattern = "^ORA_sanity_check_.*\\.csv$", full.names = TRUE)
+  if (length(ora_sanity_file) > 0) {
+    ora_sanity_file <- ora_sanity_file[order(file.info(ora_sanity_file)$mtime, decreasing = TRUE)][1]
+    ora_sanity <- read.csv(ora_sanity_file, stringsAsFactors = FALSE)
+    cat("[INFO] Loaded ORA sanity check from: ", basename(ora_sanity_file), "\n\n", sep = "")
+  } else {
+    ora_sanity <- NULL
+    cat("[WARN] ORA sanity check not found\n\n")
+  }
+
+  for (cn in unique(fgsea_sanity_tracker$Contrast)) {
+    cat("--- ", cn, " ---\n", sep = "")
+
+    ## Get fgsea DEG counts (from GO:BP row)
+    fgsea_row <- fgsea_sanity_tracker %>%
+      dplyr::filter(Contrast == cn, Database == "GO:BP")
+    fgsea_up <- if (nrow(fgsea_row) > 0) fgsea_row$N_DEG_Up[1] else NA
+    fgsea_down <- if (nrow(fgsea_row) > 0) fgsea_row$N_DEG_Down[1] else NA
+
+    ## Get DEG_summary counts
+    deg_up <- NA
+    deg_down <- NA
+    if (!is.null(deg_summary)) {
+      deg_row <- deg_summary %>% dplyr::filter(Contrast == cn)
+      if (nrow(deg_row) > 0) {
+        deg_up <- deg_row$N_Up[1]
+        deg_down <- deg_row$N_Down[1]
+      }
+    }
+
+    ## Get ORA counts
+    ora_up <- NA
+    ora_down <- NA
+    if (!is.null(ora_sanity)) {
+      ora_up_row <- ora_sanity %>% dplyr::filter(Contrast == cn, Direction == "Up", Database == "GO:BP")
+      ora_down_row <- ora_sanity %>% dplyr::filter(Contrast == cn, Direction == "Down", Database == "GO:BP")
+      if (nrow(ora_up_row) > 0) ora_up <- ora_up_row$N_Input_Genes[1]
+      if (nrow(ora_down_row) > 0) ora_down <- ora_down_row$N_Input_Genes[1]
+    }
+
+    ## Check consistency
+    up_match <- "PASS"
+    down_match <- "PASS"
+    if (!is.na(fgsea_up) && !is.na(deg_up) && fgsea_up != deg_up) {
+      up_match <- "FAIL"
+      all_pass <- FALSE
+    }
+    if (!is.na(fgsea_up) && !is.na(ora_up) && fgsea_up != ora_up) {
+      up_match <- "FAIL"
+      all_pass <- FALSE
+    }
+    if (!is.na(fgsea_down) && !is.na(deg_down) && fgsea_down != deg_down) {
+      down_match <- "FAIL"
+      all_pass <- FALSE
+    }
+    if (!is.na(fgsea_down) && !is.na(ora_down) && fgsea_down != ora_down) {
+      down_match <- "FAIL"
+      all_pass <- FALSE
+    }
+
+    cat("  Up:   fgsea=", fgsea_up, " | DEG_summary=", deg_up, " | ORA=", ora_up, " [", up_match, "]\n", sep = "")
+    cat("  Down: fgsea=", fgsea_down, " | DEG_summary=", deg_down, " | ORA=", ora_down, " [", down_match, "]\n", sep = "")
+  }
+
+  cat("\n")
+  if (all_pass) {
+    cat("VALIDATION RESULT: PASS - DEG counts match across all scripts\n")
+    cat("  -> No drift in DEG membership between Part 1, Part 2, and Part 3\n")
+    cat("  -> ORA input genes = fgsea sanity check genes = DEG_summary\n")
+  } else {
+    cat("VALIDATION RESULT: FAIL - Mismatch detected!\n")
+    cat("  -> Re-run Part 1 to regenerate authoritative DEG lists\n")
+    cat("  -> Then re-run Part 2 and Part 3\n")
+  }
+  cat("==========================================================\n\n")
+
   cat("\n======================================\n")
   cat("=== PART 3 (GSEA) COMPLETE ===\n")
   cat("======================================\n")

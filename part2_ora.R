@@ -91,6 +91,29 @@ if (!dir.exists(file.path(outdir, "plots"))) {
   stop("plots directory not found in Part 1 run: ", outdir)
 }
 
+## 2.6) Load authoritative DEG lists from Part 1 -----------
+## This ensures ORA uses EXACTLY the same gene sets as Part 1's DEG_summary
+## and will be validated against fgsea sanity checks
+cat("\n=== LOADING AUTHORITATIVE DEG LISTS ===\n")
+deg_lists_file <- list.files(file.path(outdir, "tables"), pattern = "^DEG_lists_authoritative_.*\\.rds$", full.names = TRUE)
+if (length(deg_lists_file) == 0) {
+  cat("[WARN] No authoritative DEG lists found - will recompute from DE tables\n")
+  cat("[WARN] For full consistency, re-run part1_main_analysis.R first\n")
+  authoritative_deg_lists <- NULL
+} else {
+  ## Use most recent if multiple exist
+  deg_lists_file <- deg_lists_file[order(file.info(deg_lists_file)$mtime, decreasing = TRUE)][1]
+  authoritative_deg_lists <- readRDS(deg_lists_file)
+  cat("[OK] Loaded authoritative DEG lists from: ", basename(deg_lists_file), "\n", sep = "")
+  cat("[INFO] Contrasts available: ", paste(names(authoritative_deg_lists), collapse = ", "), "\n", sep = "")
+  for (cn in names(authoritative_deg_lists)) {
+    cat("  ", cn, ": Up=", length(authoritative_deg_lists[[cn]]$up),
+        ", Down=", length(authoritative_deg_lists[[cn]]$down),
+        " (FDR<", authoritative_deg_lists[[cn]]$fdr_cutoff,
+        ", |logFC|>", authoritative_deg_lists[[cn]]$logFC_cutoff, ")\n", sep = "")
+  }
+}
+
 ## 3) Parameters --------------------------------------------
 ## ============================================================
 ## DEPOT-SPECIFIC CUTOFFS
@@ -198,7 +221,7 @@ ora_plot_params <- list(
 ##     N_Input_Genes, N_Mapped_Entrez, N_Universe_Entrez, N_Sig_Pathways
 ## ============================================================
 
-## Sanity check tracker
+## Sanity check tracker - includes thresholds for validation
 pathway_sanity_tracker <- data.frame(
   Contrast = character(),
   Direction = character(),
@@ -207,6 +230,8 @@ pathway_sanity_tracker <- data.frame(
   N_Mapped_Entrez = integer(),
   N_Universe_Entrez = integer(),
   N_Sig_Pathways = integer(),
+  logFC_cutoff = numeric(),
+  fdr_cutoff = numeric(),
   stringsAsFactors = FALSE
 )
 
@@ -321,6 +346,8 @@ tryCatch({
           N_Mapped_Entrez = nrow(gene_entrez),
           N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
           N_Sig_Pathways = 0,
+          logFC_cutoff = logfc_cutoff,
+          fdr_cutoff = fdr_cutoff,
           stringsAsFactors = FALSE
         )
       )
@@ -334,6 +361,8 @@ tryCatch({
           N_Mapped_Entrez = nrow(gene_entrez),
           N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
           N_Sig_Pathways = 0,
+          logFC_cutoff = logfc_cutoff,
+          fdr_cutoff = fdr_cutoff,
           stringsAsFactors = FALSE
         )
       )
@@ -392,6 +421,8 @@ tryCatch({
             N_Mapped_Entrez = nrow(gene_entrez),
             N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
             N_Sig_Pathways = n_sig,
+            logFC_cutoff = logfc_cutoff,
+            fdr_cutoff = fdr_cutoff,
             stringsAsFactors = FALSE
           )
         )
@@ -407,6 +438,8 @@ tryCatch({
             N_Mapped_Entrez = nrow(gene_entrez),
             N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
             N_Sig_Pathways = 0,
+            logFC_cutoff = logfc_cutoff,
+            fdr_cutoff = fdr_cutoff,
             stringsAsFactors = FALSE
           )
         )
@@ -423,6 +456,8 @@ tryCatch({
           N_Mapped_Entrez = nrow(gene_entrez),
           N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
           N_Sig_Pathways = 0,
+          logFC_cutoff = logfc_cutoff,
+          fdr_cutoff = fdr_cutoff,
           stringsAsFactors = FALSE
         )
       )
@@ -470,7 +505,7 @@ tryCatch({
         n_sig <- sum(enrich_kegg@result$p.adjust < fdr_cutoff, na.rm = TRUE)
         cat("[OK] KEGG enrichment: ", nrow(enrich_kegg@result), " pathways, ",
             n_sig, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
-        
+
         ## Track in sanity checker
         pathway_sanity_tracker <<- rbind(
           pathway_sanity_tracker,
@@ -482,6 +517,8 @@ tryCatch({
             N_Mapped_Entrez = nrow(gene_entrez),
             N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
             N_Sig_Pathways = n_sig,
+            logFC_cutoff = logfc_cutoff,
+            fdr_cutoff = fdr_cutoff,
             stringsAsFactors = FALSE
           )
         )
@@ -497,6 +534,8 @@ tryCatch({
             N_Mapped_Entrez = nrow(gene_entrez),
             N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
             N_Sig_Pathways = 0,
+            logFC_cutoff = logfc_cutoff,
+            fdr_cutoff = fdr_cutoff,
             stringsAsFactors = FALSE
           )
         )
@@ -513,6 +552,8 @@ tryCatch({
           N_Mapped_Entrez = nrow(gene_entrez),
           N_Universe_Entrez = ifelse(is.null(universe_entrez), NA, length(universe_entrez)),
           N_Sig_Pathways = 0,
+          logFC_cutoff = logfc_cutoff,
+          fdr_cutoff = fdr_cutoff,
           stringsAsFactors = FALSE
         )
       )
@@ -561,17 +602,22 @@ tryCatch({
           dplyr::mutate(Description = factor(Description, levels = Description))
         
         ## Direction-specific color gradient (orange for Up, blue for Down)
+        ## Lower p-value = more significant = darker color
         if (direction == "Up") {
           fill_scale <- scale_fill_gradient(
-            low   = "#FDD49E",  ## Light orange
-            high  = "#E69F00",  ## Dark orange
-            name  = "Adj.\nP-value"
+            low   = "#E69F00",  ## Dark orange (most significant)
+            high  = "#FDD49E",  ## Light orange (least significant)
+            name  = "Adj. P-value",
+            labels = function(x) format(x, scientific = TRUE, digits = 2),
+            trans = "log10"
           )
         } else {
           fill_scale <- scale_fill_gradient(
-            low   = "#9ECAE1",  ## Light blue
-            high  = "#0072B2",  ## Dark blue/teal
-            name  = "Adj.\nP-value"
+            low   = "#0072B2",  ## Dark blue (most significant)
+            high  = "#9ECAE1",  ## Light blue (least significant)
+            name  = "Adj. P-value",
+            labels = function(x) format(x, scientific = TRUE, digits = 2),
+            trans = "log10"
           )
         }
         
@@ -661,37 +707,53 @@ tryCatch({
       cat("[INFO] Using default cutoffs: FDR < ", fdr_cut, ", |logFC| > ", logFC_cut, "\n", sep = "")
     }
 
-    ## Load DE table
-    de_table <- read.csv(de_file, row.names = 1, stringsAsFactors = FALSE)
+    ## Use AUTHORITATIVE DEG lists from Part 1 if available
+    ## This ensures ORA uses EXACTLY the same gene sets as DEG_summary
+    if (!is.null(authoritative_deg_lists) && contrast_name %in% names(authoritative_deg_lists)) {
+      cat("[INFO] Using AUTHORITATIVE DEG lists from Part 1 (no drift)\n")
+      up_genes <- authoritative_deg_lists[[contrast_name]]$up
+      down_genes <- authoritative_deg_lists[[contrast_name]]$down
+      logFC_cut <- authoritative_deg_lists[[contrast_name]]$logFC_cutoff
+      fdr_cut <- authoritative_deg_lists[[contrast_name]]$fdr_cutoff
+      cat("[INFO] Thresholds from Part 1: FDR < ", fdr_cut, ", |logFC| > ", logFC_cut, "\n", sep = "")
+    } else {
+      ## Fallback: Recompute from DE table (matches Part 1 logic)
+      cat("[INFO] Recomputing DEG lists from DE table (authoritative list not available)\n")
 
-    ## Ensure column names are correct
-    if (!"adj.P.Val" %in% colnames(de_table)) {
-      if ("padj" %in% colnames(de_table)) {
-        de_table$adj.P.Val <- de_table$padj
-      } else {
-        cat("[WARN] Cannot find FDR column in ", de_file, "\n")
-        next
+      ## Load DE table
+      de_table <- read.csv(de_file, row.names = 1, stringsAsFactors = FALSE)
+
+      ## Ensure column names are correct
+      if (!"adj.P.Val" %in% colnames(de_table)) {
+        if ("padj" %in% colnames(de_table)) {
+          de_table$adj.P.Val <- de_table$padj
+        } else {
+          cat("[WARN] Cannot find FDR column in ", de_file, "\n")
+          next
+        }
       }
-    }
 
-    if (!"logFC" %in% colnames(de_table)) {
-      if ("log2FoldChange" %in% colnames(de_table)) {
-        de_table$logFC <- de_table$log2FoldChange
-      } else {
-        cat("[WARN] Cannot find logFC column in ", de_file, "\n")
-        next
+      if (!"logFC" %in% colnames(de_table)) {
+        if ("log2FoldChange" %in% colnames(de_table)) {
+          de_table$logFC <- de_table$log2FoldChange
+        } else {
+          cat("[WARN] Cannot find logFC column in ", de_file, "\n")
+          next
+        }
       }
+
+      ## Get up-regulated genes using AUTHORITATIVE definition:
+      ## padj < fdr_cut AND logFC > logFC_cut
+      up_genes <- de_table %>%
+        dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut, logFC > logFC_cut) %>%
+        rownames()
+
+      ## Get down-regulated genes using AUTHORITATIVE definition:
+      ## padj < fdr_cut AND logFC < -logFC_cut
+      down_genes <- de_table %>%
+        dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut, logFC < -logFC_cut) %>%
+        rownames()
     }
-
-    ## Get up-regulated genes (using depot-specific cutoffs)
-    up_genes <- de_table %>%
-      dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut, logFC > logFC_cut) %>%
-      rownames()
-
-    ## Get down-regulated genes (using depot-specific cutoffs)
-    down_genes <- de_table %>%
-      dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut, logFC < -logFC_cut) %>%
-      rownames()
 
     cat("[INFO] Up-regulated DEGs: ", length(up_genes), "\n", sep = "")
     cat("[INFO] Down-regulated DEGs: ", length(down_genes), "\n", sep = "")
@@ -841,7 +903,63 @@ tryCatch({
     cat("\n")
   }
   cat("==========================================================\n\n")
-  
+
+  ## Cross-validate with DEG_summary from Part 1
+  cat("\n==========================================================\n")
+  cat("=== CROSS-VALIDATION: ORA vs DEG_summary ===\n")
+  cat("==========================================================\n")
+
+  deg_summary_file <- list.files(file.path(outdir, "tables"), pattern = "^DEG_summary_tissue_.*\\.csv$", full.names = TRUE)
+  if (length(deg_summary_file) > 0) {
+    deg_summary_file <- deg_summary_file[order(file.info(deg_summary_file)$mtime, decreasing = TRUE)][1]
+    deg_summary <- read.csv(deg_summary_file, stringsAsFactors = FALSE)
+    cat("[INFO] Loaded DEG_summary from: ", basename(deg_summary_file), "\n\n", sep = "")
+
+    all_pass <- TRUE
+    for (cn in unique(pathway_sanity_tracker$Contrast)) {
+      ora_up <- pathway_sanity_tracker %>%
+        dplyr::filter(Contrast == cn, Direction == "Up", Database == "GO:BP") %>%
+        dplyr::pull(N_Input_Genes)
+      ora_down <- pathway_sanity_tracker %>%
+        dplyr::filter(Contrast == cn, Direction == "Down", Database == "GO:BP") %>%
+        dplyr::pull(N_Input_Genes)
+
+      deg_up <- deg_summary %>%
+        dplyr::filter(Contrast == cn) %>%
+        dplyr::pull(N_Up)
+      deg_down <- deg_summary %>%
+        dplyr::filter(Contrast == cn) %>%
+        dplyr::pull(N_Down)
+
+      if (length(ora_up) == 0) ora_up <- NA
+      if (length(ora_down) == 0) ora_down <- NA
+      if (length(deg_up) == 0) deg_up <- NA
+      if (length(deg_down) == 0) deg_down <- NA
+
+      up_match <- ifelse(is.na(ora_up) || is.na(deg_up), "SKIP",
+                         ifelse(ora_up == deg_up, "PASS", "FAIL"))
+      down_match <- ifelse(is.na(ora_down) || is.na(deg_down), "SKIP",
+                           ifelse(ora_down == deg_down, "PASS", "FAIL"))
+
+      if (up_match == "FAIL" || down_match == "FAIL") all_pass <- FALSE
+
+      cat("  ", cn, ":\n", sep = "")
+      cat("    Up genes:   ORA=", ora_up, " vs DEG_summary=", deg_up, " [", up_match, "]\n", sep = "")
+      cat("    Down genes: ORA=", ora_down, " vs DEG_summary=", deg_down, " [", down_match, "]\n", sep = "")
+    }
+    cat("\n")
+    if (all_pass) {
+      cat("VALIDATION RESULT: PASS - ORA input genes match DEG_summary\n")
+      cat("  -> No drift in DEG membership between Part 1 and Part 2\n")
+    } else {
+      cat("VALIDATION RESULT: FAIL - Mismatch detected!\n")
+      cat("  -> Check that ORA is using authoritative DEG lists from Part 1\n")
+    }
+  } else {
+    cat("[WARN] DEG_summary not found - skipping cross-validation\n")
+  }
+  cat("==========================================================\n\n")
+
   cat("\n======================================\n")
   cat("=== PART 2 (ORA) COMPLETE ===\n")
   cat("======================================\n\n")
