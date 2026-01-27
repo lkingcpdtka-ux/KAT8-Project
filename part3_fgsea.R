@@ -418,7 +418,7 @@ tryCatch({
                 if (length(symbol_vec) == 0) {
                   return(NA_character_)
                 }
-                paste(symbol_vec, collapse = ";")
+                paste(symbol_vec, collapse = ",")
               },
               character(1)
             )
@@ -590,17 +590,13 @@ tryCatch({
                 if (length(symbol_vec) == 0) {
                   return(NA_character_)
                 }
-                paste(symbol_vec, collapse = ";")
+                paste(symbol_vec, collapse = ",")
               },
               character(1)
             )
           }
 
           kegg_results <- kegg_results %>%
-            dplyr::mutate(
-              ## Clean pathway IDs for display
-              pathway_display = paste0("mmu", pathway)
-            ) %>%
             dplyr::arrange(padj)
 
           results$kegg <- kegg_results
@@ -685,10 +681,11 @@ tryCatch({
           cat("[INFO] No significant GSEA pathways in ", db_name, "\n", sep = "")
           next
         }
-        if (!"Description" %in% colnames(sig_results)) {
+        ## Ensure pathway_name exists (for plotting)
+        if (!"Description" %in% colnames(sig_results) && !"pathway_name" %in% colnames(sig_results)) {
           sig_results$Description <- sig_results$pathway
         }
-        
+
         ## Convert list columns to character (leadingEdge is a list)
         for (col_name in colnames(sig_results)) {
           if (is.list(sig_results[[col_name]])) {
@@ -696,12 +693,39 @@ tryCatch({
               if (is.null(x) || length(x) == 0) {
                 return(NA_character_)
               } else {
-                return(paste(x, collapse = ";"))
+                return(paste(x, collapse = ","))
               }
             })
           }
         }
-        
+
+        ## Standardize column names for consistent output
+        if ("pathway" %in% colnames(sig_results)) {
+          sig_results <- sig_results %>% dplyr::rename(pathway_id = pathway)
+        }
+        if ("Description" %in% colnames(sig_results)) {
+          sig_results <- sig_results %>% dplyr::rename(pathway_name = Description)
+        }
+
+        ## Remove qvalue column if present (keep padj only for clarity)
+        if ("qvalue" %in% colnames(sig_results) && "padj" %in% colnames(sig_results)) {
+          sig_results <- sig_results %>% dplyr::select(-qvalue)
+        }
+        if ("qvalues" %in% colnames(sig_results)) {
+          sig_results <- sig_results %>% dplyr::select(-qvalues)
+        }
+
+        ## Add metadata columns for downstream analysis
+        sig_results$contrast <- contrast_name
+        sig_results$tissue <- ifelse(grepl("^iWAT", contrast_name), "iWAT",
+                                     ifelse(grepl("^gWAT", contrast_name), "gWAT", "unknown"))
+        sig_results$database <- ifelse(db_name == "gobp", "GO:BP",
+                                       ifelse(db_name == "kegg", "KEGG", toupper(db_name)))
+        sig_results$ranking_metric <- "DESeq2_Wald_stat"
+        sig_results$analysis_type <- "fgsea"
+        if (!is.na(logfc_cutoff)) sig_results$logFC_cutoff <- logfc_cutoff
+        if (!is.na(deg_fdr_cutoff)) sig_results$fdr_cutoff <- deg_fdr_cutoff
+
         ## Save table
         table_file <- paste0("fgsea_", db_name, "_", contrast_name, "_", run_tag, ".csv")
         write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
@@ -725,7 +749,7 @@ tryCatch({
         plot_data <- dplyr::bind_rows(top_down, top_up) %>%
           dplyr::arrange(NES) %>%
           dplyr::mutate(
-            pathway_label = ifelse(!is.na(Description) & Description != "", Description, pathway),
+            pathway_label = ifelse(!is.na(pathway_name) & pathway_name != "", pathway_name, pathway_id),
             pathway_label = factor(pathway_label, levels = pathway_label),
             Direction = ifelse(NES > 0, "Up-regulated", "Down-regulated")
           )

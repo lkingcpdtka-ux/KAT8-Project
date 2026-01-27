@@ -576,10 +576,38 @@ tryCatch({
         ## Remove duplicate columns before saving
         sig_results <- sig_results[, !duplicated(colnames(sig_results)), drop = FALSE]
 
-        ## Record analysis thresholds for downstream captions
+        ## Standardize column names for consistent output
+        if ("ID" %in% colnames(sig_results) && !"pathway_id" %in% colnames(sig_results)) {
+          sig_results <- sig_results %>% dplyr::rename(pathway_id = ID)
+        }
+        if ("Description" %in% colnames(sig_results) && !"pathway_name" %in% colnames(sig_results)) {
+          sig_results <- sig_results %>% dplyr::rename(pathway_name = Description)
+        }
+
+        ## Remove qvalue column if present (keep p.adjust only for clarity)
+        if ("qvalue" %in% colnames(sig_results) && "p.adjust" %in% colnames(sig_results)) {
+          sig_results <- sig_results %>% dplyr::select(-qvalue)
+        }
+
+        ## Standardize gene list column separators (/ to ,)
+        if ("geneID" %in% colnames(sig_results)) {
+          sig_results$geneID <- gsub("/", ",", sig_results$geneID)
+        }
+        if ("geneID_symbols" %in% colnames(sig_results)) {
+          sig_results$geneID_symbols <- gsub("/", ",", sig_results$geneID_symbols)
+        }
+
+        ## Add metadata columns for downstream analysis
+        sig_results$contrast <- contrast_name
+        sig_results$tissue <- ifelse(grepl("^iWAT", contrast_name), "iWAT",
+                                     ifelse(grepl("^gWAT", contrast_name), "gWAT", "unknown"))
+        sig_results$direction <- direction
+        sig_results$database <- ifelse(db_name == "gobp", "GO:BP",
+                                       ifelse(db_name == "kegg", "KEGG", toupper(db_name)))
+        sig_results$analysis_type <- "ORA"
         sig_results$logFC_cutoff <- logfc_cutoff
         sig_results$fdr_cutoff <- fdr_cutoff
-        
+
         ## Save table
         table_file <- paste0("ORA_", db_name, "_", contrast_name, "_", direction, "_", run_tag, ".csv")
         write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
@@ -599,7 +627,7 @@ tryCatch({
         ## Order by adjusted p-value (most significant at top)
         plot_data <- plot_data %>%
           dplyr::arrange(dplyr::desc(p.adjust)) %>%
-          dplyr::mutate(Description = factor(Description, levels = Description))
+          dplyr::mutate(pathway_name = factor(pathway_name, levels = pathway_name))
         
         ## Direction-specific color gradient (orange for Up, blue for Down)
         ## Lower p-value = more significant = darker color
@@ -643,7 +671,7 @@ tryCatch({
           sep = "\n"
         )
 
-        p_pathway <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description, fill = p.adjust)) +
+        p_pathway <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = p.adjust)) +
           geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
           fill_scale +
           labs(
