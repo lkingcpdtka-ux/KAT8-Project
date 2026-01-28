@@ -213,6 +213,7 @@ for (rds_file in gsea_rds_files) {
     nes <- pathway$NES
     padj <- pathway$p.adjust
     direction <- ifelse(nes > 0, "Up", "Down")
+    stats_label <- paste0("NES=", round(nes, 2), " | FDR=", signif(padj, 3))
 
     ## Create clean filename
     safe_name <- gsub("[^A-Za-z0-9_-]", "_", pathway_name)
@@ -230,9 +231,10 @@ for (rds_file in gsea_rds_files) {
           gsea_result,
           geneSetID = pathway_id,
           title = paste0(str_wrap(pathway_name, width = 50), "\n",
-                         contrast_name, " | ", database, " | ", direction, "-regulated"),
+                         contrast_name, " | ", database, " | ", direction, "-regulated", "\n",
+                         stats_label),
           base_size = 10,
-          pvalue_table = TRUE
+          pvalue_table = FALSE
         )
       }, error = function(e1) {
         ## Fallback to simpler gseaplot (single panel)
@@ -240,7 +242,7 @@ for (rds_file in gsea_rds_files) {
           enrichplot::gseaplot(
             gsea_result,
             geneSetID = pathway_id,
-            title = paste0(pathway_name, "\n", contrast_name, " | ", direction)
+            title = paste0(pathway_name, "\n", contrast_name, " | ", direction, "\n", stats_label)
           )
         }, error = function(e2) {
           ## If both fail, return NULL

@@ -624,8 +624,6 @@ tryCatch({
 
     tt <- as.data.frame(res)
     tt$logFC     <- tt$log2FoldChange
-    tt$P.Value   <- tt$pvalue
-    tt$adj.P.Val <- tt$padj
     tt$gene_name <- rownames(tt)
 
     ## Remove duplicate columns
@@ -638,10 +636,10 @@ tryCatch({
 
     ## Calculate comprehensive DEG statistics using depot-specific cutoffs
     n_total <- nrow(tt)
-    n_valid_pval <- sum(!is.na(tt$adj.P.Val))
-    n_fdr_only <- sum(tt$adj.P.Val < cn_fdr_cut, na.rm = TRUE)
-    n_up_both <- sum(tt$adj.P.Val < cn_fdr_cut & tt$logFC > cn_logFC_cut, na.rm = TRUE)
-    n_down_both <- sum(tt$adj.P.Val < cn_fdr_cut & tt$logFC < -cn_logFC_cut, na.rm = TRUE)
+    n_valid_pval <- sum(!is.na(tt$padj))
+    n_fdr_only <- sum(tt$padj < cn_fdr_cut, na.rm = TRUE)
+    n_up_both <- sum(tt$padj < cn_fdr_cut & tt$logFC > cn_logFC_cut, na.rm = TRUE)
+    n_down_both <- sum(tt$padj < cn_fdr_cut & tt$logFC < -cn_logFC_cut, na.rm = TRUE)
     n_both <- n_up_both + n_down_both
 
     cat("\n==========================================================\n")
@@ -673,10 +671,10 @@ tryCatch({
     ## These lists include the cutoffs used, so downstream scripts
     ## will automatically use the same parameters and display them in captions
     up_genes <- tt %>%
-      dplyr::filter(!is.na(adj.P.Val), adj.P.Val < cn_fdr_cut, logFC > cn_logFC_cut) %>%
+      dplyr::filter(!is.na(padj), padj < cn_fdr_cut, logFC > cn_logFC_cut) %>%
       rownames()
     down_genes <- tt %>%
-      dplyr::filter(!is.na(adj.P.Val), adj.P.Val < cn_fdr_cut, logFC < -cn_logFC_cut) %>%
+      dplyr::filter(!is.na(padj), padj < cn_fdr_cut, logFC < -cn_logFC_cut) %>%
       rownames()
 
     authoritative_deg_lists[[cn]] <- list(
@@ -688,21 +686,21 @@ tryCatch({
     
     ## Volcano
     tt_plot <- tt %>%
-      dplyr::filter(is.finite(logFC), is.finite(adj.P.Val), adj.P.Val > 0) %>%
-      mutate(negLogFDR = -log10(adj.P.Val))
+      dplyr::filter(is.finite(logFC), is.finite(padj), padj > 0) %>%
+      mutate(negLogFDR = -log10(padj))
     
     tt_plot <- tt_plot %>%
       mutate(
         sig_cat = dplyr::case_when(
-          adj.P.Val < cn_fdr_cut & logFC >=  cn_logFC_cut ~ "Up",
-          adj.P.Val < cn_fdr_cut & logFC <= -cn_logFC_cut ~ "Down",
+          padj < cn_fdr_cut & logFC >=  cn_logFC_cut ~ "Up",
+          padj < cn_fdr_cut & logFC <= -cn_logFC_cut ~ "Down",
           TRUE                                            ~ "NS"
         ),
         sig_cat = factor(sig_cat, levels = c("Up", "Down", "NS"))
       )
 
     tt_sig <- tt_plot %>%
-      dplyr::filter(adj.P.Val < cn_fdr_cut,
+      dplyr::filter(padj < cn_fdr_cut,
                     abs(logFC) >= cn_logFC_cut,
                     sig_cat != "NS")
     
@@ -712,10 +710,10 @@ tryCatch({
     up_sig <- tt_sig %>% dplyr::filter(sig_cat == "Up")
     down_sig <- tt_sig %>% dplyr::filter(sig_cat == "Down")
     
-    up_top_fdr <- up_sig %>% dplyr::arrange(adj.P.Val) %>% dplyr::slice_head(n = top_n_fdr)
+    up_top_fdr <- up_sig %>% dplyr::arrange(padj) %>% dplyr::slice_head(n = top_n_fdr)
     up_top_fc  <- up_sig %>% dplyr::arrange(dplyr::desc(logFC)) %>% dplyr::slice_head(n = top_n_fc)
     
-    down_top_fdr <- down_sig %>% dplyr::arrange(adj.P.Val) %>% dplyr::slice_head(n = top_n_fdr)
+    down_top_fdr <- down_sig %>% dplyr::arrange(padj) %>% dplyr::slice_head(n = top_n_fdr)
     down_top_fc  <- down_sig %>% dplyr::arrange(logFC) %>% dplyr::slice_head(n = top_n_fc)
     
     label_genes <- dplyr::bind_rows(up_top_fdr, up_top_fc, down_top_fdr, down_top_fc) %>%
@@ -764,10 +762,10 @@ tryCatch({
     
     ## Heatmap (VST) of strongest DEGs using ComplexHeatmap
     de_sig <- tt %>%
-      dplyr::filter(adj.P.Val < cn_fdr_cut, abs(logFC) > cn_logFC_cut)
+      dplyr::filter(padj < cn_fdr_cut, abs(logFC) > cn_logFC_cut)
     
     if (nrow(de_sig) >= 2) {
-      de_sig <- de_sig[order(de_sig$adj.P.Val), , drop = FALSE]
+      de_sig <- de_sig[order(de_sig$padj), , drop = FALSE]
       if (nrow(de_sig) > params$heatmap_max_genes) de_sig <- de_sig[1:params$heatmap_max_genes, , drop = FALSE]
       gene_set <- de_sig$gene_name
       
@@ -1015,12 +1013,12 @@ tryCatch({
     
     ## Prepare data for EnhancedVolcano
     volcano_df <- tt %>%
-      dplyr::filter(is.finite(logFC), is.finite(adj.P.Val), adj.P.Val > 0)
+      dplyr::filter(is.finite(logFC), is.finite(padj), padj > 0)
     
     ## Only label genes of interest that are SIGNIFICANT (pass both thresholds)
     goi_significant <- volcano_df %>%
       dplyr::filter(gene_name %in% genes_of_interest,
-                    adj.P.Val < cn_fdr_cut,
+                    padj < cn_fdr_cut,
                     abs(logFC) >= cn_logFC_cut) %>%
       dplyr::pull(gene_name)
     
@@ -1034,13 +1032,13 @@ tryCatch({
       names(keyvals_color) <- rep("NS", nrow(volcano_df))
       
       ## Significant UP (orange)
-      sig_up_idx <- which(volcano_df$adj.P.Val < cn_fdr_cut &
+      sig_up_idx <- which(volcano_df$padj < cn_fdr_cut &
                             volcano_df$logFC >= cn_logFC_cut)
       keyvals_color[sig_up_idx] <- "#E69F00"
       names(keyvals_color)[sig_up_idx] <- "Significant Up"
 
       ## Significant DOWN (teal/blue)
-      sig_down_idx <- which(volcano_df$adj.P.Val < cn_fdr_cut &
+      sig_down_idx <- which(volcano_df$padj < cn_fdr_cut &
                               volcano_df$logFC <= -cn_logFC_cut)
       keyvals_color[sig_down_idx] <- "#0072B2"
       names(keyvals_color)[sig_down_idx] <- "Significant Down"
@@ -1050,7 +1048,7 @@ tryCatch({
         lab = volcano_df$gene_name,
         selectLab = goi_significant,
         x = "logFC",
-        y = "adj.P.Val",
+        y = "padj",
         title = paste0("Volcano: ", cn),
         subtitle = "ECM, metabolism, and remodeling genes labeled (significant only)",
         pCutoff = cn_fdr_cut,
