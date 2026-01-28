@@ -491,11 +491,13 @@ tryCatch({
         kegg_result <- enrich_kegg@result
         
         ## Parse geneID column (format: "entrez1/entrez2/entrez3")
+        ## Convert Entrez IDs to gene symbols and remove any duplicates
         if ("geneID" %in% colnames(kegg_result)) {
           kegg_result$geneID_symbols <- sapply(kegg_result$geneID, function(gene_str) {
             entrez_vec <- unlist(strsplit(gene_str, "/"))
             symbol_vec <- gene_entrez$SYMBOL[match(entrez_vec, gene_entrez$ENTREZID)]
             symbol_vec <- symbol_vec[!is.na(symbol_vec)]
+            symbol_vec <- unique(symbol_vec)  ## Remove any duplicate gene names
             paste(symbol_vec, collapse = "/")
           })
         }

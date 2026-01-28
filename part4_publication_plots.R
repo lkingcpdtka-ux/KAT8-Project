@@ -103,6 +103,17 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
     return(NULL)
   }
 
+  ## Standardize column names - handle both 'Description' and 'pathway_name'
+  if (!"Description" %in% colnames(ora_data) && "pathway_name" %in% colnames(ora_data)) {
+    ora_data$Description <- ora_data$pathway_name
+    cat("[INFO] Using 'pathway_name' column as Description\n")
+  }
+
+  if (!"Description" %in% colnames(ora_data)) {
+    cat("[WARN] No Description or pathway_name column found in: ", basename(ora_file), "\n")
+    return(NULL)
+  }
+
   ## Set top_n based on database
   top_n <- ora_dotplot_params$top_n[[database]]
   if (is.null(top_n)) {
