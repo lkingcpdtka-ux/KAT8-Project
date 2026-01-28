@@ -288,8 +288,9 @@ tryCatch({
   
   ## 4.3) ORA analysis function ------------------------------
   run_ora_analysis <- function(gene_list, direction, contrast_name,
-                               universe_entrez, run_tag, outdir, fdr_cutoff = 0.05,
-                               logfc_cutoff = 1.0) {
+                               universe_entrez, run_tag, outdir,
+                               fdr_cutoff,    ## From parameters.R (no default)
+                               logfc_cutoff) { ## From parameters.R (no default)
 
     cat("\n--- ORA Pathway enrichment: ", direction, " genes (", contrast_name, ") ---\n", sep = "")
     cat("[INFO] Input gene count: ", length(gene_list), " genes\n", sep = "")

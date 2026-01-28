@@ -346,10 +346,12 @@ tryCatch({
   run_fgsea_analysis <- function(ranked_genes, contrast_name,
                                  go_bp_list, go_bp_term2gene, wikipathways_list, hallmark_list,
                                  de_table,  ## Added: full DE table for ENTREZID mapping
-                                 run_tag, outdir, fdr_cutoff = 0.05,
-                                 simplify_go = FALSE, simplify_cutoff = 0.7,
-                                 top_n_per_direction = 10,
-                                 deg_up_count = NA,  ## Authoritative DEG count for cross-validation
+                                 run_tag, outdir,
+                                 fdr_cutoff,           ## From parameters.R (no default)
+                                 simplify_go,          ## From parameters.R (no default)
+                                 simplify_cutoff,      ## From parameters.R (no default)
+                                 top_n_per_direction,  ## From parameters.R (no default)
+                                 deg_up_count = NA,    ## Authoritative DEG count for cross-validation
                                  deg_down_count = NA,
                                  logfc_cutoff = NA,
                                  deg_fdr_cutoff = NA) {
