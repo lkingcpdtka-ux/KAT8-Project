@@ -395,6 +395,11 @@ tryCatch({
         )
 
         if (!is.null(gsea_go) && nrow(gsea_go@result) > 0) {
+          ## SAVE gseaResult object for barcode plots (part5)
+          gsea_obj_file <- paste0("gseaResult_gobp_", contrast_name, "_", run_tag, ".rds")
+          saveRDS(gsea_go, file = file.path(outdir, "tables", gsea_obj_file))
+          cat("[OK] Saved gseaResult object: ", gsea_obj_file, "\n", sep = "")
+
           go_results <- as.data.frame(gsea_go) %>%
             dplyr::rename(
               pathway = ID,
@@ -558,6 +563,11 @@ tryCatch({
         )
 
         if (!is.null(gsea_kegg) && nrow(gsea_kegg@result) > 0) {
+          ## SAVE gseaResult object for barcode plots (part5)
+          gsea_obj_file <- paste0("gseaResult_kegg_", contrast_name, "_", run_tag, ".rds")
+          saveRDS(gsea_kegg, file = file.path(outdir, "tables", gsea_obj_file))
+          cat("[OK] Saved gseaResult object: ", gsea_obj_file, "\n", sep = "")
+
           ## Convert to data frame
           kegg_results <- as.data.frame(gsea_kegg)
 
