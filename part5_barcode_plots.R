@@ -172,6 +172,26 @@ for (rds_file in gsea_rds_files) {
     next
   }
 
+  ## Save full gseaResult results table for this contrast/database
+  results_file <- paste0("gseaResult_full_", db_name, "_", contrast_name, "_", run_tag, ".csv")
+  write.csv(result_df, file = file.path(tables_dir, results_file), row.names = FALSE)
+  cat("[OK] Saved full gseaResult table: ", results_file, "\n", sep = "")
+
+  ## Save ranked gene list used for barcode plots
+  gene_list <- gsea_result@geneList
+  if (length(gene_list) > 0) {
+    gene_list_df <- data.frame(
+      gene_id = names(gene_list),
+      ranking_metric = as.numeric(gene_list),
+      stringsAsFactors = FALSE
+    )
+    gene_list_file <- paste0("gseaResult_geneList_", db_name, "_", contrast_name, "_", run_tag, ".csv")
+    write.csv(gene_list_df, file = file.path(tables_dir, gene_list_file), row.names = FALSE)
+    cat("[OK] Saved gseaResult geneList: ", gene_list_file, "\n", sep = "")
+  } else {
+    cat("[WARN] gseaResult geneList is empty; skipping geneList export.\n")
+  }
+
   ## Filter significant pathways
   sig_results <- result_df %>%
     dplyr::filter(p.adjust < fdr_cutoff)
