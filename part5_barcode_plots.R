@@ -34,7 +34,15 @@ suppressPackageStartupMessages({
   library(DOSE)
 })
 
-## 2) Find most recent run directory -----------------------
+## 2.5) Load central parameters -----------------------------
+params_file <- file.path(getwd(), "parameters.R")
+if (file.exists(params_file)) {
+  source(params_file)
+} else {
+  stop("parameters.R not found. Please ensure it exists in the project root.")
+}
+
+## 3) Find most recent run directory -----------------------
 cat("\n=== FINDING ANALYSIS RESULTS ===\n")
 
 savepoint_dir <- file.path(getwd(), "savepoints")
@@ -65,14 +73,15 @@ if (!dir.exists(barcode_dir)) {
 }
 
 ## ============================================================
-## PARAMETERS
+## PARAMETERS (from central parameters.R)
 ## ============================================================
 
-## Number of top pathways per direction (should match part3_fgsea.R)
-top_n_per_direction <- 10
+## Use values from barcode_params (which references gsea_params for consistency)
+top_n_per_direction <- barcode_params$top_n_per_direction
+fdr_cutoff <- barcode_params$fdr_cutoff
 
-## FDR cutoff for significance
-fdr_cutoff <- 0.05
+cat("[INFO] Using parameters: top_n_per_direction=", top_n_per_direction,
+    ", fdr_cutoff=", fdr_cutoff, "\n", sep = "")
 
 ## ============================================================
 ## SECTION 1: FIND AND LOAD gseaResult OBJECTS

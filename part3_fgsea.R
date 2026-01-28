@@ -43,6 +43,14 @@ suppressPackageStartupMessages({
   library(clusterProfiler)
 })
 
+## 1.5) Load central parameters -----------------------------
+params_file <- file.path(getwd(), "parameters.R")
+if (file.exists(params_file)) {
+  source(params_file)
+} else {
+  stop("parameters.R not found. Please ensure it exists in the project root.")
+}
+
 ## 2) save_core utilities -----------------------------------
 utils_dir <- file.path(getwd(), "save_core")
 if (file.exists(file.path(utils_dir, "save.R"))) {
@@ -113,24 +121,24 @@ if (length(deg_lists_file) == 0) {
   }
 }
 
-## 3) Parameters --------------------------------------------
-fdr_cut   <- 0.05
-## UPDATED (2026-01-20): Enable GO:BP simplification to reduce redundancy
-## This combines similar pathways (like ORA) - recommended for GO:BP
-simplify_go_bp <- TRUE
-simplify_go_cutoff <- 0.7
-top_n_per_direction <- 15
+## 3) Parameters (from central parameters.R) ----------------
+## All cutoffs are now defined in parameters.R
+fdr_cut   <- gsea_params$fdr_cutoff
+simplify_go_bp <- gsea_params$simplify_go
+simplify_go_cutoff <- gsea_params$simplify_cutoff
+top_n_per_direction <- gsea_params$top_n_per_direction
 
-gsea_params <- list(
-  min_gs_size  = 5,
-  max_gs_size  = 500,
-  rank_metric  = "Wald statistic"
+## Local params that extend the central ones
+local_gsea_params <- list(
+  min_gs_size  = gsea_params$min_gs_size,
+  max_gs_size  = gsea_params$max_gs_size,
+  rank_metric  = gsea_params$rank_metric
 )
 
 gse_kegg_params <- list(
-  min_gs_size     = 5,
-  max_gs_size     = 500,
-  pvalue_cutoff   = 0.1,
+  min_gs_size     = gsea_params$min_gs_size,
+  max_gs_size     = gsea_params$max_gs_size,
+  pvalue_cutoff   = 0.1,  ## Initial filter (final uses fdr_cut)
   p_adjust_method = "BH",
   organism        = "mmu",
   seed            = TRUE

@@ -33,6 +33,14 @@ suppressPackageStartupMessages({
   library(grid)
 })
 
+## 1.5) Load central parameters -----------------------------
+params_file <- file.path(getwd(), "parameters.R")
+if (file.exists(params_file)) {
+  source(params_file)
+} else {
+  stop("parameters.R not found. Please ensure it exists in the project root.")
+}
+
 ## 2) Find most recent run directory -----------------------
 cat("\n=== FINDING ANALYSIS RESULTS ===\n")
 
@@ -57,21 +65,18 @@ cat("[INFO] Run tag: ", run_tag, "\n", sep = "")
 tables_dir <- file.path(outdir, "tables")
 plots_dir <- file.path(outdir, "plots")
 
+## Use centralized parameters from parameters.R
 ora_dotplot_params <- list(
-  fdr_cutoff  = 0.05,
-  min_count   = 3,
-  top_n       = list("GO:BP" = 15, "KEGG" = 15),
-  default_top_n = 15,
+  fdr_cutoff  = dotplot_params$fdr_cutoff,
+  min_count   = dotplot_params$min_count,
+  top_n       = list("GO:BP" = dotplot_params$top_n_gobp, "KEGG" = dotplot_params$top_n_kegg),
+  default_top_n = dotplot_params$top_n_gobp,
   order_by    = "adj. p-value",
   tie_breaker = "gene ratio",
-  gobp_simplify_cutoff = 0.7  ## GO:BP simplification cutoff (from part2_ora.R)
+  gobp_simplify_cutoff = dotplot_params$gobp_simplify_cutoff
 )
 
-heatmap_params <- list(
-  lfc_clip    = 2.0,
-  lfc_label   = "log2FC (DESeq2)",
-  reference   = "CTL=0 reference"
-)
+## heatmap_params is already defined in parameters.R
 
 
 ## ============================================================
