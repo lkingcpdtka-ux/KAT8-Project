@@ -6,7 +6,7 @@
 ## This script performs complete analysis in one run:
 ## - Part 1: DESeq2 differential expression + QC + volcano + heatmap
 ## - Part 2: ORA pathway analysis (GO:BP, KEGG)
-## - Part 3: FGSEA pathway analysis (GO:BP, KEGG, WikiPathways, Hallmark)
+## - Part 3: GSEA pathway analysis (GO:BP, KEGG)
 ##
 ## Cells: 3T3-L1 adipocytes, KAT8KD vs CTL
 ## Samples: JS_41-JS_48 (4 CTL, 4 KAT8KD)
@@ -24,8 +24,7 @@ required_pkgs <- c(
   "ggrepel",
   "viridis",
   "grid",
-  "scales",
-  "msigdbr"
+  "scales"
 )
 
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
@@ -39,7 +38,6 @@ required_bioc_pkgs <- c(
   "DOSE",
   "AnnotationDbi",
   "ComplexHeatmap",
-  "fgsea",
   "GO.db",
   "GOSemSim"
 )
@@ -68,10 +66,16 @@ suppressPackageStartupMessages({
   library(AnnotationDbi)
   library(ComplexHeatmap)
   library(circlize)
-  library(fgsea)
   library(GO.db)
-  library(msigdbr)
 })
+
+## 1.5) Load central parameters -----------------------------
+params_file <- file.path(getwd(), "parameters.R")
+if (file.exists(params_file)) {
+  source(params_file)
+} else {
+  stop("parameters.R not found. Please ensure it exists in the project root.")
+}
 
 ## =======================================================
 ## UNIFIED PLOT THEME & COLORS
@@ -121,8 +125,8 @@ run_info <- list(
   species     = "mouse",
   data_type   = "bulkRNAseq_3T3L1_cells",
   keywords    = c("KAT8", "3T3-L1", "adipocytes", "bulk RNA-seq", "cells", "comprehensive"),
-  notes       = "Comprehensive analysis: DESeq2 + ORA + FGSEA in one script",
-  message     = "Cells: Complete DESeq2 + ORA + FGSEA analysis"
+  notes       = "Comprehensive analysis: DESeq2 + ORA + GSEA in one script",
+  message     = "Cells: Complete DESeq2 + ORA + GSEA analysis"
 )
 
 ## 3) init_run ----------------------------------------------
@@ -154,14 +158,23 @@ fdr_cut_cells   <- 0.05  # FDR threshold (standard)
 ## ORA settings
 use_ora_universe <- FALSE
 
-## FGSEA settings
+## GSEA settings
 run_go_bp <- TRUE
 run_kegg <- TRUE
-run_wikipathways <- TRUE
-run_hallmark <- TRUE
-simplify_go_bp <- TRUE
-simplify_go_cutoff <- 0.7
-top_n_per_direction <- 10
+run_wikipathways <- FALSE
+run_hallmark <- FALSE
+simplify_go_bp <- gsea_params$simplify_go
+simplify_go_cutoff <- gsea_params$simplify_cutoff
+top_n_per_direction <- gsea_params$top_n_per_direction
+
+gse_kegg_params <- list(
+  min_gs_size     = gsea_params$min_gs_size,
+  max_gs_size     = gsea_params$max_gs_size,
+  pvalue_cutoff   = 0.1,
+  p_adjust_method = "BH",
+  organism        = "mmu",
+  seed            = TRUE
+)
 
 log_time <- function(message) {
   cat("[TIME] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), " ", message, "\n", sep = "")
@@ -365,22 +378,22 @@ tryCatch({
     paste0("  Gene ID conversion: SYMBOL -> ENTREZID (via org.Mm.eg.db)"),
     paste0("  Input: Up-regulated and down-regulated genes (analyzed separately)"),
     "",
-    "--- FGSEA (Fast Gene Set Enrichment Analysis) Settings ---",
-    paste0("  Method: Permutation-based gene set enrichment (Korotkevich et al. 2021)"),
+    "--- GSEA (Gene Set Enrichment Analysis) Settings ---",
+    paste0("  Method: clusterProfiler::gseGO (GO:BP) and gseKEGG (KEGG)"),
     paste0("  Ranking metric: DESeq2 Wald statistic (combines fold change and significance)"),
-    paste0("  Gene set size: 5-500 genes (minSize=5, maxSize=500)"),
-    paste0("  Permutations: 10,000 (nPermSimple=10000)"),
+    paste0("  Gene set size: ", gsea_params$min_gs_size, "-", gsea_params$max_gs_size, " genes"),
+    paste0("  Initial p-value cutoff (KEGG): ", gse_kegg_params$pvalue_cutoff),
     paste0("  FDR cutoff: ", params$de_thresholds$fdr_cutoff, " (for significant pathways)"),
     paste0("  Databases tested:"),
     paste0("    - GO:BP: Biological Process ontology (", if (run_go_bp) "ENABLED" else "DISABLED", ")"),
     paste0("    - KEGG: Kyoto Encyclopedia of Genes and Genomes pathways (", if (run_kegg) "ENABLED" else "DISABLED", ")"),
-    paste0("    - WikiPathways: Community-curated pathway database (", if (run_wikipathways) "ENABLED" else "DISABLED", ")"),
-    paste0("    - Hallmark: MSigDB hallmark gene sets (", if (run_hallmark) "ENABLED" else "DISABLED", ")"),
+    paste0("    - WikiPathways: Community-curated pathway database (DISABLED)"),
+    paste0("    - Hallmark: MSigDB hallmark gene sets (DISABLED)"),
     paste0("  GO:BP simplification: ", if (simplify_go_bp) paste0("Yes (cutoff=", simplify_go_cutoff, ", semantic similarity)") else "No"),
     paste0("  Plot visualization: Top ", top_n_per_direction, " pathways per direction (up/down-regulated)"),
     paste0("  Leading edge: Core enrichment genes driving pathway significance (saved separately)"),
     paste0("  NES: Normalized Enrichment Score (accounts for gene set size)"),
-    paste0("  Source: msigdbr package (MSigDB v2024.1 or later)"),
+    paste0("  Source: clusterProfiler + org.Mm.eg.db (GO) and KEGG API"),
     "",
     "--- Color Schemes ---",
     paste0("  Genotype: CTL=#0072B2 (blue), KAT8KD=#D55E00 (orange)"),
@@ -397,7 +410,7 @@ tryCatch({
     "--- Output Files ---",
     paste0("  DE tables: CSV format, all genes with statistics"),
     paste0("  ORA tables: CSV format, significant pathways only (FDR<", params$de_thresholds$fdr_cutoff, ")"),
-    paste0("  FGSEA tables: CSV format, significant pathways + leading edge genes"),
+    paste0("  GSEA tables: CSV format, significant pathways + leading edge genes"),
     paste0("  Plots: PNG format, 300 DPI (publication quality)"),
     paste0("  Session info: R version and package versions (for reproducibility)")
   )
@@ -493,6 +506,7 @@ tryCatch({
   tt$P.Value   <- tt$pvalue
   tt$adj.P.Val <- tt$padj
   tt$gene_name <- rownames(tt)
+  if ("padj" %in% colnames(tt)) tt$padj <- NULL
   tt <- tt[, !duplicated(colnames(tt)), drop = FALSE]
 
   de_file <- paste0("DE_cells_KAT8KD_vs_CTL_", run_tag, ".csv")
@@ -883,159 +897,410 @@ tryCatch({
   log_time("Completed Part 2 (ORA)")
 
   ## ====================================================================
-  ## PART 3: FGSEA PATHWAY ANALYSIS
+  ## PART 3: GSEA PATHWAY ANALYSIS
   ## ====================================================================
 
   cat("\n")
   cat("================================================================================\n")
-  cat("=== PART 3: FGSEA PATHWAY ANALYSIS ===\n")
+  cat("=== PART 3: GSEA PATHWAY ANALYSIS ===\n")
   cat("================================================================================\n")
-  log_time("Starting Part 3 (FGSEA)")
-
-  ## Build gene sets
-  cat("\n=== BUILDING GENE SETS ===\n")
-
-  ## GO:BP
-  go_bp_list <- NULL
-  if (run_go_bp) {
-    go_bp_genes <- tryCatch({
-      AnnotationDbi::select(org.Mm.eg.db, keys = keys(org.Mm.eg.db, keytype = "GOALL"),
-                           columns = c("SYMBOL", "GOALL", "ONTOLOGYALL"), keytype = "GOALL")
-    }, error = function(e) NULL)
-
-    if (!is.null(go_bp_genes)) {
-      go_bp_genes <- go_bp_genes %>% dplyr::filter(ONTOLOGYALL == "BP", !is.na(SYMBOL))
-      go_bp_list <- split(go_bp_genes$SYMBOL, go_bp_genes$GOALL)
-      go_bp_list <- go_bp_list[sapply(go_bp_list, length) >= 5 & sapply(go_bp_list, length) <= 500]
-      cat("[OK] GO:BP: ", length(go_bp_list), " pathways\n", sep = "")
-    }
-  }
-
-  ## KEGG
-  kegg_list <- NULL
-  if (run_kegg) {
-    tryCatch({
-      msigdb_c2 <- msigdbr(species = "Mus musculus", collection = "C2")
-      kegg_msigdb <- msigdb_c2 %>% dplyr::filter(grepl("^KEGG_", gs_name))
-      if (nrow(kegg_msigdb) > 0) {
-        kegg_list <- split(kegg_msigdb$gene_symbol, kegg_msigdb$gs_name)
-        kegg_list <- kegg_list[sapply(kegg_list, length) >= 5 & sapply(kegg_list, length) <= 500]
-        cat("[OK] KEGG: ", length(kegg_list), " pathways\n", sep = "")
-      }
-    }, error = function(e) cat("[WARN] KEGG failed\n"))
-  }
-
-  ## WikiPathways
-  wikipathways_list <- NULL
-  if (run_wikipathways) {
-    tryCatch({
-      msigdb_wp <- msigdbr(species = "Mus musculus", collection = "C2", subcollection = "CP:WIKIPATHWAYS")
-      if (nrow(msigdb_wp) > 0) {
-        wikipathways_list <- split(msigdb_wp$gene_symbol, msigdb_wp$gs_name)
-        wikipathways_list <- wikipathways_list[sapply(wikipathways_list, length) >= 5 & sapply(wikipathways_list, length) <= 500]
-        cat("[OK] WikiPathways: ", length(wikipathways_list), " pathways\n", sep = "")
-      }
-    }, error = function(e) cat("[WARN] WikiPathways failed\n"))
-  }
-
-  ## Hallmark
-  hallmark_list <- NULL
-  if (run_hallmark) {
-    tryCatch({
-      msigdb_hallmark <- msigdbr(species = "Mus musculus", collection = "H")
-      if (nrow(msigdb_hallmark) > 0) {
-        hallmark_list <- split(msigdb_hallmark$gene_symbol, msigdb_hallmark$gs_name)
-        hallmark_list <- hallmark_list[sapply(hallmark_list, length) >= 5 & sapply(hallmark_list, length) <= 500]
-        cat("[OK] Hallmark: ", length(hallmark_list), " pathways\n", sep = "")
-      }
-    }, error = function(e) cat("[WARN] Hallmark failed\n"))
-  }
+  log_time("Starting Part 3 (GSEA)")
 
   ## Create ranked gene list
   ranked_genes <- tt %>% dplyr::filter(is.finite(stat)) %>% dplyr::arrange(dplyr::desc(stat))
   ranked_vec <- setNames(ranked_genes$stat, rownames(ranked_genes))
   cat("[INFO] Ranked genes: ", length(ranked_vec), "\n", sep = "")
 
-  ## Run FGSEA for each database
-  gene_sets <- list(gobp = go_bp_list, kegg = kegg_list, wikipathways = wikipathways_list, hallmark = hallmark_list)
+  results <- list()
 
-  for (db_name in names(gene_sets)) {
-    pathways <- gene_sets[[db_name]]
-    if (is.null(pathways) || length(pathways) == 0) next
-
-    cat("\n--- FGSEA: ", toupper(db_name), " ---\n", sep = "")
-
+  ## GO:BP GSEA (clusterProfiler::gseGO)
+  if (run_go_bp) {
+    log_time("Starting GO:BP gseGO")
     tryCatch({
-      fgsea_res <- fgsea(pathways = pathways, stats = ranked_vec, minSize = 5, maxSize = 500, nPermSimple = 10000)
+      cat("[INFO] Running clusterProfiler::gseGO() (ont = BP)...\n")
 
-      if (!is.null(fgsea_res) && nrow(fgsea_res) > 0) {
-        ## Add descriptions
-        if (db_name == "gobp") {
-          go_terms <- AnnotationDbi::select(GO.db, keys = fgsea_res$pathway, columns = "TERM", keytype = "GOID")
-          fgsea_res <- fgsea_res %>% dplyr::left_join(go_terms %>% dplyr::rename(pathway = GOID, Description = TERM), by = "pathway")
-        } else {
-          fgsea_res <- fgsea_res %>% dplyr::mutate(Description = gsub("^KEGG_|^HALLMARK_|^WIKIPATHWAYS_|^WP|^mmu", "", pathway), Description = gsub("_", " ", Description))
+      go_symbols <- names(ranked_vec)
+      go_symbol_to_entrez <- AnnotationDbi::select(
+        org.Mm.eg.db,
+        keys = go_symbols,
+        columns = c("SYMBOL", "ENTREZID"),
+        keytype = "SYMBOL"
+      ) %>%
+        dplyr::filter(!is.na(ENTREZID), !is.na(SYMBOL))
+
+      go_symbol_to_entrez$rank_value <- ranked_vec[go_symbol_to_entrez$SYMBOL]
+      go_symbol_to_entrez <- go_symbol_to_entrez %>%
+        dplyr::group_by(ENTREZID) %>%
+        dplyr::slice_max(order_by = abs(rank_value), n = 1, with_ties = FALSE) %>%
+        dplyr::ungroup()
+
+      go_genelist <- setNames(go_symbol_to_entrez$rank_value, go_symbol_to_entrez$ENTREZID)
+      go_genelist <- sort(go_genelist, decreasing = TRUE)
+
+      gsea_go <- gseGO(
+        geneList      = go_genelist,
+        OrgDb         = org.Mm.eg.db,
+        ont           = "BP",
+        keyType       = "ENTREZID",
+        minGSSize     = gsea_params$min_gs_size,
+        maxGSSize     = gsea_params$max_gs_size,
+        pvalueCutoff  = 1.0,
+        pAdjustMethod = "BH",
+        verbose       = FALSE,
+        seed          = TRUE
+      )
+
+      if (!is.null(gsea_go) && nrow(gsea_go@result) > 0) {
+        gsea_obj_file <- paste0("gseaResult_gobp_KAT8KD_vs_CTL_", run_tag, ".rds")
+        saveRDS(gsea_go, file = file.path(outdir, "tables", gsea_obj_file))
+        cat("[OK] Saved gseaResult object: ", gsea_obj_file, "\n", sep = "")
+
+        go_results <- as.data.frame(gsea_go) %>%
+          dplyr::rename(
+            pathway = ID,
+            padj = p.adjust,
+            leadingEdge = core_enrichment
+          ) %>%
+          dplyr::arrange(padj)
+
+        go_entrez_to_symbol <- go_symbol_to_entrez %>%
+          dplyr::distinct(ENTREZID, SYMBOL)
+        if ("leadingEdge" %in% colnames(go_results)) {
+          go_results$leadingEdge_symbols <- vapply(
+            go_results$leadingEdge,
+            function(ids) {
+              if (is.na(ids) || ids == "") return(NA_character_)
+              id_vec <- unlist(strsplit(ids, "/", fixed = TRUE))
+              symbol_vec <- go_entrez_to_symbol$SYMBOL[match(id_vec, go_entrez_to_symbol$ENTREZID)]
+              symbol_vec <- symbol_vec[!is.na(symbol_vec)]
+              if (length(symbol_vec) == 0) return(NA_character_)
+              paste(symbol_vec, collapse = ",")
+            },
+            character(1)
+          )
         }
 
-        fgsea_res <- fgsea_res %>% dplyr::arrange(padj)
+        results$gobp <- go_results
+        n_sig <- sum(go_results$padj < fdr_cut_cells, na.rm = TRUE)
+        n_sig_up <- sum(go_results$padj < fdr_cut_cells & go_results$NES > 0, na.rm = TRUE)
+        n_sig_down <- sum(go_results$padj < fdr_cut_cells & go_results$NES < 0, na.rm = TRUE)
+        cat("[OK] gseGO GO:BP: ", nrow(go_results), " pathways tested, ",
+            n_sig, " significant (FDR<", fdr_cut_cells, ")\n", sep = "")
 
-        sig_results <- fgsea_res %>% dplyr::filter(padj < fdr_cut_cells)
-        cat("[OK] ", nrow(sig_results), " significant pathways\n", sep = "")
+        fgsea_sanity_tracker <<- rbind(
+          fgsea_sanity_tracker,
+          data.frame(
+            Contrast = "KAT8KD_vs_CTL",
+            Database = "GO:BP",
+            N_Input_Genes = length(go_genelist),
+            N_Pathways_Tested = nrow(go_results),
+            N_Sig_Pathways = n_sig,
+            N_Sig_Up = n_sig_up,
+            N_Sig_Down = n_sig_down,
+            stringsAsFactors = FALSE
+          )
+        )
 
-        if (nrow(sig_results) > 0) {
-          ## Convert list columns to character
-          for (col_name in colnames(sig_results)) {
-            if (is.list(sig_results[[col_name]])) {
-              sig_results[[col_name]] <- sapply(sig_results[[col_name]], function(x) {
-                if (is.null(x) || length(x) == 0) NA_character_ else paste(x, collapse = ";")
-              })
+        if (simplify_go_bp && nrow(go_results) > 0) {
+          cat("[INFO] Simplifying GO:BP results (removing redundant terms)...\n")
+          tryCatch({
+            sig_go <- go_results %>% dplyr::filter(padj < fdr_cut_cells)
+            if (nrow(sig_go) > 0) {
+              require(GOSemSim)
+              godata <- godata("org.Mm.eg.db", ont = "BP", computeIC = TRUE)
+              go_ids <- sig_go$pathway
+              sim_mat <- mgoSim(go_ids, go_ids, semData = godata, measure = "Wang")
+
+              keep_terms <- c()
+              for (i in seq_along(go_ids)) {
+                if (i == 1 || all(sim_mat[i, keep_terms] < simplify_go_cutoff)) {
+                  keep_terms <- c(keep_terms, i)
+                }
+              }
+
+              go_results_simplified <- sig_go[keep_terms, ]
+              results$gobp_simplified <- go_results_simplified
+              cat("[OK] Simplified GO:BP results: ", nrow(go_results_simplified), " terms\n", sep = "")
             }
-          }
-
-          table_file <- paste0("fgsea_", db_name, "_KAT8KD_vs_CTL_", run_tag, ".csv")
-          write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
-
-          ## Leading edge
-          if ("leadingEdge" %in% colnames(sig_results)) {
-            leading_edge_df <- sig_results %>%
-              dplyr::select(pathway, Description, NES, padj, leadingEdge) %>%
-              dplyr::mutate(Direction = ifelse(NES > 0, "Up", "Down"), N_LeadingEdge = sapply(strsplit(leadingEdge, ";"), length))
-
-            leading_edge_file <- paste0("fgsea_leadingEdge_", db_name, "_KAT8KD_vs_CTL_", run_tag, ".csv")
-            write.csv(leading_edge_df, file = file.path(outdir, "tables", leading_edge_file), row.names = FALSE)
-          }
-
-          ## Plots
-          top_up <- sig_results %>% dplyr::filter(NES > 0) %>% dplyr::arrange(padj) %>% dplyr::slice_head(n = top_n_per_direction)
-          top_down <- sig_results %>% dplyr::filter(NES < 0) %>% dplyr::arrange(padj) %>% dplyr::slice_head(n = top_n_per_direction)
-
-          plot_data <- dplyr::bind_rows(top_down, top_up) %>%
-            dplyr::arrange(NES) %>%
-            dplyr::mutate(
-              pathway_label = ifelse(!is.na(Description) & Description != "", Description, pathway),
-              pathway_label = factor(pathway_label, levels = pathway_label),
-              Direction = ifelse(NES > 0, "Up-regulated", "Down-regulated")
-            )
-
-          if (nrow(plot_data) > 0) {
-            p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = Direction)) +
-              geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
-              scale_fill_manual(values = c("Up-regulated" = "#E69F00", "Down-regulated" = "#0072B2"), name = "Direction") +
-              labs(title = paste0("fgsea ", toupper(db_name)), x = "Normalized Enrichment Score (NES)", y = NULL) +
-              theme_classic(base_size = 12) +
-              theme(plot.title = element_text(face = "bold", hjust = 0.5), panel.border = element_rect(color = "black", fill = NA, linewidth = 1)) +
-              geom_vline(xintercept = 0, linetype = "dashed", color = "grey50")
-
-            plot_file <- paste0("fgsea_plot_", db_name, "_KAT8KD_vs_CTL_", run_tag, ".png")
-            ggsave(file.path(outdir, "plots", plot_file), plot = p_fgsea, width = 12, height = max(6, nrow(plot_data) * 0.35), dpi = 300, bg = "white")
-            cat("[OK] Saved fgsea bar plot\n")
-          }
+          }, error = function(e) {
+            cat("[WARN] GO:BP simplification failed: ", conditionMessage(e), "\n", sep = "")
+          })
         }
+      } else {
+        cat("[INFO] gseGO returned no results\n")
       }
-    }, error = function(e) cat("[WARN] FGSEA ", db_name, " failed: ", conditionMessage(e), "\n", sep = ""))
+    }, error = function(e) {
+      cat("[WARN] gseGO GO:BP failed: ", conditionMessage(e), "\n", sep = "")
+    })
+    log_time("Completed GO:BP gseGO")
   }
 
-  log_time("Completed Part 3 (FGSEA)")
+  ## KEGG GSEA (clusterProfiler::gseKEGG)
+  if (run_kegg) {
+    log_time("Starting KEGG gseKEGG")
+    tryCatch({
+      cat("[INFO] Running clusterProfiler::gseKEGG() (organism = mmu)...\n")
+
+      gene_symbols <- names(ranked_vec)
+      symbol_to_entrez <- AnnotationDbi::select(
+        org.Mm.eg.db,
+        keys = gene_symbols,
+        columns = c("SYMBOL", "ENTREZID"),
+        keytype = "SYMBOL"
+      ) %>%
+        dplyr::filter(!is.na(ENTREZID), !is.na(SYMBOL))
+
+      symbol_to_entrez$rank_value <- ranked_vec[symbol_to_entrez$SYMBOL]
+      symbol_to_entrez <- symbol_to_entrez %>%
+        dplyr::group_by(ENTREZID) %>%
+        dplyr::slice_max(order_by = abs(rank_value), n = 1, with_ties = FALSE) %>%
+        dplyr::ungroup()
+
+      kegg_genelist <- setNames(symbol_to_entrez$rank_value, symbol_to_entrez$ENTREZID)
+      kegg_genelist <- sort(kegg_genelist, decreasing = TRUE)
+
+      gsea_kegg <- gseKEGG(
+        geneList      = kegg_genelist,
+        organism      = gse_kegg_params$organism,
+        minGSSize     = gse_kegg_params$min_gs_size,
+        maxGSSize     = gse_kegg_params$max_gs_size,
+        pvalueCutoff  = gse_kegg_params$pvalue_cutoff,
+        pAdjustMethod = gse_kegg_params$p_adjust_method,
+        verbose       = FALSE,
+        seed          = gse_kegg_params$seed
+      )
+
+      if (!is.null(gsea_kegg) && nrow(gsea_kegg@result) > 0) {
+        gsea_obj_file <- paste0("gseaResult_kegg_KAT8KD_vs_CTL_", run_tag, ".rds")
+        saveRDS(gsea_kegg, file = file.path(outdir, "tables", gsea_obj_file))
+        cat("[OK] Saved gseaResult object: ", gsea_obj_file, "\n", sep = "")
+
+        kegg_results <- as.data.frame(gsea_kegg) %>%
+          dplyr::rename(
+            pathway = ID,
+            padj = p.adjust,
+            leadingEdge = core_enrichment
+          ) %>%
+          dplyr::arrange(padj)
+
+        entrez_to_symbol <- symbol_to_entrez %>%
+          dplyr::distinct(ENTREZID, SYMBOL)
+        if ("leadingEdge" %in% colnames(kegg_results)) {
+          kegg_results$leadingEdge_symbols <- vapply(
+            kegg_results$leadingEdge,
+            function(ids) {
+              if (is.na(ids) || ids == "") return(NA_character_)
+              id_vec <- unlist(strsplit(ids, "/", fixed = TRUE))
+              symbol_vec <- entrez_to_symbol$SYMBOL[match(id_vec, entrez_to_symbol$ENTREZID)]
+              symbol_vec <- symbol_vec[!is.na(symbol_vec)]
+              if (length(symbol_vec) == 0) return(NA_character_)
+              paste(symbol_vec, collapse = ",")
+            },
+            character(1)
+          )
+        }
+
+        results$kegg <- kegg_results
+        n_sig <- sum(kegg_results$padj < fdr_cut_cells, na.rm = TRUE)
+        n_sig_up <- sum(kegg_results$padj < fdr_cut_cells & kegg_results$NES > 0, na.rm = TRUE)
+        n_sig_down <- sum(kegg_results$padj < fdr_cut_cells & kegg_results$NES < 0, na.rm = TRUE)
+        cat("[OK] gseKEGG: ", nrow(kegg_results), " pathways tested, ",
+            n_sig, " significant (FDR<", fdr_cut_cells, ")\n", sep = "")
+
+        fgsea_sanity_tracker <<- rbind(
+          fgsea_sanity_tracker,
+          data.frame(
+            Contrast = "KAT8KD_vs_CTL",
+            Database = "KEGG",
+            N_Input_Genes = length(kegg_genelist),
+            N_Pathways_Tested = nrow(kegg_results),
+            N_Sig_Pathways = n_sig,
+            N_Sig_Up = n_sig_up,
+            N_Sig_Down = n_sig_down,
+            stringsAsFactors = FALSE
+          )
+        )
+      } else {
+        cat("[INFO] gseKEGG returned no results\n")
+      }
+    }, error = function(e) {
+      cat("[WARN] gseKEGG failed: ", conditionMessage(e), "\n", sep = "")
+    })
+    log_time("Completed KEGG gseKEGG")
+  }
+
+  ## Save results + plots with tissue-matched styling
+  if (length(results) > 0) {
+    for (db_name in names(results)) {
+      fgsea_obj <- results[[db_name]]
+
+      sig_results <- fgsea_obj %>%
+        dplyr::filter(padj < fdr_cut_cells) %>%
+        dplyr::arrange(padj)
+
+      if (nrow(sig_results) == 0) {
+        cat("[INFO] No significant GSEA pathways in ", db_name, "\n", sep = "")
+        next
+      }
+
+      if (!"Description" %in% colnames(sig_results) && !"pathway_name" %in% colnames(sig_results)) {
+        sig_results$Description <- sig_results$pathway
+      }
+
+      for (col_name in colnames(sig_results)) {
+        if (is.list(sig_results[[col_name]])) {
+          sig_results[[col_name]] <- sapply(sig_results[[col_name]], function(x) {
+            if (is.null(x) || length(x) == 0) NA_character_ else paste(x, collapse = ",")
+          })
+        }
+      }
+
+      if ("pathway" %in% colnames(sig_results)) {
+        sig_results <- sig_results %>% dplyr::rename(pathway_id = pathway)
+      }
+      if ("Description" %in% colnames(sig_results)) {
+        sig_results <- sig_results %>% dplyr::rename(pathway_name = Description)
+      }
+      if ("qvalue" %in% colnames(sig_results) && "padj" %in% colnames(sig_results)) {
+        sig_results <- sig_results %>% dplyr::select(-qvalue)
+      }
+      if ("qvalues" %in% colnames(sig_results)) {
+        sig_results <- sig_results %>% dplyr::select(-qvalues)
+      }
+
+      sig_results$contrast <- "KAT8KD_vs_CTL"
+      sig_results$database <- ifelse(db_name == "gobp", "GO:BP",
+                                     ifelse(db_name == "kegg", "KEGG", toupper(db_name)))
+      sig_results$ranking_metric <- "DESeq2_Wald_stat"
+      sig_results$analysis_type <- "fgsea"
+      sig_results$logFC_cutoff <- logFC_cut_cells
+      sig_results$fdr_cutoff <- fdr_cut_cells
+
+      table_file <- paste0("fgsea_", db_name, "_KAT8KD_vs_CTL_", run_tag, ".csv")
+      write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
+      cat("[OK] Saved fgsea table: ", table_file, "\n", sep = "")
+
+      if (db_name == "gobp_simplified") {
+        next
+      }
+
+      top_up <- sig_results %>%
+        dplyr::filter(NES > 0) %>%
+        dplyr::arrange(padj, dplyr::desc(NES)) %>%
+        dplyr::slice_head(n = top_n_per_direction)
+
+      top_down <- sig_results %>%
+        dplyr::filter(NES < 0) %>%
+        dplyr::arrange(padj, NES) %>%
+        dplyr::slice_head(n = top_n_per_direction)
+
+      plot_data <- dplyr::bind_rows(top_down, top_up) %>%
+        dplyr::arrange(NES) %>%
+        dplyr::mutate(
+          pathway_label = ifelse(!is.na(pathway_name) & pathway_name != "", pathway_name, pathway_id),
+          pathway_label = factor(pathway_label, levels = pathway_label),
+          Direction = ifelse(NES > 0, "Up-regulated", "Down-regulated")
+        )
+
+      if (nrow(plot_data) > 0) {
+        if (db_name == "kegg") {
+          param_caption <- paste(
+            paste0(
+              "FDR < ", fdr_cut_cells,
+              " | Top ", top_n_per_direction, " per direction | Ranked by ", gsea_params$rank_metric
+            ),
+            paste0("Method: gseKEGG (", gse_kegg_params$organism, ") | Color: adj. p-value"),
+            sep = "\n"
+          )
+        } else if (db_name == "gobp") {
+          simplify_label <- if (simplify_go_bp) paste0("Simplified (cutoff=", simplify_go_cutoff, ")") else "Not simplified"
+          param_caption <- paste(
+            paste0(
+              "FDR < ", fdr_cut_cells,
+              " | Top ", top_n_per_direction, " per direction | Ranked by ", gsea_params$rank_metric
+            ),
+            paste0("Method: gseGO (BP) | ", simplify_label, " | Color: adj. p-value"),
+            sep = "\n"
+          )
+        } else {
+          param_caption <- paste(
+            paste0(
+              "FDR < ", fdr_cut_cells,
+              " | Top ", top_n_per_direction, " per direction | Ranked by ", gsea_params$rank_metric
+            ),
+            "Method: GSEA | Color: adj. p-value",
+            sep = "\n"
+          )
+        }
+
+        plot_data <- plot_data %>%
+          dplyr::mutate(neg_log10_padj = -log10(padj))
+
+        plot_data <- plot_data %>%
+          dplyr::mutate(
+            fill_value = ifelse(Direction == "Up-regulated", neg_log10_padj, -neg_log10_padj)
+          )
+
+        max_neg_log <- max(abs(plot_data$fill_value), na.rm = TRUE)
+
+        p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = fill_value)) +
+          geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
+          scale_fill_gradientn(
+            colors = c("#0072B2", "#9ECAE1", "grey95", "#FDD49E", "#E69F00"),
+            values = scales::rescale(c(-max_neg_log, -1.3, 0, 1.3, max_neg_log)),
+            limits = c(-max_neg_log, max_neg_log),
+            name = "Adj. P-value",
+            breaks = c(-max_neg_log, -1.3, 0, 1.3, max_neg_log),
+            labels = function(x) {
+              sapply(x, function(val) {
+                if (abs(val) < 0.1) return("0.05")
+                pval <- 10^(-abs(val))
+                format(pval, scientific = TRUE, digits = 1)
+              })
+            },
+            guide = guide_colorbar(
+              title = "Adj. P-value\n(blue=down, orange=up)",
+              title.position = "top",
+              barwidth = 1,
+              barheight = 4
+            )
+          ) +
+          labs(
+            title = paste0("GSEA ", toupper(db_name), ": KAT8KD_vs_CTL"),
+            x = "Normalized Enrichment Score (NES)",
+            y = NULL,
+            caption = param_caption
+          ) +
+          theme_classic(base_size = 12) +
+          theme(
+            plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
+            axis.text.y = element_text(size = 10, color = "black"),
+            axis.text.x = element_text(size = 10, color = "black", face = "bold"),
+            axis.title.x = element_text(size = 12, face = "bold"),
+            legend.title = element_text(size = 9, face = "bold"),
+            legend.text = element_text(size = 8),
+            legend.position = "right",
+            panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+            plot.caption = element_text(size = 8, color = "grey40", hjust = 0.5, margin = margin(t = 8))
+          ) +
+          geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5) +
+          annotate("text", x = Inf, y = Inf, label = "Up", hjust = 1.1, vjust = -0.5,
+                   size = 3, color = "#E69F00", fontface = "bold") +
+          annotate("text", x = -Inf, y = Inf, label = "Down", hjust = -0.1, vjust = -0.5,
+                   size = 3, color = "#0072B2", fontface = "bold")
+
+        plot_file <- paste0("fgsea_plot_", db_name, "_KAT8KD_vs_CTL_", run_tag, ".png")
+        ggsave(file.path(outdir, "plots", plot_file), plot = p_fgsea, width = 12,
+               height = max(6, nrow(plot_data) * 0.35), dpi = 300, bg = "white")
+        cat("[OK] Saved fgsea plot: ", plot_file, "\n", sep = "")
+      }
+    }
+  }
+
+  fgsea_gobp_res <- results$gobp
+  fgsea_kegg_res <- results$kegg
+
+  log_time("Completed Part 3 (GSEA)")
 
   ## ====================================================================
   ## FINALIZE
@@ -1101,13 +1366,13 @@ tryCatch({
     cat("  Status: ✓ Results within expected range\n\n")
   }
 
-  cat("--- Pathway Enrichment (FGSEA) ---\n")
+  cat("--- Pathway Enrichment (GSEA) ---\n")
   cat("  GO:BP pathways: ", ifelse(exists("fgsea_gobp_res") && !is.null(fgsea_gobp_res), sum(fgsea_gobp_res$padj < 0.05, na.rm = TRUE), "Not available"), "\n", sep = "")
   cat("  KEGG pathways: ", ifelse(exists("fgsea_kegg_res") && !is.null(fgsea_kegg_res), sum(fgsea_kegg_res$padj < 0.05, na.rm = TRUE), "Not available"), "\n", sep = "")
   if (exists("fgsea_gobp_res") && !is.null(fgsea_gobp_res) && sum(fgsea_gobp_res$padj < 0.05, na.rm = TRUE) > 50) {
     cat("  Status: ✓ Strong biological signal detected\n\n")
   } else {
-    cat("  Status: Check FGSEA results for biological interpretation\n\n")
+    cat("  Status: Check GSEA results for biological interpretation\n\n")
   }
 
   cat("--- Key Validation Checks ---\n")
@@ -1129,7 +1394,7 @@ tryCatch({
   cat("  DE results: tables/DE_cells_KAT8KD_vs_CTL_", run_tag, ".csv\n", sep = "")
   cat("  Plots: plots/ directory\n")
   cat("  ORA results: tables/ora_* files\n")
-  cat("  FGSEA results: tables/fgsea_* files\n\n")
+  cat("  GSEA results: tables/fgsea_* files\n\n")
 
   cat("################################################################################\n")
   cat("###                        ANALYSIS COMPLETE                                 ###\n")
