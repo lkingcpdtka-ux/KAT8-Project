@@ -817,7 +817,8 @@ tryCatch({
             dplyr::mutate(
               ## Use -log10(padj) for color intensity
               ## Higher value = more significant
-              neg_log10_padj = -log10(padj)
+              padj_safe = pmax(padj, .Machine$double.eps),
+              neg_log10_padj = -log10(padj_safe)
             )
 
           ## Calculate nice breaks for the legend (show actual p-values)
@@ -849,7 +850,7 @@ tryCatch({
               breaks = c(-max_neg_log, -1.3, 0, 1.3, max_neg_log),
               labels = function(x) {
                 sapply(x, function(val) {
-                  if (abs(val) < 0.1) return("0.05")
+                  if (abs(val) < 1e-6) return("1")
                   pval <- 10^(-abs(val))
                   format(pval, scientific = TRUE, digits = 1)
                 })
