@@ -58,7 +58,7 @@ gsea_params <- list(
   rank_metric     = "DESeq2 Wald statistic",
 
   ## GO:BP simplification
-  simplify_go     = FALSE,   ## Set TRUE to remove redundant GO terms
+  simplify_go     = TRUE,    ## Always simplify GO:BP to remove redundant terms
   simplify_cutoff = 0.7,
 
   ## Plotting parameters
