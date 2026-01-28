@@ -59,6 +59,14 @@ suppressPackageStartupMessages({
   library(EnhancedVolcano)
 })
 
+## 1.5) Load central parameters -----------------------------
+params_file <- file.path(getwd(), "parameters.R")
+if (file.exists(params_file)) {
+  source(params_file)
+} else {
+  stop("parameters.R not found. Please ensure it exists in the project root.")
+}
+
 ## 2) save_core utilities -----------------------------------
 utils_dir <- file.path(getwd(), "save_core")
 source(file.path(utils_dir, "save.R"))
@@ -306,32 +314,18 @@ tryCatch({
   
   ## Save centralized parameters
   ## ============================================================
-  ## DEPOT-SPECIFIC CUTOFFS
+  ## DEPOT-SPECIFIC CUTOFFS (from central parameters.R)
   ## ============================================================
-  ## Change these values to adjust DEG thresholds per depot.
-  ## All downstream scripts (ORA, fgsea) and plot captions will
-
-  ## automatically use these values via the authoritative DEG lists.
+  ## All cutoffs are now defined in parameters.R
+  ## iWAT_logFC_cut, iWAT_fdr_cut, gWAT_logFC_cut, gWAT_fdr_cut,
+  ## default_logFC_cut, default_fdr_cut are loaded from there
   ## ============================================================
-  iWAT_logFC_cut <- 1.0
-  iWAT_fdr_cut   <- 0.05
 
-  gWAT_logFC_cut <- 1.0
-  gWAT_fdr_cut   <- 0.05
-
-  ## Default for any other contrast
-  default_logFC_cut <- 1.0
-  default_fdr_cut   <- 0.05
-
-  ## Helper function to get cutoffs for a given contrast
+  ## Helper function is now defined in parameters.R as get_tissue_thresholds()
+  ## Wrapper for backward compatibility
   get_cutoffs_for_contrast <- function(contrast_name) {
-    if (grepl("iWAT", contrast_name, ignore.case = TRUE)) {
-      return(list(logFC = iWAT_logFC_cut, fdr = iWAT_fdr_cut))
-    } else if (grepl("gWAT", contrast_name, ignore.case = TRUE)) {
-      return(list(logFC = gWAT_logFC_cut, fdr = gWAT_fdr_cut))
-    } else {
-      return(list(logFC = default_logFC_cut, fdr = default_fdr_cut))
-    }
+    thresholds <- get_tissue_thresholds(contrast_name)
+    return(list(logFC = thresholds$logFC_cut, fdr = thresholds$fdr_cut))
   }
 
   ## Legacy variables for backward compatibility (use iWAT as default)

@@ -44,6 +44,14 @@ suppressPackageStartupMessages({
 
 ## Note: Improved mapping not needed - current mapping rate is 90.8% (excellent!)
 
+## 1.5) Load central parameters -----------------------------
+params_file <- file.path(getwd(), "parameters.R")
+if (file.exists(params_file)) {
+  source(params_file)
+} else {
+  stop("parameters.R not found. Please ensure it exists in the project root.")
+}
+
 ## 2) save_core utilities -----------------------------------
 utils_dir <- file.path(getwd(), "save_core")
 if (file.exists(file.path(utils_dir, "save.R"))) {
@@ -114,25 +122,10 @@ if (length(deg_lists_file) == 0) {
   }
 }
 
-## 3) Parameters --------------------------------------------
-## ============================================================
-## DEPOT-SPECIFIC CUTOFFS
-## ============================================================
-## Set different thresholds for iWAT vs gWAT if desired
-## This allows relaxed cutoffs for gWAT while keeping iWAT stringent
-## ============================================================
-
-## iWAT cutoffs (stringent - strong signal)
-iWAT_logFC_cut <- 1.0
-iWAT_fdr_cut   <- 0.05
-
-## gWAT cutoffs (can be relaxed if needed)
-gWAT_logFC_cut <- 1.0
-gWAT_fdr_cut   <- 0.05
-
-## Default cutoffs (for any other contrasts)
-default_logFC_cut <- 1.0
-default_fdr_cut   <- 0.05
+## 3) Parameters (from central parameters.R) ----------------
+## DEG thresholds are now defined in parameters.R
+## iWAT_logFC_cut, iWAT_fdr_cut, gWAT_logFC_cut, gWAT_fdr_cut,
+## default_logFC_cut, default_fdr_cut are loaded from there
 
 ## ============================================================
 ## IMPORTANT: ORA Universe/Background Setting
@@ -153,18 +146,18 @@ default_fdr_cut   <- 0.05
 use_universe <- TRUE   ## Using background gene set (statistically rigorous)
 ## ============================================================
 
-## Plot/output parameters (used in captions)
+## Plot/output parameters (from central parameters.R)
 ora_enrich_params <- list(
-  pvalue_cutoff  = 0.1,
-  qvalue_cutoff  = 0.2,
-  min_gs_size    = 5,
-  max_gs_size    = 500,
-  simplify_cutoff = 0.7
+  pvalue_cutoff  = ora_params$pvalue_cutoff,
+  qvalue_cutoff  = ora_params$qvalue_cutoff,
+  min_gs_size    = ora_params$min_gs_size,
+  max_gs_size    = ora_params$max_gs_size,
+  simplify_cutoff = ora_params$simplify_cutoff
 )
 
 ora_plot_params <- list(
-  top_n    = 15,
-  order_by = "adj. p-value"
+  top_n    = ora_params$top_n,
+  order_by = ora_params$order_by
 )
 
 ## ============================================================
@@ -295,8 +288,9 @@ tryCatch({
   
   ## 4.3) ORA analysis function ------------------------------
   run_ora_analysis <- function(gene_list, direction, contrast_name,
-                               universe_entrez, run_tag, outdir, fdr_cutoff = 0.05,
-                               logfc_cutoff = 1.0) {
+                               universe_entrez, run_tag, outdir,
+                               fdr_cutoff,    ## From parameters.R (no default)
+                               logfc_cutoff) { ## From parameters.R (no default)
 
     cat("\n--- ORA Pathway enrichment: ", direction, " genes (", contrast_name, ") ---\n", sep = "")
     cat("[INFO] Input gene count: ", length(gene_list), " genes\n", sep = "")
@@ -491,11 +485,13 @@ tryCatch({
         kegg_result <- enrich_kegg@result
         
         ## Parse geneID column (format: "entrez1/entrez2/entrez3")
+        ## Convert Entrez IDs to gene symbols and remove any duplicates
         if ("geneID" %in% colnames(kegg_result)) {
           kegg_result$geneID_symbols <- sapply(kegg_result$geneID, function(gene_str) {
             entrez_vec <- unlist(strsplit(gene_str, "/"))
             symbol_vec <- gene_entrez$SYMBOL[match(entrez_vec, gene_entrez$ENTREZID)]
             symbol_vec <- symbol_vec[!is.na(symbol_vec)]
+            symbol_vec <- unique(symbol_vec)  ## Remove any duplicate gene names
             paste(symbol_vec, collapse = "/")
           })
         }

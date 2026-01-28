@@ -43,6 +43,14 @@ suppressPackageStartupMessages({
   library(clusterProfiler)
 })
 
+## 1.5) Load central parameters -----------------------------
+params_file <- file.path(getwd(), "parameters.R")
+if (file.exists(params_file)) {
+  source(params_file)
+} else {
+  stop("parameters.R not found. Please ensure it exists in the project root.")
+}
+
 ## 2) save_core utilities -----------------------------------
 utils_dir <- file.path(getwd(), "save_core")
 if (file.exists(file.path(utils_dir, "save.R"))) {
@@ -113,24 +121,24 @@ if (length(deg_lists_file) == 0) {
   }
 }
 
-## 3) Parameters --------------------------------------------
-fdr_cut   <- 0.05
-## UPDATED (2026-01-20): Enable GO:BP simplification to reduce redundancy
-## This combines similar pathways (like ORA) - recommended for GO:BP
-simplify_go_bp <- TRUE
-simplify_go_cutoff <- 0.7
-top_n_per_direction <- 15
+## 3) Parameters (from central parameters.R) ----------------
+## All cutoffs are now defined in parameters.R
+fdr_cut   <- gsea_params$fdr_cutoff
+simplify_go_bp <- gsea_params$simplify_go
+simplify_go_cutoff <- gsea_params$simplify_cutoff
+top_n_per_direction <- gsea_params$top_n_per_direction
 
-gsea_params <- list(
-  min_gs_size  = 5,
-  max_gs_size  = 500,
-  rank_metric  = "Wald statistic"
+## Local params that extend the central ones
+local_gsea_params <- list(
+  min_gs_size  = gsea_params$min_gs_size,
+  max_gs_size  = gsea_params$max_gs_size,
+  rank_metric  = gsea_params$rank_metric
 )
 
 gse_kegg_params <- list(
-  min_gs_size     = 5,
-  max_gs_size     = 500,
-  pvalue_cutoff   = 0.1,
+  min_gs_size     = gsea_params$min_gs_size,
+  max_gs_size     = gsea_params$max_gs_size,
+  pvalue_cutoff   = 0.1,  ## Initial filter (final uses fdr_cut)
   p_adjust_method = "BH",
   organism        = "mmu",
   seed            = TRUE
@@ -338,10 +346,12 @@ tryCatch({
   run_fgsea_analysis <- function(ranked_genes, contrast_name,
                                  go_bp_list, go_bp_term2gene, wikipathways_list, hallmark_list,
                                  de_table,  ## Added: full DE table for ENTREZID mapping
-                                 run_tag, outdir, fdr_cutoff = 0.05,
-                                 simplify_go = FALSE, simplify_cutoff = 0.7,
-                                 top_n_per_direction = 10,
-                                 deg_up_count = NA,  ## Authoritative DEG count for cross-validation
+                                 run_tag, outdir,
+                                 fdr_cutoff,           ## From parameters.R (no default)
+                                 simplify_go,          ## From parameters.R (no default)
+                                 simplify_cutoff,      ## From parameters.R (no default)
+                                 top_n_per_direction,  ## From parameters.R (no default)
+                                 deg_up_count = NA,    ## Authoritative DEG count for cross-validation
                                  deg_down_count = NA,
                                  logfc_cutoff = NA,
                                  deg_fdr_cutoff = NA) {
@@ -395,6 +405,11 @@ tryCatch({
         )
 
         if (!is.null(gsea_go) && nrow(gsea_go@result) > 0) {
+          ## SAVE gseaResult object for barcode plots (part5)
+          gsea_obj_file <- paste0("gseaResult_gobp_", contrast_name, "_", run_tag, ".rds")
+          saveRDS(gsea_go, file = file.path(outdir, "tables", gsea_obj_file))
+          cat("[OK] Saved gseaResult object: ", gsea_obj_file, "\n", sep = "")
+
           go_results <- as.data.frame(gsea_go) %>%
             dplyr::rename(
               pathway = ID,
@@ -558,6 +573,11 @@ tryCatch({
         )
 
         if (!is.null(gsea_kegg) && nrow(gsea_kegg@result) > 0) {
+          ## SAVE gseaResult object for barcode plots (part5)
+          gsea_obj_file <- paste0("gseaResult_kegg_", contrast_name, "_", run_tag, ".rds")
+          saveRDS(gsea_kegg, file = file.path(outdir, "tables", gsea_obj_file))
+          cat("[OK] Saved gseaResult object: ", gsea_obj_file, "\n", sep = "")
+
           ## Convert to data frame
           kegg_results <- as.data.frame(gsea_kegg)
 
