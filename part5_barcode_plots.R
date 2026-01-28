@@ -148,6 +148,22 @@ for (rds_file in gsea_rds_files) {
     next
   }
 
+  ## Diagnostic: Check gseaResult object structure
+  cat("[DEBUG] Object class: ", class(gsea_result)[1], "\n", sep = "")
+  cat("[DEBUG] Has @geneList: ", !is.null(gsea_result@geneList),
+      " (length=", length(gsea_result@geneList), ")\n", sep = "")
+  cat("[DEBUG] Has @geneSets: ", !is.null(gsea_result@geneSets),
+      " (count=", length(gsea_result@geneSets), ")\n", sep = "")
+
+  ## Check if geneList is valid (numeric and named)
+  if (length(gsea_result@geneList) > 0) {
+    gl <- gsea_result@geneList
+    cat("[DEBUG] geneList type: ", typeof(gl), ", is.numeric: ", is.numeric(gl), "\n", sep = "")
+    if (!is.numeric(gl)) {
+      cat("[WARN] geneList is not numeric - this will cause plotting errors\n")
+    }
+  }
+
   ## Get results data frame
   result_df <- gsea_result@result
 
@@ -207,17 +223,34 @@ for (rds_file in gsea_rds_files) {
 
     ## Use enrichplot::gseaplot2 for the barcode plot
     tryCatch({
-      p <- gseaplot2(
-        gsea_result,
-        geneSetID = pathway_id,
-        title = str_wrap(pathway_name, width = 50),
-        color = ifelse(nes > 0, "#E69F00", "#0072B2"),  ## Orange for up, blue for down
-        base_size = 10,
-        pvalue_table = TRUE
-      )
+      ## Try gseaplot2 first - returns a patchwork object
+      ## Note: Some versions have issues with saved/loaded objects
+      p <- tryCatch({
+        gseaplot2(
+          gsea_result,
+          geneSetID = pathway_id,
+          title = paste0(str_wrap(pathway_name, width = 50), "\n",
+                         contrast_name, " | ", database, " | ", direction, "-regulated"),
+          base_size = 10,
+          pvalue_table = TRUE
+        )
+      }, error = function(e1) {
+        ## Fallback to simpler gseaplot (single panel)
+        tryCatch({
+          enrichplot::gseaplot(
+            gsea_result,
+            geneSetID = pathway_id,
+            title = paste0(pathway_name, "\n", contrast_name, " | ", direction)
+          )
+        }, error = function(e2) {
+          ## If both fail, return NULL
+          NULL
+        })
+      })
 
-      ## Add subtitle with contrast info
-      p <- p + labs(subtitle = paste0(contrast_name, " | ", database, " | ", direction, "-regulated"))
+      if (is.null(p)) {
+        stop("Both gseaplot2 and gseaplot failed")
+      }
 
       ggsave(
         file.path(barcode_dir, plot_file),
