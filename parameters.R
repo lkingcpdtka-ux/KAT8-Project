@@ -65,7 +65,10 @@ gsea_params <- list(
   top_n_per_direction = 10,  ## Top pathways per direction for plots
 
   ## FDR cutoff for significance
-  fdr_cutoff      = 0.05
+  fdr_cutoff      = 0.05,
+
+  ## Random seed for reproducibility (used by gseGO/gseKEGG)
+  seed            = 12345
 )
 
 ## ============================================================
