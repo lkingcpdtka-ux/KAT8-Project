@@ -422,6 +422,27 @@ tryCatch({
         )
 
         if (!is.null(gsea_go) && nrow(gsea_go@result) > 0) {
+          n_before_simplify <- nrow(gsea_go@result)
+
+          ## Simplify GO:BP results BEFORE converting to data frame
+          ## This uses clusterProfiler::simplify() which properly handles gseaResult objects
+          if (simplify_go) {
+            cat("[INFO] Simplifying GO:BP results (cutoff=", simplify_cutoff, ")...\n", sep = "")
+            tryCatch({
+              gsea_go <- clusterProfiler::simplify(
+                gsea_go,
+                cutoff = simplify_cutoff,
+                by = "p.adjust",
+                select_fun = min
+              )
+              n_after_simplify <- nrow(gsea_go@result)
+              cat("[OK] Simplified GO:BP from ", n_before_simplify, " to ", n_after_simplify, " terms\n", sep = "")
+            }, error = function(e) {
+              cat("[WARN] GO:BP simplification failed: ", conditionMessage(e), "\n", sep = "")
+              cat("[WARN] Proceeding with unsimplified results\n")
+            })
+          }
+
           ## SAVE gseaResult object for barcode plots (part5)
           gsea_obj_file <- paste0("gseaResult_gobp_", contrast_name, "_", run_tag, ".rds")
           saveRDS(gsea_go, file = file.path(outdir, "tables", gsea_obj_file))
@@ -482,36 +503,8 @@ tryCatch({
             )
           )
 
-          ## Optionally simplify GO:BP results to reduce redundancy
-          if (simplify_go && nrow(go_results) > 0) {
-            cat("[INFO] Simplifying GO:BP results (removing redundant terms)...\n")
-            tryCatch({
-              sig_go <- go_results %>% dplyr::filter(padj < fdr_cutoff)
-              if (nrow(sig_go) > 0) {
-                require(GOSemSim)
-                godata <- godata('org.Mm.eg.db', ont = "BP", computeIC = TRUE)
-
-                go_ids <- sig_go$pathway
-                sim_mat <- mgoSim(go_ids, go_ids, semData = godata, measure = "Wang")
-
-                keep_terms <- c()
-                for (i in seq_along(go_ids)) {
-                  if (i == 1 || all(sim_mat[i, keep_terms] < simplify_cutoff)) {
-                    keep_terms <- c(keep_terms, i)
-                  }
-                }
-
-                go_results_simplified <- sig_go[keep_terms, ]
-                n_removed <- nrow(sig_go) - nrow(go_results_simplified)
-                cat("[OK] Removed ", n_removed, " redundant GO:BP terms\n", sep = "")
-                cat("[OK] Simplified GO:BP results: ", nrow(go_results_simplified), " terms\n", sep = "")
-
-                results$gobp_simplified <- go_results_simplified
-              }
-            }, error = function(e) {
-              cat("[WARN] GO:BP simplification failed: ", conditionMessage(e), "\n", sep = "")
-            })
-          }
+          ## NOTE: GO:BP simplification is now done BEFORE conversion to data frame
+          ## using clusterProfiler::simplify() on the gseaResult object (see above)
         } else {
           cat("[INFO] gseGO returned no results\n")
         }
@@ -767,10 +760,6 @@ tryCatch({
         write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
         cat("[OK] Saved fgsea table: ", table_file, "\n", sep = "")
 
-        if (db_name == "gobp_simplified") {
-          next
-        }
-        
         ## Create combined plot (balanced up/down)
         top_up <- sig_results %>%
           dplyr::filter(NES > 0) %>%
