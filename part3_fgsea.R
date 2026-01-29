@@ -408,6 +408,9 @@ tryCatch({
         go_genelist <- setNames(go_symbol_to_entrez$rank_value, go_symbol_to_entrez$ENTREZID)
         go_genelist <- sort(go_genelist, decreasing = TRUE)
 
+        ## Initialize RNG for reproducibility (seed=TRUE requires .Random.seed to exist)
+        set.seed(12345)
+
         gsea_go <- gseGO(
           geneList     = go_genelist,
           OrgDb        = org.Mm.eg.db,
@@ -569,6 +572,9 @@ tryCatch({
         kegg_genelist <- sort(kegg_genelist, decreasing = TRUE)
 
         cat("[INFO] Mapped ", length(kegg_genelist), " genes to ENTREZID for gseKEGG\n", sep = "")
+
+        ## Initialize RNG for reproducibility (seed=TRUE requires .Random.seed to exist)
+        set.seed(12345)
 
         ## Step 2: Run gseKEGG
         gsea_kegg <- gseKEGG(
