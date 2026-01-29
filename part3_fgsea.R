@@ -43,6 +43,23 @@ suppressPackageStartupMessages({
   library(clusterProfiler)
 })
 
+## Helper: normalize leading edge columns to avoid duplicated headers
+standardize_gsea_columns <- function(df) {
+  if ("core_enrichment" %in% colnames(df) && !"leadingEdge" %in% colnames(df)) {
+    df <- df %>% dplyr::rename(leadingEdge = core_enrichment)
+  }
+  if ("leading_edge" %in% colnames(df) && !"leadingEdge" %in% colnames(df)) {
+    df <- df %>% dplyr::rename(leadingEdge = leading_edge)
+  }
+  if ("leading_edge" %in% colnames(df) && "leadingEdge" %in% colnames(df)) {
+    df <- df %>% dplyr::select(-leading_edge)
+  }
+  if ("core_enrichment" %in% colnames(df) && "leadingEdge" %in% colnames(df)) {
+    df <- df %>% dplyr::select(-core_enrichment)
+  }
+  df
+}
+
 ## 1.5) Load central parameters -----------------------------
 params_file <- file.path(getwd(), "parameters.R")
 if (file.exists(params_file)) {
@@ -413,9 +430,9 @@ tryCatch({
           go_results <- as.data.frame(gsea_go) %>%
             dplyr::rename(
               pathway = ID,
-              padj = p.adjust,
-              leadingEdge = core_enrichment
+              padj = p.adjust
             ) %>%
+            standardize_gsea_columns() %>%
             dplyr::arrange(padj)
 
           go_entrez_to_symbol <- go_symbol_to_entrez %>%
@@ -585,14 +602,9 @@ tryCatch({
           kegg_results <- kegg_results %>%
             dplyr::rename(
               pathway = ID,
-              padj = p.adjust,
-              leadingEdge = core_enrichment
-            )
-
-          ## Remove duplicate/legacy columns if present
-          if ("leading_edge" %in% colnames(kegg_results)) {
-            kegg_results <- kegg_results %>% dplyr::select(-leading_edge)
-          }
+              padj = p.adjust
+            ) %>%
+            standardize_gsea_columns()
 
           ## Map KEGG leading edge Entrez IDs back to gene symbols
           entrez_to_symbol <- symbol_to_entrez %>%
@@ -726,6 +738,7 @@ tryCatch({
         if ("Description" %in% colnames(sig_results)) {
           sig_results <- sig_results %>% dplyr::rename(pathway_name = Description)
         }
+        sig_results <- sig_results %>% standardize_gsea_columns()
 
         ## Remove qvalue column if present (keep padj only for clarity)
         if ("qvalue" %in% colnames(sig_results) && "padj" %in% colnames(sig_results)) {
@@ -745,6 +758,9 @@ tryCatch({
         sig_results$analysis_type <- "fgsea"
         if (!is.na(logfc_cutoff)) sig_results$logFC_cutoff <- logfc_cutoff
         if (!is.na(deg_fdr_cutoff)) sig_results$fdr_cutoff <- deg_fdr_cutoff
+
+        ## Remove any duplicate columns (defensive)
+        sig_results <- sig_results[, !duplicated(colnames(sig_results)), drop = FALSE]
 
         ## Save table
         table_file <- paste0("fgsea_", db_name, "_", contrast_name, "_", run_tag, ".csv")
@@ -817,7 +833,8 @@ tryCatch({
             dplyr::mutate(
               ## Use -log10(padj) for color intensity
               ## Higher value = more significant
-              neg_log10_padj = -log10(padj)
+              padj_safe = pmax(padj, .Machine$double.eps),
+              neg_log10_padj = -log10(padj_safe)
             )
 
           ## Calculate nice breaks for the legend (show actual p-values)
@@ -849,7 +866,7 @@ tryCatch({
               breaks = c(-max_neg_log, -1.3, 0, 1.3, max_neg_log),
               labels = function(x) {
                 sapply(x, function(val) {
-                  if (abs(val) < 0.1) return("0.05")
+                  if (abs(val) < 1e-6) return("1")
                   pval <- 10^(-abs(val))
                   format(pval, scientific = TRUE, digits = 1)
                 })

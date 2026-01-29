@@ -172,6 +172,26 @@ for (rds_file in gsea_rds_files) {
     next
   }
 
+  ## Save full gseaResult results table for this contrast/database
+  results_file <- paste0("gseaResult_full_", db_name, "_", contrast_name, "_", run_tag, ".csv")
+  write.csv(result_df, file = file.path(tables_dir, results_file), row.names = FALSE)
+  cat("[OK] Saved full gseaResult table: ", results_file, "\n", sep = "")
+
+  ## Save ranked gene list used for barcode plots
+  gene_list <- gsea_result@geneList
+  if (length(gene_list) > 0) {
+    gene_list_df <- data.frame(
+      gene_id = names(gene_list),
+      ranking_metric = as.numeric(gene_list),
+      stringsAsFactors = FALSE
+    )
+    gene_list_file <- paste0("gseaResult_geneList_", db_name, "_", contrast_name, "_", run_tag, ".csv")
+    write.csv(gene_list_df, file = file.path(tables_dir, gene_list_file), row.names = FALSE)
+    cat("[OK] Saved gseaResult geneList: ", gene_list_file, "\n", sep = "")
+  } else {
+    cat("[WARN] gseaResult geneList is empty; skipping geneList export.\n")
+  }
+
   ## Filter significant pathways
   sig_results <- result_df %>%
     dplyr::filter(p.adjust < fdr_cutoff)
@@ -213,6 +233,7 @@ for (rds_file in gsea_rds_files) {
     nes <- pathway$NES
     padj <- pathway$p.adjust
     direction <- ifelse(nes > 0, "Up", "Down")
+    stats_label <- paste0("NES=", round(nes, 2), " | FDR=", signif(padj, 3))
 
     ## Create clean filename
     safe_name <- gsub("[^A-Za-z0-9_-]", "_", pathway_name)
@@ -230,9 +251,10 @@ for (rds_file in gsea_rds_files) {
           gsea_result,
           geneSetID = pathway_id,
           title = paste0(str_wrap(pathway_name, width = 50), "\n",
-                         contrast_name, " | ", database, " | ", direction, "-regulated"),
+                         contrast_name, " | ", database, " | ", direction, "-regulated", "\n",
+                         stats_label),
           base_size = 10,
-          pvalue_table = TRUE
+          pvalue_table = FALSE
         )
       }, error = function(e1) {
         ## Fallback to simpler gseaplot (single panel)
@@ -240,7 +262,7 @@ for (rds_file in gsea_rds_files) {
           enrichplot::gseaplot(
             gsea_result,
             geneSetID = pathway_id,
-            title = paste0(pathway_name, "\n", contrast_name, " | ", direction)
+            title = paste0(pathway_name, "\n", contrast_name, " | ", direction, "\n", stats_label)
           )
         }, error = function(e2) {
           ## If both fail, return NULL
