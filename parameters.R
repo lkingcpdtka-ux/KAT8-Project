@@ -2,8 +2,43 @@
 ## KAT8 bulk RNA-seq - CENTRAL PARAMETERS FILE
 ## =========================================================
 ## All analysis cutoffs and thresholds are defined HERE ONLY
-## Other scripts (part1-5) source this file to use these values
+## Other scripts (part1-6) source this file to use these values
 ## =========================================================
+
+## ============================================================
+## REPRODUCIBILITY: RANDOM SEED CONFIGURATION
+## ============================================================
+## Set seeds for all stochastic operations to ensure reproducibility
+## Used by: all parts (DESeq2, GSEA, clustering, PCA, etc.)
+
+## Master seed for the entire analysis
+MASTER_SEED <- 42
+
+## Set the global R seed immediately
+set.seed(MASTER_SEED)
+
+## Individual seeds for specific analyses (derived from master)
+## This allows re-running specific parts with consistent results
+seeds <- list(
+  deseq2      = MASTER_SEED,       ## DESeq2 (affects some internal operations)
+  pca         = MASTER_SEED + 1,   ## PCA/MDS visualizations
+  clustering  = MASTER_SEED + 2,   ## Hierarchical clustering in heatmaps
+  gsea        = MASTER_SEED + 3,   ## fGSEA permutations
+  ora         = MASTER_SEED + 4,   ## ORA (if any stochastic elements)
+  sampling    = MASTER_SEED + 5    ## Any random sampling operations
+)
+
+## Helper function to set seed for a specific analysis
+set_analysis_seed <- function(analysis_name) {
+  if (analysis_name %in% names(seeds)) {
+    set.seed(seeds[[analysis_name]])
+    ## Silently set seed - comment out next line if you want verbose output
+    ## cat("[SEED] Set seed for ", analysis_name, ": ", seeds[[analysis_name]], "\n", sep = "")
+  } else {
+    set.seed(MASTER_SEED)
+    warning("Unknown analysis '", analysis_name, "', using MASTER_SEED")
+  }
+}
 
 ## ============================================================
 ## DEG THRESHOLDS (Differential Expression)
@@ -149,6 +184,7 @@ interpretation_params <- list(
 ## ============================================================
 
 cat("[INFO] Loaded central parameters from parameters.R\n")
+cat("       Reproducibility: MASTER_SEED=", MASTER_SEED, "\n", sep = "")
 cat("       DEG thresholds: iWAT FDR<", iWAT_fdr_cut, " |logFC|>", iWAT_logFC_cut, "\n", sep = "")
 cat("                       gWAT FDR<", gWAT_fdr_cut, " |logFC|>", gWAT_logFC_cut, "\n", sep = "")
 cat("       ORA: top_n=", ora_params$top_n, ", simplify=", ora_params$simplify_cutoff, "\n", sep = "")
