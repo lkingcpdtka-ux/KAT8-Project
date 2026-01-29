@@ -11,7 +11,7 @@
 ## Single seed for all stochastic operations to ensure reproducibility
 ## Used by: all parts (DESeq2, GSEA, clustering, PCA, etc.)
 
-MASTER_SEED <- 42
+MASTER_SEED <- 12345
 set.seed(MASTER_SEED)
 
 ## ============================================================
