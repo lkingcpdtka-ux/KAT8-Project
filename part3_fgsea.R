@@ -146,6 +146,7 @@ if (length(deg_lists_file) == 0) {
 fdr_cut   <- gsea_params$fdr_cutoff
 simplify_go_bp <- gsea_params$simplify_go
 simplify_go_cutoff <- gsea_params$simplify_cutoff
+max_terms_for_simplify <- gsea_params$max_terms_for_simplify  ## Skip simplification if exceeds this
 top_n_per_direction <- gsea_params$top_n_per_direction
 
 ## Local params that extend the central ones
@@ -358,6 +359,7 @@ tryCatch({
                                  fdr_cutoff,           ## From parameters.R (no default)
                                  simplify_go,          ## From parameters.R (no default)
                                  simplify_cutoff,      ## From parameters.R (no default)
+                                 max_terms_simplify,   ## From parameters.R - skip simplify if more terms
                                  top_n_per_direction,  ## From parameters.R (no default)
                                  deg_up_count = NA,    ## Authoritative DEG count for cross-validation
                                  deg_down_count = NA,
@@ -419,8 +421,12 @@ tryCatch({
 
           ## Simplify GO:BP results BEFORE converting to data frame
           ## This uses clusterProfiler::simplify() which properly handles gseaResult objects
-          if (simplify_go) {
-            cat("[INFO] Simplifying GO:BP results (cutoff=", simplify_cutoff, ")...\n", sep = "")
+          ## WARNING: simplify() is O(n²) and can hang with many terms
+          ## We skip simplification if there are too many terms (controlled by max_terms_simplify)
+
+          if (simplify_go && n_before_simplify <= max_terms_simplify) {
+            cat("[INFO] Simplifying GO:BP results (", n_before_simplify, " terms, cutoff=", simplify_cutoff, ")...\n", sep = "")
+            cat("[INFO] This may take 1-5 minutes depending on term count...\n")
             tryCatch({
               gsea_go <- clusterProfiler::simplify(
                 gsea_go,
@@ -434,6 +440,11 @@ tryCatch({
               cat("[WARN] GO:BP simplification failed: ", conditionMessage(e), "\n", sep = "")
               cat("[WARN] Proceeding with unsimplified results\n")
             })
+          } else if (simplify_go && n_before_simplify > max_terms_simplify) {
+            cat("[WARN] Skipping GO:BP simplification: ", n_before_simplify, " terms exceeds limit of ", max_terms_simplify, "\n", sep = "")
+            cat("[WARN] Simplification is O(n²) and would take too long with this many terms\n")
+            cat("[INFO] Proceeding with unsimplified results (you can filter later)\n")
+            cat("[TIP] Adjust max_terms_for_simplify in parameters.R if needed\n")
           }
 
           ## SAVE gseaResult object for barcode plots (part5)
@@ -970,6 +981,7 @@ tryCatch({
         fdr_cutoff    = fdr_cut,
         simplify_go = simplify_go_bp,
         simplify_cutoff = simplify_go_cutoff,
+        max_terms_simplify = max_terms_for_simplify,
         top_n_per_direction = top_n_per_direction,
         deg_up_count = deg_up_count,
         deg_down_count = deg_down_count,
