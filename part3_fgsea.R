@@ -417,34 +417,53 @@ tryCatch({
         )
 
         if (!is.null(gsea_go) && nrow(gsea_go@result) > 0) {
-          n_before_simplify <- nrow(gsea_go@result)
+          n_total_terms <- nrow(gsea_go@result)
 
-          ## Simplify GO:BP results BEFORE converting to data frame
-          ## This uses clusterProfiler::simplify() which properly handles gseaResult objects
-          ## WARNING: simplify() is O(n²) and can hang with many terms
-          ## We skip simplification if there are too many terms (controlled by max_terms_simplify)
+          ## Count significant terms BEFORE simplification
+          n_sig_terms <- sum(gsea_go@result$p.adjust < fdr_cutoff, na.rm = TRUE)
+          cat("[INFO] GO:BP results: ", n_total_terms, " total terms, ", n_sig_terms, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
 
-          if (simplify_go && n_before_simplify <= max_terms_simplify) {
-            cat("[INFO] Simplifying GO:BP results (", n_before_simplify, " terms, cutoff=", simplify_cutoff, ")...\n", sep = "")
-            cat("[INFO] This may take 1-5 minutes depending on term count...\n")
-            tryCatch({
-              gsea_go <- clusterProfiler::simplify(
-                gsea_go,
-                cutoff = simplify_cutoff,
-                by = "p.adjust",
-                select_fun = min
-              )
-              n_after_simplify <- nrow(gsea_go@result)
-              cat("[OK] Simplified GO:BP from ", n_before_simplify, " to ", n_after_simplify, " terms\n", sep = "")
-            }, error = function(e) {
-              cat("[WARN] GO:BP simplification failed: ", conditionMessage(e), "\n", sep = "")
-              cat("[WARN] Proceeding with unsimplified results\n")
-            })
-          } else if (simplify_go && n_before_simplify > max_terms_simplify) {
-            cat("[WARN] Skipping GO:BP simplification: ", n_before_simplify, " terms exceeds limit of ", max_terms_simplify, "\n", sep = "")
-            cat("[WARN] Simplification is O(n²) and would take too long with this many terms\n")
-            cat("[INFO] Proceeding with unsimplified results (you can filter later)\n")
-            cat("[TIP] Adjust max_terms_for_simplify in parameters.R if needed\n")
+          ## SMART SIMPLIFICATION STRATEGY:
+          ## Only simplify SIGNIFICANT terms - this is what we care about!
+          ## Non-significant terms don't need redundancy removal
+          ## This dramatically reduces computation (e.g., 500 -> 50 terms = 100x faster)
+
+          if (simplify_go && n_sig_terms > 0) {
+            ## Filter to significant terms first
+            gsea_go_sig <- gsea_go
+            gsea_go_sig@result <- gsea_go@result[gsea_go@result$p.adjust < fdr_cutoff, ]
+            n_to_simplify <- nrow(gsea_go_sig@result)
+
+            if (n_to_simplify <= max_terms_simplify && n_to_simplify > 1) {
+              cat("[INFO] Simplifying ", n_to_simplify, " significant GO:BP terms (cutoff=", simplify_cutoff, ")...\n", sep = "")
+              cat("[INFO] This should be fast since we're only simplifying significant terms...\n")
+              tryCatch({
+                gsea_go_simplified <- clusterProfiler::simplify(
+                  gsea_go_sig,
+                  cutoff = simplify_cutoff,
+                  by = "p.adjust",
+                  select_fun = min
+                )
+                n_after_simplify <- nrow(gsea_go_simplified@result)
+                cat("[OK] Simplified GO:BP from ", n_to_simplify, " to ", n_after_simplify, " significant terms\n", sep = "")
+
+                ## Use simplified significant results
+                gsea_go <- gsea_go_simplified
+              }, error = function(e) {
+                cat("[WARN] GO:BP simplification failed: ", conditionMessage(e), "\n", sep = "")
+                cat("[WARN] Using unsimplified significant results\n")
+                gsea_go <- gsea_go_sig  ## Still use filtered significant results
+              })
+            } else if (n_to_simplify > max_terms_simplify) {
+              cat("[WARN] Too many significant terms (", n_to_simplify, " > ", max_terms_simplify, ") - skipping simplification\n", sep = "")
+              cat("[INFO] Using unsimplified significant results\n")
+              gsea_go <- gsea_go_sig  ## Use filtered but unsimplified
+            } else {
+              cat("[INFO] Only ", n_to_simplify, " significant term(s) - no simplification needed\n", sep = "")
+              gsea_go <- gsea_go_sig
+            }
+          } else if (n_sig_terms == 0) {
+            cat("[INFO] No significant GO:BP terms found\n")
           }
 
           ## SAVE gseaResult object for barcode plots (part5)
