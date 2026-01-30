@@ -2,8 +2,17 @@
 ## KAT8 bulk RNA-seq - CENTRAL PARAMETERS FILE
 ## =========================================================
 ## All analysis cutoffs and thresholds are defined HERE ONLY
-## Other scripts (part1-5) source this file to use these values
+## Other scripts (part1-6) source this file to use these values
 ## =========================================================
+
+## ============================================================
+## REPRODUCIBILITY: RANDOM SEED CONFIGURATION
+## ============================================================
+## Single seed for all stochastic operations to ensure reproducibility
+## Used by: all parts (DESeq2, GSEA, clustering, PCA, etc.)
+
+MASTER_SEED <- 12345
+set.seed(MASTER_SEED)
 
 ## ============================================================
 ## DEG THRESHOLDS (Differential Expression)
@@ -123,11 +132,35 @@ get_tissue_thresholds <- function(contrast_name) {
 }
 
 ## ============================================================
+## BIOLOGICAL INTERPRETATION PARAMETERS (Part 6)
+## ============================================================
+## Used by: part6_biological_interpretation.R
+
+interpretation_params <- list(
+  ## Cell type signature scoring
+  min_markers_for_score = 3,    ## Minimum markers found to calculate score
+  signature_method = "mean_logfc",  ## Options: "mean_logfc", "median_logfc", "ssgsea"
+
+  ## Pathway convergence thresholds
+  convergence_fdr = 0.05,       ## FDR cutoff for convergent pathways
+
+  ## Leading edge analysis
+  min_le_overlap = 2,           ## Minimum overlap for pathway-cell type reporting
+  min_le_fraction = 0.05,       ## Minimum fraction of leading edge for visualization
+
+  ## Publication figure parameters
+  top_pathways_for_heatmap = 15,
+  celltype_logfc_threshold = 0.3  ## Threshold for asterisk annotation
+)
+
+## ============================================================
 ## PRINT CONFIRMATION
 ## ============================================================
 
 cat("[INFO] Loaded central parameters from parameters.R\n")
+cat("       Reproducibility: MASTER_SEED=", MASTER_SEED, "\n", sep = "")
 cat("       DEG thresholds: iWAT FDR<", iWAT_fdr_cut, " |logFC|>", iWAT_logFC_cut, "\n", sep = "")
 cat("                       gWAT FDR<", gWAT_fdr_cut, " |logFC|>", gWAT_logFC_cut, "\n", sep = "")
 cat("       ORA: top_n=", ora_params$top_n, ", simplify=", ora_params$simplify_cutoff, "\n", sep = "")
 cat("       GSEA: top_n_per_direction=", gsea_params$top_n_per_direction, ", FDR<", gsea_params$fdr_cutoff, "\n", sep = "")
+cat("       Interpretation: signature_method=", interpretation_params$signature_method, "\n", sep = "")
