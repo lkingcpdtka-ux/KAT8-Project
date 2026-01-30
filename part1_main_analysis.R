@@ -69,10 +69,28 @@ if (file.exists(params_file)) {
 
 ## 2) save_core utilities -----------------------------------
 utils_dir <- file.path(getwd(), "save_core")
-source(file.path(utils_dir, "save.R"))
-source(file.path(utils_dir, "findsave.R"))
-source(file.path(utils_dir, "purge.R"))
-source(file.path(utils_dir, "dedupe.R"))
+if (file.exists(file.path(utils_dir, "save.R"))) {
+  source(file.path(utils_dir, "save.R"))
+  source(file.path(utils_dir, "findsave.R"))
+  source(file.path(utils_dir, "purge.R"))
+  source(file.path(utils_dir, "dedupe.R"))
+  use_save_core <- TRUE
+  cat("[OK] save_core utilities loaded\n")
+} else {
+  use_save_core <- FALSE
+  cat("[WARN] save_core not found at: ", utils_dir, "\n", sep = "")
+  cat("[WARN] Creating minimal output directory structure manually...\n")
+
+  ## Create minimal init_run function if save_core is missing
+  init_run <- function(script_name, species, data_type, keywords, notes) {
+    run_tag <- format(Sys.time(), "%Y%m%d_%H%M%S")
+    outdir <- file.path(getwd(), "savepoints", paste0("RUN_", run_tag))
+    dir.create(file.path(outdir, "tables"), recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(outdir, "plots"), recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(outdir, "logs"), recursive = TRUE, showWarnings = FALSE)
+    return(list(outdir = outdir, run_tag = run_tag))
+  }
+}
 
 ## 2.5) Run metadata ----------------------------------------
 run_info <- list(
@@ -130,9 +148,16 @@ tryCatch({
   
   ## 4.1) Load raw counts -----------------------------------
   cat("\n=== RAW COUNTS MATRIX (FULL) ===\n")
-  
+
+  ## Check if counts file exists
+  counts_file <- "counts.txt"
+  if (!file.exists(counts_file)) {
+    stop("counts.txt not found in working directory: ", getwd(), "\n",
+         "Please ensure counts.txt is in the project root directory.")
+  }
+
   counts_raw <- read.delim(
-    "counts.txt",
+    counts_file,
     header           = TRUE,
     stringsAsFactors = FALSE,
     check.names      = FALSE
@@ -1113,7 +1138,7 @@ tryCatch({
   cat("==========================================================\n")
   
   ## 4.16) save_core bookkeeping ----------------------------
-  if (!is.null(hero_volcano_file)) {
+  if (use_save_core && !is.null(hero_volcano_file)) {
     hero_path <- file.path(outdir, "plots", hero_volcano_file)
     if (file.exists(hero_path) && exists("save_run_file")) {
       tryCatch({
@@ -1123,8 +1148,8 @@ tryCatch({
       })
     }
   }
-  
-  if (exists("dedupe")) {
+
+  if (use_save_core && exists("dedupe")) {
     try(dedupe(outdir), silent = TRUE)
   }
 

@@ -66,9 +66,12 @@ gsea_params <- list(
   ## Ranking metric (from DESeq2)
   rank_metric     = "DESeq2 Wald statistic",
 
-  ## GO:BP simplification
-  simplify_go     = TRUE,    ## Always simplify GO:BP to remove redundant terms
-  simplify_cutoff = 0.7,
+  ## GO:BP simplification - reduces redundant GO terms using semantic similarity
+  ## WARNING: simplify() is O(n²) complexity - can hang with many terms!
+  ## Set simplify_go = FALSE to skip, or lower max_terms_for_simplify
+  simplify_go     = TRUE,    ## Enable GO:BP simplification
+  simplify_cutoff = 0.7,     ## Semantic similarity threshold (0-1)
+  max_terms_for_simplify = 200,  ## Skip simplification if more terms than this
 
   ## Plotting parameters
   top_n_per_direction = 10,  ## Top pathways per direction for plots

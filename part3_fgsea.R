@@ -146,6 +146,7 @@ if (length(deg_lists_file) == 0) {
 fdr_cut   <- gsea_params$fdr_cutoff
 simplify_go_bp <- gsea_params$simplify_go
 simplify_go_cutoff <- gsea_params$simplify_cutoff
+max_terms_for_simplify <- gsea_params$max_terms_for_simplify  ## Skip simplification if exceeds this
 top_n_per_direction <- gsea_params$top_n_per_direction
 
 ## Local params that extend the central ones
@@ -306,42 +307,23 @@ tryCatch({
   
   cat("[INFO] Found ", length(de_files), " DE tables\n")
   
-  ## 4.2) Build gene sets ------------------------------------
-  cat("\n=== BUILDING GENE SETS ===\n")
-  log_time("Starting gene set construction")
-  
-  ## GO:BP gene sets (disabled for now)
+  ## 4.2) Gene set initialization -----------------------------
+  ## NOTE: gseGO() and gseKEGG() handle gene set databases INTERNALLY
+  ## They use OrgDb and KEGG API directly - no need to preload gene sets
+  ## This dramatically reduces memory usage and prevents hanging
+  cat("\n=== GENE SET CONFIGURATION ===\n")
+  log_time("Starting gene set configuration")
+
+  ## These variables are kept for function signature compatibility
+  ## but gseGO/gseKEGG don't use them (they query databases directly)
   go_bp_list <- NULL
   go_bp_term2gene <- NULL
+  wikipathways_list <- NULL
+  hallmark_list <- NULL
+
   if (run_go_bp) {
-    cat("[INFO] Building GO:BP gene sets from org.Mm.eg.db...\n")
-    go_bp_genes <- tryCatch({
-      AnnotationDbi::select(
-        org.Mm.eg.db,
-        keys = keys(org.Mm.eg.db, keytype = "GOALL"),
-        columns = c("SYMBOL", "GOALL", "ONTOLOGYALL"),
-        keytype = "GOALL"
-      )
-    }, error = function(e) {
-      cat("[ERROR] Failed to get GO:BP gene sets: ", conditionMessage(e), "\n")
-      return(NULL)
-    })
-    
-    if (!is.null(go_bp_genes)) {
-      ## Filter for BP ontology and remove NA symbols
-      go_bp_genes <- go_bp_genes %>%
-        dplyr::filter(ONTOLOGYALL == "BP", !is.na(SYMBOL)) %>%
-        dplyr::select(GOALL, SYMBOL)
-      
-      ## Convert to named list (pathway name -> gene vector)
-      go_bp_list <- split(go_bp_genes$SYMBOL, go_bp_genes$GOALL)
-      go_bp_term2gene <- go_bp_genes %>% dplyr::select(GOALL, SYMBOL)
-      
-      ## Filter for gene set size
-      go_bp_list <- go_bp_list[sapply(go_bp_list, length) >= 5 & sapply(go_bp_list, length) <= 500]
-      
-      cat("[OK] GO:BP gene sets: ", length(go_bp_list), " pathways\n", sep = "")
-    }
+    cat("[INFO] GO:BP will use gseGO() with org.Mm.eg.db (database queried internally)\n")
+    cat("[INFO] No pre-loading of GO terms needed - saves memory and prevents hanging\n")
   } else {
     cat("[INFO] GO:BP gene sets disabled (run_go_bp = FALSE)\n")
   }
@@ -352,14 +334,21 @@ tryCatch({
   ## No pre-built gene sets needed - gseKEGG queries KEGG API directly
   ## ============================================================
   if (run_kegg) {
-    cat("[INFO] KEGG GSEA will use clusterProfiler::gseKEGG() (not msigdbr)\n")
+    cat("[INFO] KEGG GSEA will use clusterProfiler::gseKEGG() (queries KEGG API directly)\n")
     cat("[INFO] This matches ORA's enrichKEGG() for consistency\n")
   } else {
     cat("[INFO] KEGG GSEA disabled (run_kegg = FALSE)\n")
   }
-  
-  ## WikiPathways/Hallmark gene sets are disabled in this workflow.
-  log_time("Completed gene set construction")
+
+  ## WikiPathways/Hallmark gene sets are disabled in this workflow
+  if (run_wikipathways) {
+    cat("[INFO] WikiPathways is enabled but requires msigdbr package\n")
+  }
+  if (run_hallmark) {
+    cat("[INFO] MSigDB Hallmark is enabled but requires msigdbr package\n")
+  }
+
+  log_time("Completed gene set configuration")
   
   ## 4.3) GSEA analysis function ----------------------------
   ## NOTE: GO:BP uses gseGO and KEGG uses gseKEGG (clusterProfiler)
@@ -370,6 +359,7 @@ tryCatch({
                                  fdr_cutoff,           ## From parameters.R (no default)
                                  simplify_go,          ## From parameters.R (no default)
                                  simplify_cutoff,      ## From parameters.R (no default)
+                                 max_terms_simplify,   ## From parameters.R - skip simplify if more terms
                                  top_n_per_direction,  ## From parameters.R (no default)
                                  deg_up_count = NA,    ## Authoritative DEG count for cross-validation
                                  deg_down_count = NA,
@@ -411,6 +401,7 @@ tryCatch({
         go_genelist <- setNames(go_symbol_to_entrez$rank_value, go_symbol_to_entrez$ENTREZID)
         go_genelist <- sort(go_genelist, decreasing = TRUE)
 
+        cat("[INFO] Running gseGO - this may take 1-3 minutes per contrast...\n")
         gsea_go <- gseGO(
           geneList     = go_genelist,
           OrgDb        = org.Mm.eg.db,
@@ -420,30 +411,59 @@ tryCatch({
           maxGSSize    = gsea_params$max_gs_size,
           pvalueCutoff = 1.0,
           pAdjustMethod = "BH",
-          verbose      = FALSE,
-          seed         = TRUE
+          verbose      = TRUE,   ## Show progress to indicate script is running
+          seed         = TRUE,
+          nPermSimple  = 1000    ## Reduce permutations for faster runtime (default 10000)
         )
 
         if (!is.null(gsea_go) && nrow(gsea_go@result) > 0) {
-          n_before_simplify <- nrow(gsea_go@result)
+          n_total_terms <- nrow(gsea_go@result)
 
-          ## Simplify GO:BP results BEFORE converting to data frame
-          ## This uses clusterProfiler::simplify() which properly handles gseaResult objects
-          if (simplify_go) {
-            cat("[INFO] Simplifying GO:BP results (cutoff=", simplify_cutoff, ")...\n", sep = "")
-            tryCatch({
-              gsea_go <- clusterProfiler::simplify(
-                gsea_go,
-                cutoff = simplify_cutoff,
-                by = "p.adjust",
-                select_fun = min
-              )
-              n_after_simplify <- nrow(gsea_go@result)
-              cat("[OK] Simplified GO:BP from ", n_before_simplify, " to ", n_after_simplify, " terms\n", sep = "")
-            }, error = function(e) {
-              cat("[WARN] GO:BP simplification failed: ", conditionMessage(e), "\n", sep = "")
-              cat("[WARN] Proceeding with unsimplified results\n")
-            })
+          ## Count significant terms BEFORE simplification
+          n_sig_terms <- sum(gsea_go@result$p.adjust < fdr_cutoff, na.rm = TRUE)
+          cat("[INFO] GO:BP results: ", n_total_terms, " total terms, ", n_sig_terms, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
+
+          ## SMART SIMPLIFICATION STRATEGY:
+          ## Only simplify SIGNIFICANT terms - this is what we care about!
+          ## Non-significant terms don't need redundancy removal
+          ## This dramatically reduces computation (e.g., 500 -> 50 terms = 100x faster)
+
+          if (simplify_go && n_sig_terms > 0) {
+            ## Filter to significant terms first
+            gsea_go_sig <- gsea_go
+            gsea_go_sig@result <- gsea_go@result[gsea_go@result$p.adjust < fdr_cutoff, ]
+            n_to_simplify <- nrow(gsea_go_sig@result)
+
+            if (n_to_simplify <= max_terms_simplify && n_to_simplify > 1) {
+              cat("[INFO] Simplifying ", n_to_simplify, " significant GO:BP terms (cutoff=", simplify_cutoff, ")...\n", sep = "")
+              cat("[INFO] This should be fast since we're only simplifying significant terms...\n")
+              tryCatch({
+                gsea_go_simplified <- clusterProfiler::simplify(
+                  gsea_go_sig,
+                  cutoff = simplify_cutoff,
+                  by = "p.adjust",
+                  select_fun = min
+                )
+                n_after_simplify <- nrow(gsea_go_simplified@result)
+                cat("[OK] Simplified GO:BP from ", n_to_simplify, " to ", n_after_simplify, " significant terms\n", sep = "")
+
+                ## Use simplified significant results
+                gsea_go <- gsea_go_simplified
+              }, error = function(e) {
+                cat("[WARN] GO:BP simplification failed: ", conditionMessage(e), "\n", sep = "")
+                cat("[WARN] Using unsimplified significant results\n")
+                gsea_go <- gsea_go_sig  ## Still use filtered significant results
+              })
+            } else if (n_to_simplify > max_terms_simplify) {
+              cat("[WARN] Too many significant terms (", n_to_simplify, " > ", max_terms_simplify, ") - skipping simplification\n", sep = "")
+              cat("[INFO] Using unsimplified significant results\n")
+              gsea_go <- gsea_go_sig  ## Use filtered but unsimplified
+            } else {
+              cat("[INFO] Only ", n_to_simplify, " significant term(s) - no simplification needed\n", sep = "")
+              gsea_go <- gsea_go_sig
+            }
+          } else if (n_sig_terms == 0) {
+            cat("[INFO] No significant GO:BP terms found\n")
           }
 
           ## SAVE gseaResult object for barcode plots (part5)
@@ -574,6 +594,7 @@ tryCatch({
         cat("[INFO] Mapped ", length(kegg_genelist), " genes to ENTREZID for gseKEGG\n", sep = "")
 
         ## Step 2: Run gseKEGG
+        cat("[INFO] Running gseKEGG - this may take 30 seconds to 1 minute...\n")
         gsea_kegg <- gseKEGG(
           geneList     = kegg_genelist,
           organism     = gse_kegg_params$organism,
@@ -581,8 +602,9 @@ tryCatch({
           maxGSSize    = gse_kegg_params$max_gs_size,
           pvalueCutoff = gse_kegg_params$pvalue_cutoff,        ## Initial filter (will use fdr_cutoff for final)
           pAdjustMethod = gse_kegg_params$p_adjust_method,
-          verbose      = FALSE,
-          seed         = gse_kegg_params$seed        ## For reproducibility
+          verbose      = TRUE,   ## Show progress to indicate script is running
+          seed         = gse_kegg_params$seed,        ## For reproducibility
+          nPermSimple  = 1000    ## Reduce permutations for faster runtime
         )
 
         if (!is.null(gsea_kegg) && nrow(gsea_kegg@result) > 0) {
@@ -978,6 +1000,7 @@ tryCatch({
         fdr_cutoff    = fdr_cut,
         simplify_go = simplify_go_bp,
         simplify_cutoff = simplify_go_cutoff,
+        max_terms_simplify = max_terms_for_simplify,
         top_n_per_direction = top_n_per_direction,
         deg_up_count = deg_up_count,
         deg_down_count = deg_down_count,
