@@ -60,10 +60,27 @@ if (file.exists(file.path(utils_dir, "save.R"))) {
   source(file.path(utils_dir, "findsave.R"))
   source(file.path(utils_dir, "purge.R"))
   source(file.path(utils_dir, "dedupe.R"))
+  source(file.path(utils_dir, "cache_utils.R"))  ## Caching for expensive operations
   use_save_core <- TRUE
+  cat("[OK] save_core utilities loaded (including caching)\n")
 } else {
   cat("[WARN] save_core not found; proceeding without it\n")
   use_save_core <- FALSE
+
+  ## Minimal cache function if save_core is missing
+  cache_load_or_compute <- function(cache_key, compute_fn, cache_dir, force_recompute = FALSE, verbose = TRUE) {
+    cache_path <- file.path(cache_dir, paste0(cache_key, ".rds"))
+    if (!force_recompute && file.exists(cache_path)) {
+      if (verbose) cat("[CACHE] Loading: ", cache_key, "\n", sep = "")
+      return(readRDS(cache_path))
+    }
+    if (verbose) cat("[CACHE] Computing: ", cache_key, "\n", sep = "")
+    result <- compute_fn()
+    if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
+    saveRDS(result, cache_path)
+    if (verbose) cat("[CACHE] Saved: ", cache_key, "\n", sep = "")
+    return(result)
+  }
 }
 
 ## 2.5) Find most recent Part 1 run and use same directory ----
@@ -91,6 +108,11 @@ run_tag <- gsub("^RUN_", "", basename(outdir))
 
 cat("[INFO] Using Part 1 results from: ", outdir, "\n", sep = "")
 cat("[INFO] Run tag: ", run_tag, "\n", sep = "")
+
+## Initialize cache directory (reuses Part 1's cache)
+cache_dir <- file.path(outdir, "cache")
+if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+cat("[INFO] Cache directory: ", cache_dir, "\n", sep = "")
 
 ## Verify directory structure exists
 if (!dir.exists(file.path(outdir, "tables"))) {
@@ -394,11 +416,19 @@ tryCatch({
         )
       }
       if (!is.null(enrich_go) && nrow(enrich_go@result) > 0) {
-        enrich_go_simp <- simplify(
-          enrich_go,
-          cutoff = ora_enrich_params$simplify_cutoff,
-          by = "p.adjust",
-          select_fun = min
+        ## Cache GO:BP simplification (this is slow)
+        enrich_go_simp <- cache_load_or_compute(
+          cache_key = paste0("ora_gobp_simplify_", contrast_name, "_", direction),
+          compute_fn = function() {
+            cat("[INFO] Simplifying GO:BP terms (this may take 1-2 minutes)...\n")
+            simplify(
+              enrich_go,
+              cutoff = ora_enrich_params$simplify_cutoff,
+              by = "p.adjust",
+              select_fun = min
+            )
+          },
+          cache_dir = cache_dir
         )
         results$gobp <- enrich_go_simp
         n_sig <- sum(enrich_go_simp@result$p.adjust < fdr_cutoff, na.rm = TRUE)

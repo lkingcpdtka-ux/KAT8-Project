@@ -74,8 +74,9 @@ if (file.exists(file.path(utils_dir, "save.R"))) {
   source(file.path(utils_dir, "findsave.R"))
   source(file.path(utils_dir, "purge.R"))
   source(file.path(utils_dir, "dedupe.R"))
+  source(file.path(utils_dir, "cache_utils.R"))  ## Caching for expensive operations
   use_save_core <- TRUE
-  cat("[OK] save_core utilities loaded\n")
+  cat("[OK] save_core utilities loaded (including caching)\n")
 } else {
   use_save_core <- FALSE
   cat("[WARN] save_core not found at: ", utils_dir, "\n", sep = "")
@@ -88,7 +89,23 @@ if (file.exists(file.path(utils_dir, "save.R"))) {
     dir.create(file.path(outdir, "tables"), recursive = TRUE, showWarnings = FALSE)
     dir.create(file.path(outdir, "plots"), recursive = TRUE, showWarnings = FALSE)
     dir.create(file.path(outdir, "logs"), recursive = TRUE, showWarnings = FALSE)
-    return(list(outdir = outdir, run_tag = run_tag))
+    dir.create(file.path(outdir, "cache"), recursive = TRUE, showWarnings = FALSE)
+    return(list(outdir = outdir, run_tag = run_tag, cache_dir = file.path(outdir, "cache")))
+  }
+
+  ## Minimal cache function if save_core is missing
+  cache_load_or_compute <- function(cache_key, compute_fn, cache_dir, force_recompute = FALSE, verbose = TRUE) {
+    cache_path <- file.path(cache_dir, paste0(cache_key, ".rds"))
+    if (!force_recompute && file.exists(cache_path)) {
+      if (verbose) cat("[CACHE] Loading: ", cache_key, "\n", sep = "")
+      return(readRDS(cache_path))
+    }
+    if (verbose) cat("[CACHE] Computing: ", cache_key, "\n", sep = "")
+    result <- compute_fn()
+    if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
+    saveRDS(result, cache_path)
+    if (verbose) cat("[CACHE] Saved: ", cache_key, "\n", sep = "")
+    return(result)
   }
 }
 
@@ -113,7 +130,10 @@ run_ctx <- init_run(
 
 outdir  <- run_ctx$outdir
 run_tag <- run_ctx$run_tag
+cache_dir <- file.path(outdir, "cache")
+if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
 cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
+cat("Cache directory:", normalizePath(cache_dir, mustWork = FALSE), "\n")
 
 ## -----------------------------
 ## Genes of interest for focused heatmap/volcano
@@ -426,21 +446,41 @@ tryCatch({
   writeLines(params_lines, con = params_file)
   cat("Saved params to ", params_file, "\n")
   
-  ## 4.7) Run DESeq2 ----------------------------------------
+  ## 4.7) Run DESeq2 (with caching) -------------------------
   cat("\n=== RUNNING DESeq2 ===\n")
-  dds_tissue <- DESeq(dds_tissue)
+
+  ## Cache DESeq2 result - this is the slowest step
+  ## On first run: computes and saves to cache (~2-5 min)
+  ## On subsequent runs: loads from cache (~5 sec)
+  dds_unfitted <- dds_tissue  ## Save unfitted version for cache key
+  dds_tissue <- cache_load_or_compute(
+    cache_key = "dds_tissue_fitted",
+    compute_fn = function() {
+      cat("[INFO] Running DESeq2 (this may take 2-5 minutes)...\n")
+      DESeq(dds_unfitted)
+    },
+    cache_dir = cache_dir
+  )
   cat("[OK] DESeq2 complete.\n")
   
   cat("\nDESeq2 design matrix (first rows):\n")
   print(head(model.matrix(design(dds_tissue), colData(dds_tissue))))
   
-  ## 4.8) VST transform for QC ------------------------------
+  ## 4.8) VST transform for QC (with caching) ---------------
   cat("\n=== VST FOR QC ===\n")
-  vst_tissue <- vst(dds_tissue, blind = TRUE)
+  vst_tissue <- cache_load_or_compute(
+    cache_key = "vst_tissue_blind",
+    compute_fn = function() vst(dds_tissue, blind = TRUE),
+    cache_dir = cache_dir
+  )
   vst_mat <- assay(vst_tissue)  ## genes x samples (log2-ish stabilized)
-  
+
   cat("\n=== VST FOR HEATMAPS (blind=FALSE) ===\n")
-  vst_tissue_hm <- vst(dds_tissue, blind = FALSE)
+  vst_tissue_hm <- cache_load_or_compute(
+    cache_key = "vst_tissue_heatmap",
+    compute_fn = function() vst(dds_tissue, blind = FALSE),
+    cache_dir = cache_dir
+  )
   vst_mat_hm <- assay(vst_tissue_hm)
   
   genotype_colors <- c("CTL" = "#21918c", "KAT8KD" = "#fde725")  ## Viridis teal/yellow

@@ -79,10 +79,27 @@ if (file.exists(file.path(utils_dir, "save.R"))) {
   source(file.path(utils_dir, "findsave.R"))
   source(file.path(utils_dir, "purge.R"))
   source(file.path(utils_dir, "dedupe.R"))
+  source(file.path(utils_dir, "cache_utils.R"))  ## Caching for expensive operations
   use_save_core <- TRUE
+  cat("[OK] save_core utilities loaded (including caching)\n")
 } else {
   cat("[WARN] save_core not found; proceeding without it\n")
   use_save_core <- FALSE
+
+  ## Minimal cache function if save_core is missing
+  cache_load_or_compute <- function(cache_key, compute_fn, cache_dir, force_recompute = FALSE, verbose = TRUE) {
+    cache_path <- file.path(cache_dir, paste0(cache_key, ".rds"))
+    if (!force_recompute && file.exists(cache_path)) {
+      if (verbose) cat("[CACHE] Loading: ", cache_key, "\n", sep = "")
+      return(readRDS(cache_path))
+    }
+    if (verbose) cat("[CACHE] Computing: ", cache_key, "\n", sep = "")
+    result <- compute_fn()
+    if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
+    saveRDS(result, cache_path)
+    if (verbose) cat("[CACHE] Saved: ", cache_key, "\n", sep = "")
+    return(result)
+  }
 }
 
 ## 2.5) Find most recent Part 1 run and use same directory ----
@@ -110,6 +127,11 @@ run_tag <- gsub("^RUN_", "", basename(outdir))
 
 cat("[INFO] Using Part 1 results from: ", outdir, "\n", sep = "")
 cat("[INFO] Run tag: ", run_tag, "\n", sep = "")
+
+## Initialize cache directory (reuses Part 1's cache)
+cache_dir <- file.path(outdir, "cache")
+if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+cat("[INFO] Cache directory: ", cache_dir, "\n", sep = "")
 
 ## Verify directory structure exists
 if (!dir.exists(file.path(outdir, "tables"))) {
@@ -402,19 +424,26 @@ tryCatch({
         go_genelist <- setNames(go_symbol_to_entrez$rank_value, go_symbol_to_entrez$ENTREZID)
         go_genelist <- sort(go_genelist, decreasing = TRUE)
 
-        cat("[INFO] Running gseGO - this may take 1-3 minutes per contrast...\n")
-        gsea_go <- gseGO(
-          geneList     = go_genelist,
-          OrgDb        = org.Mm.eg.db,
-          ont          = "BP",
-          keyType      = "ENTREZID",
-          minGSSize    = gsea_params$min_gs_size,
-          maxGSSize    = gsea_params$max_gs_size,
-          pvalueCutoff = 1.0,
-          pAdjustMethod = "BH",
-          verbose      = TRUE,   ## Show progress to indicate script is running
-          seed         = TRUE,
-          nPermSimple  = 1000    ## Reduce permutations for faster runtime (default 10000)
+        ## Cache gseGO result (this is the slowest step)
+        gsea_go <- cache_load_or_compute(
+          cache_key = paste0("gsego_BP_", contrast_name),
+          compute_fn = function() {
+            cat("[INFO] Running gseGO - this may take 1-3 minutes per contrast...\n")
+            gseGO(
+              geneList     = go_genelist,
+              OrgDb        = org.Mm.eg.db,
+              ont          = "BP",
+              keyType      = "ENTREZID",
+              minGSSize    = gsea_params$min_gs_size,
+              maxGSSize    = gsea_params$max_gs_size,
+              pvalueCutoff = 1.0,
+              pAdjustMethod = "BH",
+              verbose      = TRUE,
+              seed         = TRUE,
+              nPermSimple  = 1000
+            )
+          },
+          cache_dir = cache_dir
         )
 
         if (!is.null(gsea_go) && nrow(gsea_go@result) > 0) {
@@ -447,14 +476,21 @@ tryCatch({
             n_to_simplify <- nrow(gsea_go_sig@result)
 
             if (n_to_simplify > 1) {
-              cat("[INFO] Simplifying ", n_to_simplify, " GO:BP terms (cutoff=", simplify_cutoff, ")...\n", sep = "")
-              cat("[INFO] Lower cutoff = more aggressive merging. This may take 1-3 minutes...\n")
+              ## Cache GO:BP simplification (this is slow)
               tryCatch({
-                gsea_go_simplified <- clusterProfiler::simplify(
-                  gsea_go_sig,
-                  cutoff = simplify_cutoff,
-                  by = "p.adjust",
-                  select_fun = min
+                gsea_go_simplified <- cache_load_or_compute(
+                  cache_key = paste0("gsego_simplify_", contrast_name),
+                  compute_fn = function() {
+                    cat("[INFO] Simplifying ", n_to_simplify, " GO:BP terms (cutoff=", simplify_cutoff, ")...\n", sep = "")
+                    cat("[INFO] Lower cutoff = more aggressive merging. This may take 1-3 minutes...\n")
+                    clusterProfiler::simplify(
+                      gsea_go_sig,
+                      cutoff = simplify_cutoff,
+                      by = "p.adjust",
+                      select_fun = min
+                    )
+                  },
+                  cache_dir = cache_dir
                 )
                 n_after_simplify <- nrow(gsea_go_simplified@result)
                 cat("[OK] Simplified GO:BP from ", n_to_simplify, " to ", n_after_simplify, " terms\n", sep = "")
@@ -601,18 +637,24 @@ tryCatch({
 
         cat("[INFO] Mapped ", length(kegg_genelist), " genes to ENTREZID for gseKEGG\n", sep = "")
 
-        ## Step 2: Run gseKEGG
-        cat("[INFO] Running gseKEGG - this may take 30 seconds to 1 minute...\n")
-        gsea_kegg <- gseKEGG(
-          geneList     = kegg_genelist,
-          organism     = gse_kegg_params$organism,
-          minGSSize    = gse_kegg_params$min_gs_size,
-          maxGSSize    = gse_kegg_params$max_gs_size,
-          pvalueCutoff = gse_kegg_params$pvalue_cutoff,        ## Initial filter (will use fdr_cutoff for final)
-          pAdjustMethod = gse_kegg_params$p_adjust_method,
-          verbose      = TRUE,   ## Show progress to indicate script is running
-          seed         = gse_kegg_params$seed,        ## For reproducibility
-          nPermSimple  = 1000    ## Reduce permutations for faster runtime
+        ## Step 2: Run gseKEGG (with caching)
+        gsea_kegg <- cache_load_or_compute(
+          cache_key = paste0("gsekegg_", contrast_name),
+          compute_fn = function() {
+            cat("[INFO] Running gseKEGG - this may take 30 seconds to 1 minute...\n")
+            gseKEGG(
+              geneList     = kegg_genelist,
+              organism     = gse_kegg_params$organism,
+              minGSSize    = gse_kegg_params$min_gs_size,
+              maxGSSize    = gse_kegg_params$max_gs_size,
+              pvalueCutoff = gse_kegg_params$pvalue_cutoff,
+              pAdjustMethod = gse_kegg_params$p_adjust_method,
+              verbose      = TRUE,
+              seed         = gse_kegg_params$seed,
+              nPermSimple  = 1000
+            )
+          },
+          cache_dir = cache_dir
         )
 
         if (!is.null(gsea_kegg) && nrow(gsea_kegg@result) > 0) {
