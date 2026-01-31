@@ -443,12 +443,12 @@ tryCatch({
   vst_tissue_hm <- vst(dds_tissue, blind = FALSE)
   vst_mat_hm <- assay(vst_tissue_hm)
   
-  genotype_colors <- c("CTL" = "#0072B2", "KAT8KD" = "#E69F00")
+  genotype_colors <- c("CTL" = "#21918c", "KAT8KD" = "#fde725")  ## Viridis teal/yellow
   depot_sex_fill <- c(
-    "iWAT_F" = "#56B4E9",
-    "iWAT_M" = "#0072B2",
-    "gWAT_F" = "#F0E442",
-    "gWAT_M" = "#E69F00"
+    "iWAT_F" = "#440154",  ## Viridis purple
+    "iWAT_M" = "#31688e",  ## Viridis blue
+    "gWAT_F" = "#35b779",  ## Viridis green
+    "gWAT_M" = "#fde725"   ## Viridis yellow
   )
   
   ## 4.9) Density plots (VST before/after filtering) --------
@@ -750,7 +750,7 @@ tryCatch({
     ) +
       geom_point(size = 2, alpha = 0.8) +
       scale_color_manual(
-        values = c("Up" = "#E69F00", "Down" = "#0072B2", "NS" = "grey70"),
+        values = c("Up" = "#fde725", "Down" = "#440154", "NS" = "grey70"),  ## Viridis yellow/purple
         name   = "Significance"
       ) +
       geom_point(data = label_genes, aes(color = sig_cat), size = 3) +
@@ -823,8 +823,8 @@ tryCatch({
             Sex = heat_meta_deg$Sex,
             Genotype = heat_meta_deg$Genotype,
             col = list(
-              Sex = c(F = "#E7298A", M = "#7570B3"),
-              Genotype = c(CTL = "#1B9E77", KAT8KD = "#D95F02")
+              Sex = c(F = "#440154", M = "#31688e"),         ## Viridis purple/blue
+              Genotype = c(CTL = "#21918c", KAT8KD = "#fde725") ## Viridis teal/yellow
             ),
             annotation_name_side = "left"
           )
@@ -917,8 +917,8 @@ tryCatch({
             Sex = heat_meta$Sex,
             Genotype = heat_meta$Genotype,
             col = list(
-              Sex = c(F = "#E7298A", M = "#7570B3"),
-              Genotype = c(CTL = "#1B9E77", KAT8KD = "#D95F02")
+              Sex = c(F = "#440154", M = "#31688e"),         ## Viridis purple/blue
+              Genotype = c(CTL = "#21918c", KAT8KD = "#fde725") ## Viridis teal/yellow
             ),
             annotation_name_side = "left"
           )
@@ -1059,13 +1059,13 @@ tryCatch({
       ## Significant UP (orange)
       sig_up_idx <- which(volcano_df$padj < cn_fdr_cut &
                             volcano_df$logFC >= cn_logFC_cut)
-      keyvals_color[sig_up_idx] <- "#E69F00"
+      keyvals_color[sig_up_idx] <- "#fde725"  ## Viridis yellow
       names(keyvals_color)[sig_up_idx] <- "Significant Up"
 
       ## Significant DOWN (teal/blue)
       sig_down_idx <- which(volcano_df$padj < cn_fdr_cut &
                               volcano_df$logFC <= -cn_logFC_cut)
-      keyvals_color[sig_down_idx] <- "#0072B2"
+      keyvals_color[sig_down_idx] <- "#440154"  ## Viridis purple
       names(keyvals_color)[sig_down_idx] <- "Significant Down"
       
       ev_plot <- EnhancedVolcano(
