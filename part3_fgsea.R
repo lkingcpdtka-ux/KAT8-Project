@@ -424,19 +424,30 @@ tryCatch({
           cat("[INFO] GO:BP results: ", n_total_terms, " total terms, ", n_sig_terms, " significant (FDR<", fdr_cutoff, ")\n", sep = "")
 
           ## SMART SIMPLIFICATION STRATEGY:
-          ## Only simplify SIGNIFICANT terms - this is what we care about!
-          ## Non-significant terms don't need redundancy removal
-          ## This dramatically reduces computation (e.g., 500 -> 50 terms = 100x faster)
+          ## 1. Filter to significant terms only (FDR < cutoff)
+          ## 2. If too many, take TOP N by p-value (most significant)
+          ## 3. Simplify those to remove redundancy
+          ## This ensures simplification ALWAYS runs on manageable number of terms
 
           if (simplify_go && n_sig_terms > 0) {
             ## Filter to significant terms first
             gsea_go_sig <- gsea_go
-            gsea_go_sig@result <- gsea_go@result[gsea_go@result$p.adjust < fdr_cutoff, ]
+            sig_results <- gsea_go@result[gsea_go@result$p.adjust < fdr_cutoff, ]
+
+            ## If too many significant terms, take TOP N by p-value
+            if (nrow(sig_results) > max_terms_simplify) {
+              cat("[INFO] ", nrow(sig_results), " significant terms exceeds limit of ", max_terms_simplify, "\n", sep = "")
+              cat("[INFO] Taking top ", max_terms_simplify, " most significant terms for simplification...\n", sep = "")
+              sig_results <- sig_results[order(sig_results$p.adjust), ]
+              sig_results <- sig_results[1:max_terms_simplify, ]
+            }
+
+            gsea_go_sig@result <- sig_results
             n_to_simplify <- nrow(gsea_go_sig@result)
 
-            if (n_to_simplify <= max_terms_simplify && n_to_simplify > 1) {
-              cat("[INFO] Simplifying ", n_to_simplify, " significant GO:BP terms (cutoff=", simplify_cutoff, ")...\n", sep = "")
-              cat("[INFO] This should be fast since we're only simplifying significant terms...\n")
+            if (n_to_simplify > 1) {
+              cat("[INFO] Simplifying ", n_to_simplify, " GO:BP terms (cutoff=", simplify_cutoff, ")...\n", sep = "")
+              cat("[INFO] Lower cutoff = more aggressive merging. This may take 1-3 minutes...\n")
               tryCatch({
                 gsea_go_simplified <- clusterProfiler::simplify(
                   gsea_go_sig,
@@ -445,19 +456,15 @@ tryCatch({
                   select_fun = min
                 )
                 n_after_simplify <- nrow(gsea_go_simplified@result)
-                cat("[OK] Simplified GO:BP from ", n_to_simplify, " to ", n_after_simplify, " significant terms\n", sep = "")
+                cat("[OK] Simplified GO:BP from ", n_to_simplify, " to ", n_after_simplify, " terms\n", sep = "")
 
-                ## Use simplified significant results
+                ## Use simplified results
                 gsea_go <- gsea_go_simplified
               }, error = function(e) {
                 cat("[WARN] GO:BP simplification failed: ", conditionMessage(e), "\n", sep = "")
-                cat("[WARN] Using unsimplified significant results\n")
-                gsea_go <- gsea_go_sig  ## Still use filtered significant results
+                cat("[WARN] Using unsimplified top significant results\n")
+                gsea_go <- gsea_go_sig
               })
-            } else if (n_to_simplify > max_terms_simplify) {
-              cat("[WARN] Too many significant terms (", n_to_simplify, " > ", max_terms_simplify, ") - skipping simplification\n", sep = "")
-              cat("[INFO] Using unsimplified significant results\n")
-              gsea_go <- gsea_go_sig  ## Use filtered but unsimplified
             } else {
               cat("[INFO] Only ", n_to_simplify, " significant term(s) - no simplification needed\n", sep = "")
               gsea_go <- gsea_go_sig
