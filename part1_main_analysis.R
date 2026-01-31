@@ -119,17 +119,59 @@ run_info <- list(
   message     = "DESeq2 + VST QC + DEGs + ComplexHeatmap + EnhancedVolcano"
 )
 
-## 3) init_run ----------------------------------------------
-run_ctx <- init_run(
-  script_name = run_info$script_name,
-  species     = run_info$species,
-  data_type   = run_info$data_type,
-  keywords    = run_info$keywords,
-  notes       = run_info$notes
-)
+## 3) init_run (with caching support) -----------------------
+## Check if we should reuse a recent run or start fresh
+## Controlled by FORCE_NEW_RUN and MAX_RUN_AGE_HOURS in parameters.R
 
-outdir  <- run_ctx$outdir
-run_tag <- run_ctx$run_tag
+savepoint_dir <- file.path(getwd(), "savepoints")
+reuse_existing <- FALSE
+
+if (!FORCE_NEW_RUN && dir.exists(savepoint_dir)) {
+  ## Look for existing run directories
+  run_dirs <- list.dirs(savepoint_dir, recursive = FALSE, full.names = TRUE)
+  run_dirs <- run_dirs[grepl("^RUN_", basename(run_dirs))]
+
+  if (length(run_dirs) > 0) {
+    ## Sort by modification time (most recent first)
+    run_dirs_sorted <- run_dirs[order(file.info(run_dirs)$mtime, decreasing = TRUE)]
+    most_recent <- run_dirs_sorted[1]
+    run_age_hours <- as.numeric(difftime(Sys.time(), file.mtime(most_recent), units = "hours"))
+
+    if (run_age_hours <= MAX_RUN_AGE_HOURS) {
+      ## Reuse the existing run
+      outdir <- most_recent
+      run_tag <- gsub("^RUN_", "", basename(outdir))
+      reuse_existing <- TRUE
+      cat("\n=== REUSING EXISTING RUN ===\n")
+      cat("[INFO] Found recent run (", round(run_age_hours, 1), " hours old)\n", sep = "")
+      cat("[INFO] Run directory: ", outdir, "\n", sep = "")
+      cat("[INFO] Run tag: ", run_tag, "\n", sep = "")
+      cat("[INFO] Cached results will be loaded automatically\n")
+      cat("[INFO] To start fresh, set FORCE_NEW_RUN <- TRUE in parameters.R\n")
+      cat("================================\n\n")
+    } else {
+      cat("[INFO] Most recent run is ", round(run_age_hours, 1), " hours old (> ", MAX_RUN_AGE_HOURS, " hour limit)\n", sep = "")
+      cat("[INFO] Starting fresh run...\n")
+    }
+  }
+}
+
+if (!reuse_existing) {
+  ## Create a new run
+  cat("\n=== STARTING NEW RUN ===\n")
+  run_ctx <- init_run(
+    script_name = run_info$script_name,
+    species     = run_info$species,
+    data_type   = run_info$data_type,
+    keywords    = run_info$keywords,
+    notes       = run_info$notes
+  )
+  outdir  <- run_ctx$outdir
+  run_tag <- run_ctx$run_tag
+  cat("[INFO] Created new run directory\n")
+  cat("========================\n\n")
+}
+
 cache_dir <- file.path(outdir, "cache")
 if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
 cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")

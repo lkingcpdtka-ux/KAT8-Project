@@ -15,6 +15,21 @@ MASTER_SEED <- 12345
 set.seed(MASTER_SEED)
 
 ## ============================================================
+## RUN CONTROL: CACHING AND FRESH RUNS
+## ============================================================
+## Controls whether to reuse previous run results or start fresh
+## Used by: part1_main_analysis.R
+
+## Set to TRUE to start a completely fresh run (ignores cache)
+## Set to FALSE to reuse the most recent run and its cached results
+FORCE_NEW_RUN <- FALSE
+
+## How old (in hours) can a previous run be before we start fresh?
+## If the most recent run is older than this, a new run is created
+## Set to Inf to always reuse regardless of age
+MAX_RUN_AGE_HOURS <- 24
+
+## ============================================================
 ## DEG THRESHOLDS (Differential Expression)
 ## ============================================================
 ## Used by: part1_main_analysis.R, part2_ora.R, part3_fgsea.R
