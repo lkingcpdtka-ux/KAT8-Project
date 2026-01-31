@@ -811,11 +811,11 @@ tryCatch({
         mat_scaled <- mat_scaled[!rowSums(is.na(mat_scaled)), , drop = FALSE]
         
         if (nrow(mat_scaled) >= 2) {
-          ## Use volcano colors (teal to white to orange)
+          ## Viridis-inspired diverging scale centered at 0
           max_val_deg <- max(abs(mat_scaled), na.rm = TRUE)
           deg_col_fun <- colorRamp2(
             c(-max_val_deg, 0, max_val_deg),
-            c("#0072B2", "white", "#E69F00")  ## Teal (down) -> white -> orange (up)
+            c("#440154", "white", "#FDE725")  ## Viridis purple -> white -> viridis yellow
           )
           
           ## Column annotation (including Sex since depots combine both sexes)
@@ -905,11 +905,11 @@ tryCatch({
         
         if (nrow(heat_matrix_scaled) >= 2) {
 
-          ## Use volcano colors (teal to white to orange)
+          ## Viridis-inspired diverging scale centered at 0
           max_val <- max(abs(heat_matrix_scaled), na.rm = TRUE)
           heat_col_fun <- colorRamp2(
             c(-max_val, 0, max_val),
-            c("#0072B2", "white", "#E69F00")  ## Teal (down) -> white -> orange (up)
+            c("#440154", "white", "#FDE725")  ## Viridis purple -> white -> viridis yellow
           )
 
           ## Column annotation (including Sex since depots combine both sexes)

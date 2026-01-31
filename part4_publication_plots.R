@@ -31,6 +31,7 @@ suppressPackageStartupMessages({
   library(ComplexHeatmap)
   library(circlize)
   library(grid)
+  library(viridis)  ## For viridis color scale
 })
 
 ## 1.5) Load central parameters -----------------------------
@@ -197,16 +198,8 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
       Description = factor(Description, levels = Description)
     )
 
-  ## Direction-specific color gradient (cool to warm, light to dark)
-  if (direction == "Up") {
-    ## Orange gradient for upregulated
-    color_low <- "#FDD49E"   ## Light orange
-    color_high <- "#E69F00"  ## Orange
-  } else {
-    ## Blue gradient for downregulated
-    color_low <- "#9ECAE1"   ## Light blue
-    color_high <- "#0072B2"  ## Blue
-  }
+  ## Viridis color scale (higher -log10 p-value = more significant = darker/purple)
+  ## This is cleaner than direction-specific colors and universally recognized
 
   ## Build title in journal format
   direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
@@ -241,35 +234,24 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   }
 
   ## Create dot plot
-  ## Size = Count, Color = -log10(FDR) but labeled as actual p-values
-  ## Generate nice breaks for the color scale
-  color_breaks <- c(
-    min(plot_data$neg_log10_fdr_clipped),
-    (min(plot_data$neg_log10_fdr_clipped) + fdr_cap) / 2,
-    fdr_cap
-  )
+  ## Size = Count, Color = -log10(FDR) using viridis scale
+  ## Higher -log10(FDR) = more significant = darker purple in viridis
 
   p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
     geom_point(aes(size = Count, color = neg_log10_fdr_clipped)) +
-    scale_color_gradient(
-      low = color_low,
-      high = color_high,
-      name = "Adj. P-value",
-      limits = c(min(plot_data$neg_log10_fdr_clipped), fdr_cap),
-      breaks = color_breaks,
-      labels = function(x) {
-        ## Convert -log10(p) back to p-value for display
-        pvals <- 10^(-x)
-        sapply(pvals, function(p) format(p, scientific = TRUE, digits = 1))
-      }
+    scale_color_viridis_c(
+      option = "viridis",
+      direction = 1,  ## Higher values = purple (more significant)
+      name = expression(-log[10](FDR)),
+      limits = c(min(plot_data$neg_log10_fdr_clipped), fdr_cap)
     ) +
     scale_size_continuous(
       name = "Gene Count",
-      range = c(2, 6),
+      range = c(3, 8),
       breaks = pretty(plot_data$Count, n = 4)
     ) +
     scale_x_continuous(
-      expand = expansion(mult = c(0.02, 0.08))
+      expand = expansion(mult = c(0.02, 0.05))
     ) +
     labs(
       title = plot_title,
@@ -277,14 +259,14 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
       y = NULL,
       caption = param_caption
     ) +
-    theme_bw(base_size = 10) +
+    theme_bw(base_size = 12) +
     theme(
       ## Title
-      plot.title = element_text(face = "bold", hjust = 0.5, size = 11, lineheight = 1.1),
-      ## Axes
-      axis.text.y = element_text(size = 8, color = "black"),
-      axis.text.x = element_text(size = 7, color = "black"),
-      axis.title.x = element_text(size = 8, margin = margin(t = 5)),
+      plot.title = element_text(face = "bold", hjust = 0.5, size = 13, lineheight = 1.1),
+      ## Axes - larger fonts
+      axis.text.y = element_text(size = 10, color = "black"),
+      axis.text.x = element_text(size = 9, color = "black"),
+      axis.title.x = element_text(size = 11, margin = margin(t = 5)),
       axis.ticks = element_line(color = "black", linewidth = 0.3),
       ## Grid - light lines for both axes
       panel.grid.major.x = element_line(color = "grey85", linewidth = 0.3),
@@ -292,30 +274,30 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
       panel.grid.minor = element_blank(),
       ## Border
       panel.border = element_rect(color = "black", fill = NA, linewidth = 0.6),
-      ## Legend
-      legend.title = element_text(size = 8, face = "bold"),
-      legend.text = element_text(size = 7),
-      legend.key.size = unit(0.4, "cm"),
+      ## Legend - larger fonts
+      legend.title = element_text(size = 10, face = "bold"),
+      legend.text = element_text(size = 9),
+      legend.key.size = unit(0.5, "cm"),
       legend.background = element_blank(),
       legend.box.background = element_blank(),
       ## Caption (parameters)
-      plot.caption = element_text(size = 7, color = "grey40", hjust = 0.5, margin = margin(t = 8)),
-      ## Margins
-      plot.margin = margin(10, 10, 10, 10)
+      plot.caption = element_text(size = 8, color = "grey40", hjust = 0.5, margin = margin(t = 8)),
+      ## Margins - tighter for less whitespace
+      plot.margin = margin(8, 5, 8, 5)
     ) +
     guides(
-      color = guide_colorbar(order = 1, barwidth = 0.8, barheight = 3),
+      color = guide_colorbar(order = 1, barwidth = 1, barheight = 3.5),
       size = guide_legend(order = 2)
     )
 
-  ## Save
+  ## Save - skinnier width for less whitespace
   db_short <- gsub(":", "", database)
   plot_file <- paste0("Dotplot_", db_short, "_", contrast_name, "_", direction, "_", run_tag, ".png")
   ggsave(
     file.path(output_dir, plot_file),
     plot = p,
-    width = 6.5,
-    height = max(4, nrow(plot_data) * 0.25 + 1.5),
+    width = 5,
+    height = max(4, nrow(plot_data) * 0.3 + 1.5),
     dpi = 300,
     bg = "white"
   )
@@ -486,10 +468,11 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   mat[mat > lfc_clip] <- lfc_clip
   mat[mat < -lfc_clip] <- -lfc_clip
 
-  ## Color scale: blue-white-orange, centered at 0
+  ## Color scale: viridis-inspired diverging scale centered at 0
+  ## Using viridis endpoints with white center for diverging data
   col_fun <- colorRamp2(
     c(-lfc_clip, 0, lfc_clip),
-    c("#2166AC", "white", "#E69F00")  ## Blue-white-orange
+    c("#440154", "white", "#FDE725")  ## Viridis purple -> white -> viridis yellow
   )
 
   ## Parameter caption

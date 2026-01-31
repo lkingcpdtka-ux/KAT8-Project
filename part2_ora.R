@@ -40,6 +40,7 @@ suppressPackageStartupMessages({
   library(enrichplot)
   library(DOSE)
   library(AnnotationDbi)
+  library(viridis)  ## For viridis color scale
 })
 
 ## Note: Improved mapping not needed - current mapping rate is 90.8% (excellent!)
@@ -625,25 +626,9 @@ tryCatch({
           dplyr::arrange(dplyr::desc(p.adjust)) %>%
           dplyr::mutate(pathway_name = factor(pathway_name, levels = pathway_name))
         
-        ## Direction-specific color gradient (orange for Up, blue for Down)
-        ## Lower p-value = more significant = darker color
-        if (direction == "Up") {
-          fill_scale <- scale_fill_gradient(
-            low   = "#E69F00",  ## Dark orange (most significant)
-            high  = "#FDD49E",  ## Light orange (least significant)
-            name  = "Adj. P-value",
-            labels = function(x) format(x, scientific = TRUE, digits = 2),
-            trans = "log10"
-          )
-        } else {
-          fill_scale <- scale_fill_gradient(
-            low   = "#0072B2",  ## Dark blue (most significant)
-            high  = "#9ECAE1",  ## Light blue (least significant)
-            name  = "Adj. P-value",
-            labels = function(x) format(x, scientific = TRUE, digits = 2),
-            trans = "log10"
-          )
-        }
+        ## Viridis color scale using -log10(p.adjust) for better visualization
+        ## Higher -log10(FDR) = more significant = darker purple in viridis
+        plot_data$neg_log10_padj <- -log10(plot_data$p.adjust)
         
         ## Parameter caption
         universe_label <- if (is.null(universe_entrez)) {
@@ -667,26 +652,30 @@ tryCatch({
           sep = "\n"
         )
 
-        p_pathway <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = p.adjust)) +
+        p_pathway <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = neg_log10_padj)) +
           geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
-          fill_scale +
+          scale_fill_viridis_c(
+            option = "viridis",
+            direction = 1,  ## Higher values = purple (more significant)
+            name = expression(-log[10](FDR))
+          ) +
           labs(
             title = paste0(toupper(db_name), " Pathways (ORA - ", direction, ")\n", contrast_name),
             x     = "Gene Ratio",
             y     = NULL,
             caption = param_caption
           ) +
-          theme_classic(base_size = 12) +
+          theme_classic(base_size = 13) +
           theme(
-            plot.title      = element_text(face = "bold", hjust = 0.5, size = 14),
-            axis.text.y     = element_text(size = 10, color = "black"),
-            axis.text.x     = element_text(size = 10, color = "black", face = "bold"),
-            axis.title.x    = element_text(size = 12, face = "bold"),
-            legend.title    = element_text(size = 10, face = "bold"),
-            legend.text     = element_text(size = 9),
+            plot.title      = element_text(face = "bold", hjust = 0.5, size = 15),
+            axis.text.y     = element_text(size = 11, color = "black"),
+            axis.text.x     = element_text(size = 11, color = "black", face = "bold"),
+            axis.title.x    = element_text(size = 13, face = "bold"),
+            legend.title    = element_text(size = 11, face = "bold"),
+            legend.text     = element_text(size = 10),
             legend.position = "right",
             panel.border    = element_rect(color = "black", fill = NA, linewidth = 1),
-            plot.caption    = element_text(size = 8, color = "grey40", hjust = 0.5, margin = margin(t = 8))
+            plot.caption    = element_text(size = 9, color = "grey40", hjust = 0.5, margin = margin(t = 8))
           )
         
         plot_file <- paste0("ORA_barplot_", db_name, "_", contrast_name, "_", direction, "_", run_tag, ".png")

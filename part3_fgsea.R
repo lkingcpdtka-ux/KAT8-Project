@@ -41,6 +41,7 @@ suppressPackageStartupMessages({
   library(AnnotationDbi)
   library(GO.db)
   library(clusterProfiler)
+  library(viridis)  ## For viridis color scale
 })
 
 ## Helper: normalize leading edge columns to avoid duplicated headers
@@ -843,61 +844,26 @@ tryCatch({
             )
           }
 
-          ## Color by adjusted p-value with direction-specific gradients
-          ## Orange gradient for up-regulated, blue gradient for down-regulated
-          ## This matches the ORA bar plot style
+          ## Viridis color scale based on -log10(padj)
+          ## Higher -log10(padj) = more significant = darker purple
+          ## NES direction shown on x-axis, significance shown by color intensity
           method_label <- "GSEA"
 
-          ## Separate up and down pathways for color mapping
-          ## Lower padj = more significant = darker color
+          ## Calculate -log10(padj) with cap at 50 for very small p-values
+          ## (prevents color scale being dominated by extreme values)
           plot_data <- plot_data %>%
             dplyr::mutate(
-              ## Use -log10(padj) for color intensity
-              ## Higher value = more significant
               padj_safe = pmax(padj, .Machine$double.eps),
-              neg_log10_padj = -log10(padj_safe)
+              neg_log10_padj = pmin(-log10(padj_safe), 50)  ## Cap at 50
             )
 
-          ## Calculate nice breaks for the legend (show actual p-values)
-          min_padj <- min(plot_data$padj, na.rm = TRUE)
-          max_padj <- max(plot_data$padj, na.rm = TRUE)
-
-          ## Create a custom fill aesthetic per row based on direction
-          plot_data <- plot_data %>%
-            dplyr::mutate(
-              fill_value = ifelse(Direction == "Up-regulated", neg_log10_padj, -neg_log10_padj)
-            )
-
-          ## Get range for symmetric scale
-          max_neg_log <- max(abs(plot_data$fill_value), na.rm = TRUE)
-
-          p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = fill_value)) +
+          p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = neg_log10_padj)) +
             geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
-            scale_fill_gradientn(
-              colors = c(
-                "#0072B2",  ## Dark blue (most significant down)
-                "#9ECAE1",  ## Light blue (least significant down)
-                "grey95",   ## Near white (threshold)
-                "#FDD49E",  ## Light orange (least significant up)
-                "#E69F00"   ## Dark orange (most significant up)
-              ),
-              values = scales::rescale(c(-max_neg_log, -1.3, 0, 1.3, max_neg_log)),
-              limits = c(-max_neg_log, max_neg_log),
-              name = "Adj. P-value",
-              breaks = c(-max_neg_log, -1.3, 0, 1.3, max_neg_log),
-              labels = function(x) {
-                sapply(x, function(val) {
-                  if (abs(val) < 1e-6) return("1")
-                  pval <- 10^(-abs(val))
-                  format(pval, scientific = TRUE, digits = 1)
-                })
-              },
-              guide = guide_colorbar(
-                title = "Adj. P-value\n(blue=down, orange=up)",
-                title.position = "top",
-                barwidth = 1,
-                barheight = 4
-              )
+            scale_fill_viridis_c(
+              option = "viridis",
+              direction = 1,  ## Higher values = purple (more significant)
+              name = expression(-log[10](FDR)),
+              limits = c(min(plot_data$neg_log10_padj), max(plot_data$neg_log10_padj))
             ) +
             labs(
               title = paste0(method_label, " ", toupper(db_name), ": ", contrast_name),
@@ -905,24 +871,24 @@ tryCatch({
               y = NULL,
               caption = param_caption
             ) +
-            theme_classic(base_size = 12) +
+            theme_classic(base_size = 13) +
             theme(
-              plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
-              axis.text.y = element_text(size = 10, color = "black"),
-              axis.text.x = element_text(size = 10, color = "black", face = "bold"),
-              axis.title.x = element_text(size = 12, face = "bold"),
-              legend.title = element_text(size = 9, face = "bold"),
-              legend.text = element_text(size = 8),
+              plot.title = element_text(face = "bold", hjust = 0.5, size = 15),
+              axis.text.y = element_text(size = 11, color = "black"),
+              axis.text.x = element_text(size = 11, color = "black", face = "bold"),
+              axis.title.x = element_text(size = 13, face = "bold"),
+              legend.title = element_text(size = 11, face = "bold"),
+              legend.text = element_text(size = 10),
               legend.position = "right",
               panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
-              plot.caption = element_text(size = 8, color = "grey40", hjust = 0.5, margin = margin(t = 8))
+              plot.caption = element_text(size = 9, color = "grey40", hjust = 0.5, margin = margin(t = 8))
             ) +
             geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5) +
             ## Add annotation for direction interpretation
-            annotate("text", x = Inf, y = Inf, label = "Up", hjust = 1.1, vjust = -0.5,
-                     size = 3, color = "#E69F00", fontface = "bold") +
-            annotate("text", x = -Inf, y = Inf, label = "Down", hjust = -0.1, vjust = -0.5,
-                     size = 3, color = "#0072B2", fontface = "bold")
+            annotate("text", x = Inf, y = Inf, label = "Up (NES>0)", hjust = 1.1, vjust = -0.5,
+                     size = 3.5, color = "black", fontface = "bold") +
+            annotate("text", x = -Inf, y = Inf, label = "Down (NES<0)", hjust = -0.1, vjust = -0.5,
+                     size = 3.5, color = "black", fontface = "bold")
           
           plot_file <- paste0("fgsea_plot_", db_name, "_", contrast_name, "_", run_tag, ".png")
           ggsave(file.path(outdir, "plots", plot_file), plot = p_fgsea, width = 12,
