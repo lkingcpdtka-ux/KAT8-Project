@@ -234,14 +234,14 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   }
 
   ## Create dot plot
-  ## Size = Count, Color = -log10(FDR) using viridis scale
-  ## Higher -log10(FDR) = more significant = darker purple in viridis
+  ## Size = Count, Color = -log10(FDR) using mako scale
+  ## Higher -log10(FDR) = more significant = darker in mako
 
   p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
     geom_point(aes(size = Count, color = neg_log10_fdr_clipped)) +
     scale_color_viridis_c(
-      option = "viridis",
-      direction = 1,  ## Higher values = purple (more significant)
+      option = "mako",
+      direction = -1,  ## Higher values = darker (more significant)
       name = expression(-log[10](FDR)),
       limits = c(min(plot_data$neg_log10_fdr_clipped), fdr_cap)
     ) +
@@ -468,11 +468,11 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   mat[mat > lfc_clip] <- lfc_clip
   mat[mat < -lfc_clip] <- -lfc_clip
 
-  ## Color scale: viridis-inspired diverging scale centered at 0
-  ## Using viridis endpoints with white center for diverging data
+  ## Color scale: mako-inspired diverging scale centered at 0
+  ## Using mako endpoints with white center for diverging data
   col_fun <- colorRamp2(
     c(-lfc_clip, 0, lfc_clip),
-    c("#440154", "white", "#FDE725")  ## Viridis purple -> white -> viridis yellow
+    c("#0B0405", "white", "#DEF5E5")  ## Mako dark -> white -> mako light
   )
 
   ## Parameter caption

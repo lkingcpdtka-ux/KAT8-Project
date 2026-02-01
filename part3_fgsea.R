@@ -886,8 +886,8 @@ tryCatch({
             )
           }
 
-          ## Viridis color scale based on -log10(padj)
-          ## Higher -log10(padj) = more significant = darker purple
+          ## Mako color scale based on -log10(padj)
+          ## Higher -log10(padj) = more significant = darker
           ## NES direction shown on x-axis, significance shown by color intensity
           method_label <- "GSEA"
 
@@ -902,8 +902,8 @@ tryCatch({
           p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = neg_log10_padj)) +
             geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
             scale_fill_viridis_c(
-              option = "viridis",
-              direction = 1,  ## Higher values = purple (more significant)
+              option = "mako",
+              direction = -1,  ## Higher values = darker (more significant)
               name = expression(-log[10](FDR)),
               limits = c(min(plot_data$neg_log10_padj), max(plot_data$neg_log10_padj))
             ) +

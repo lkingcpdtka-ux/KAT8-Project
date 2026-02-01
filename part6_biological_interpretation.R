@@ -778,7 +778,7 @@ tryCatch({
     max_abs <- max(abs(ct_matrix), na.rm = TRUE)
     col_fun <- colorRamp2(
       c(-max_abs, 0, max_abs),
-      c("#440154", "white", "#fde725")  ## Viridis purple -> white -> yellow
+      c("#0B0405", "white", "#DEF5E5")  ## Mako dark -> white -> mako light
     )
 
     ## Create cell type group annotation

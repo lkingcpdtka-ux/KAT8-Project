@@ -656,8 +656,8 @@ tryCatch({
           dplyr::arrange(dplyr::desc(p.adjust)) %>%
           dplyr::mutate(pathway_name = factor(pathway_name, levels = pathway_name))
         
-        ## Viridis color scale using -log10(p.adjust) for better visualization
-        ## Higher -log10(FDR) = more significant = darker purple in viridis
+        ## Mako color scale using -log10(p.adjust) for better visualization
+        ## Higher -log10(FDR) = more significant = darker in mako
         plot_data$neg_log10_padj <- -log10(plot_data$p.adjust)
         
         ## Parameter caption
@@ -685,8 +685,8 @@ tryCatch({
         p_pathway <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = neg_log10_padj)) +
           geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
           scale_fill_viridis_c(
-            option = "viridis",
-            direction = 1,  ## Higher values = purple (more significant)
+            option = "mako",
+            direction = -1,  ## Higher values = darker (more significant)
             name = expression(-log[10](FDR))
           ) +
           labs(
