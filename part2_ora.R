@@ -16,7 +16,7 @@
 ## setwd("C:/Users/lking/OneDrive - Louisiana State University/PBRC/Bioinformatics/KAT8KD_RNAseq")
 
 ## 1) Packages ----------------------------------------------
-required_pkgs <- c("dplyr", "ggplot2")
+required_pkgs <- c("dplyr", "ggplot2", "scales")
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
 if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
 
@@ -659,7 +659,11 @@ tryCatch({
         ## Mako color scale using -log10(p.adjust) for better visualization
         ## Higher -log10(FDR) = more significant = darker in mako
         plot_data$neg_log10_padj <- -log10(plot_data$p.adjust)
-        
+
+        ## Calculate scale limits - start at 0, cap at reasonable max
+        fdr_max <- ceiling(max(plot_data$neg_log10_padj, na.rm = TRUE))
+        fdr_max <- max(fdr_max, 3)  ## Ensure minimum range for color scale
+
         ## Parameter caption
         universe_label <- if (is.null(universe_entrez)) {
           "Universe: all genes (default)"
@@ -687,7 +691,9 @@ tryCatch({
           scale_fill_viridis_c(
             option = "mako",
             direction = -1,  ## Higher values = darker (more significant)
-            name = expression(-log[10](FDR))
+            name = expression(-log[10](FDR)),
+            limits = c(0, fdr_max),  ## Start at 0 for proper scale
+            breaks = scales::pretty_breaks(n = 4)
           ) +
           labs(
             title = paste0(toupper(db_name), " Pathways (ORA - ", direction, ")\n", contrast_name),

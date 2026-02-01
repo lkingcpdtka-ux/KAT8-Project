@@ -899,13 +899,18 @@ tryCatch({
               neg_log10_padj = pmin(-log10(padj_safe), 50)  ## Cap at 50
             )
 
+          ## Calculate scale limits - start at 0, use ceiling of max for nice breaks
+          fdr_max <- ceiling(max(plot_data$neg_log10_padj, na.rm = TRUE))
+          fdr_max <- max(fdr_max, 3)  ## Ensure minimum range for color scale
+
           p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = neg_log10_padj)) +
             geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
             scale_fill_viridis_c(
               option = "mako",
               direction = -1,  ## Higher values = darker (more significant)
               name = expression(-log[10](FDR)),
-              limits = c(min(plot_data$neg_log10_padj), max(plot_data$neg_log10_padj))
+              limits = c(0, fdr_max),  ## Start at 0 for proper scale
+              breaks = scales::pretty_breaks(n = 4)
             ) +
             labs(
               title = paste0(method_label, " ", toupper(db_name), ": ", contrast_name),

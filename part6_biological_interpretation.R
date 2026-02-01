@@ -506,26 +506,26 @@ tryCatch({
 
       if (length(convergent_up) > 0 && !is.null(ora_up)) {
         up_df <- ora_up %>%
-          filter(ID %in% convergent_up) %>%
-          mutate(Direction = "Up") %>%
-          left_join(
-            gsea_up %>% select(pathway_id, NES, padj) %>% rename(gsea_NES = NES, gsea_padj = padj),
+          dplyr::filter(ID %in% convergent_up) %>%
+          dplyr::mutate(Direction = "Up") %>%
+          dplyr::left_join(
+            gsea_up %>% dplyr::select(pathway_id, NES, padj) %>% dplyr::rename(gsea_NES = NES, gsea_padj = padj),
             by = c("ID" = "pathway_id")
           ) %>%
-          rename(ora_padj = p.adjust)
-        convergent_table <- bind_rows(convergent_table, up_df)
+          dplyr::rename(ora_padj = p.adjust)
+        convergent_table <- dplyr::bind_rows(convergent_table, up_df)
       }
 
       if (length(convergent_down) > 0 && !is.null(ora_down)) {
         down_df <- ora_down %>%
-          filter(ID %in% convergent_down) %>%
-          mutate(Direction = "Down") %>%
-          left_join(
-            gsea_down %>% select(pathway_id, NES, padj) %>% rename(gsea_NES = NES, gsea_padj = padj),
+          dplyr::filter(ID %in% convergent_down) %>%
+          dplyr::mutate(Direction = "Down") %>%
+          dplyr::left_join(
+            gsea_down %>% dplyr::select(pathway_id, NES, padj) %>% dplyr::rename(gsea_NES = NES, gsea_padj = padj),
             by = c("ID" = "pathway_id")
           ) %>%
-          rename(ora_padj = p.adjust)
-        convergent_table <- bind_rows(convergent_table, down_df)
+          dplyr::rename(ora_padj = p.adjust)
+        convergent_table <- dplyr::bind_rows(convergent_table, down_df)
       }
 
       if (nrow(convergent_table) > 0) {
@@ -615,11 +615,11 @@ tryCatch({
       )
     }
 
-    cell_type_scores[[contrast]] <- bind_rows(scores_list)
+    cell_type_scores[[contrast]] <- dplyr::bind_rows(scores_list)
 
     ## Print summary
     ct_summary <- cell_type_scores[[contrast]] %>%
-      arrange(desc(abs(Mean_LogFC)))
+      dplyr::arrange(dplyr::desc(abs(Mean_LogFC)))
 
     cat("  Cell type signature scores (mean logFC of markers):\n")
     for (i in seq_len(min(5, nrow(ct_summary)))) {
@@ -665,9 +665,9 @@ tryCatch({
 
     ## Get top pathways
     top_pathways <- gsea_df %>%
-      filter(padj < 0.05) %>%
-      arrange(padj) %>%
-      slice_head(n = 20)
+      dplyr::filter(padj < 0.05) %>%
+      dplyr::arrange(padj) %>%
+      dplyr::slice_head(n = 20)
 
     if (nrow(top_pathways) == 0) {
       cat("  No significant pathways\n\n")
@@ -715,13 +715,13 @@ tryCatch({
     }
 
     if (length(pathway_celltype_list) > 0) {
-      le_celltype_df <- bind_rows(pathway_celltype_list)
+      le_celltype_df <- dplyr::bind_rows(pathway_celltype_list)
       le_celltype_results[[contrast]] <- le_celltype_df
 
       ## Print notable findings
       notable <- le_celltype_df %>%
-        filter(N_Overlap >= 3) %>%
-        arrange(desc(N_Overlap))
+        dplyr::filter(N_Overlap >= 3) %>%
+        dplyr::arrange(dplyr::desc(N_Overlap))
 
       if (nrow(notable) > 0) {
         cat("  Notable pathway-cell type overlaps (>=3 genes):\n")
@@ -757,9 +757,9 @@ tryCatch({
 
     ## Pivot to matrix
     ct_matrix <- all_ct_scores %>%
-      select(CellType, Contrast, Mean_LogFC) %>%
-      pivot_wider(names_from = Contrast, values_from = Mean_LogFC) %>%
-      column_to_rownames("CellType")
+      dplyr::select(CellType, Contrast, Mean_LogFC) %>%
+      tidyr::pivot_wider(names_from = Contrast, values_from = Mean_LogFC) %>%
+      tibble::column_to_rownames("CellType")
 
     ## Handle NAs
     ct_matrix[is.na(ct_matrix)] <- 0
@@ -924,12 +924,12 @@ tryCatch({
 
     cat("[INFO] Creating pathway × cell type integration plot...\n")
 
-    all_le_ct <- bind_rows(le_celltype_results, .id = "Contrast")
+    all_le_ct <- dplyr::bind_rows(le_celltype_results, .id = "Contrast")
 
     ## Filter to notable overlaps
     notable_le <- all_le_ct %>%
-      filter(N_Overlap >= 2) %>%
-      mutate(
+      dplyr::filter(N_Overlap >= 2) %>%
+      dplyr::mutate(
         Pathway_Short = substr(Pathway, 1, 50),
         Direction = ifelse(NES > 0, "Up", "Down")
       )
@@ -938,25 +938,25 @@ tryCatch({
       ## Create tile plot
       ## Summarize: for each pathway-celltype, average fraction across contrasts
       tile_data <- notable_le %>%
-        group_by(Pathway_Short, CellType) %>%
-        summarise(
+        dplyr::group_by(Pathway_Short, CellType) %>%
+        dplyr::summarise(
           Mean_Fraction = mean(Fraction, na.rm = TRUE),
           Total_Overlap = sum(N_Overlap),
           .groups = "drop"
         ) %>%
-        filter(Mean_Fraction > 0.05)  ## At least 5% of leading edge
+        dplyr::filter(Mean_Fraction > 0.05)  ## At least 5% of leading edge
 
       if (nrow(tile_data) > 5) {
         ## Get top pathways by total cell type overlap
         top_pathways <- tile_data %>%
-          group_by(Pathway_Short) %>%
-          summarise(Total = sum(Total_Overlap)) %>%
-          arrange(desc(Total)) %>%
-          slice_head(n = 15) %>%
-          pull(Pathway_Short)
+          dplyr::group_by(Pathway_Short) %>%
+          dplyr::summarise(Total = sum(Total_Overlap)) %>%
+          dplyr::arrange(dplyr::desc(Total)) %>%
+          dplyr::slice_head(n = 15) %>%
+          dplyr::pull(Pathway_Short)
 
         tile_data_filtered <- tile_data %>%
-          filter(Pathway_Short %in% top_pathways)
+          dplyr::filter(Pathway_Short %in% top_pathways)
 
         p_tile <- ggplot(tile_data_filtered, aes(x = CellType, y = Pathway_Short, fill = Mean_Fraction)) +
           geom_tile(color = "white", linewidth = 0.5) +
