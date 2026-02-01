@@ -10,13 +10,14 @@
 ## =========================================================
 
 ## 1) Packages ----------------------------------------------
-required_pkgs <- c("dplyr", "ggplot2", "tidyr", "stringr")
+required_pkgs <- c("dplyr", "ggplot2", "tidyr", "stringr", "scales")
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
 if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
 
 required_bioc_pkgs <- c(
   "ComplexHeatmap",
-  "circlize"
+  "circlize",
+  "SummarizedExperiment"  ## For loading VST data
 )
 
 if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
@@ -185,8 +186,9 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   }
 
   ## Clip extreme -log10(FDR) values to prevent one pathway dominating color scale
-  ## Cap at 99th percentile or max of 10, whichever is smaller
-  fdr_cap <- min(quantile(plot_data$neg_log10_fdr, 0.99, na.rm = TRUE), 10)
+  ## Cap at 99th percentile or max of 15, whichever is smaller
+  fdr_cap <- min(quantile(plot_data$neg_log10_fdr, 0.99, na.rm = TRUE), 15)
+  fdr_cap <- max(fdr_cap, 3)  ## Ensure minimum range for color scale
   plot_data$neg_log10_fdr_clipped <- pmin(plot_data$neg_log10_fdr, fdr_cap)
 
   ## Order y-axis: most significant at TOP
@@ -243,15 +245,16 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
       option = "mako",
       direction = -1,  ## Higher values = darker (more significant)
       name = expression(-log[10](FDR)),
-      limits = c(min(plot_data$neg_log10_fdr_clipped), fdr_cap)
+      limits = c(0, ceiling(fdr_cap)),  ## Start at 0 for proper scale
+      breaks = scales::pretty_breaks(n = 4)
     ) +
     scale_size_continuous(
       name = "Gene Count",
-      range = c(3, 8),
+      range = c(2.5, 6),  ## Smaller dots to prevent clipping
       breaks = pretty(plot_data$Count, n = 4)
     ) +
     scale_x_continuous(
-      expand = expansion(mult = c(0.02, 0.05))
+      expand = expansion(mult = c(0.08, 0.08))  ## More padding for dots at edges
     ) +
     labs(
       title = plot_title,
@@ -290,13 +293,13 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
       size = guide_legend(order = 2)
     )
 
-  ## Save - skinnier width for less whitespace
+  ## Save - balanced width (not too wide, not clipping)
   db_short <- gsub(":", "", database)
   plot_file <- paste0("Dotplot_", db_short, "_", contrast_name, "_", direction, "_", run_tag, ".png")
   ggsave(
     file.path(output_dir, plot_file),
     plot = p,
-    width = 5,
+    width = 5.5,  ## Balanced width to avoid clipping
     height = max(4, nrow(plot_data) * 0.3 + 1.5),
     dpi = 300,
     bg = "white"
@@ -336,21 +339,42 @@ for (ora_file in kegg_files) {
 
 
 ## ============================================================
-## SECTION 2: GROUPED HEATMAPS WITH LOG2FC COLORING
+## SECTION 2: GROUPED HEATMAPS WITH VST Z-SCORES
 ## ============================================================
 ## Heatmap style (journal-ready):
-## - Two columns: CTL and KAT8KD
+## - Two columns: mean CTL and mean KAT8KD expression
 ## - Rows grouped by custom gene categories
-## - Values: DESeq2 log2FoldChange for coloring
-## - Color scale: centered at 0, clipped at ±2
+## - Values: Z-scored VST expression (like Part 1 heatmaps)
+## - Color scale: centered at 0, diverging scale
 ## ============================================================
 
 cat("\n=== CREATING GROUPED GENE HEATMAPS ===\n")
 
 ## ============================================================
+## LOAD VST DATA FROM PART 1
+## ============================================================
+cat("[INFO] Loading VST data from Part 1...\n")
+
+## Load cached VST matrix
+cache_dir <- file.path(outdir, "cache")
+vst_cache_file <- file.path(cache_dir, "vst_tissue_heatmap.rds")
+
+if (!file.exists(vst_cache_file)) {
+  cat("[WARN] VST cache not found: ", vst_cache_file, "\n")
+  cat("[WARN] Falling back to log2FC-based heatmaps\n")
+  use_vst <- FALSE
+} else {
+  vst_tissue <- readRDS(vst_cache_file)
+  vst_mat <- SummarizedExperiment::assay(vst_tissue)
+  vst_coldata <- as.data.frame(SummarizedExperiment::colData(vst_tissue))
+  cat("[OK] Loaded VST matrix: ", nrow(vst_mat), " genes x ", ncol(vst_mat), " samples\n", sep = "")
+  use_vst <- TRUE
+}
+
+## ============================================================
 ## HEATMAP SETTINGS
 ## ============================================================
-heatmap_lfc_clip <- heatmap_params$lfc_clip       ## Clip log2FC at ±2 (use 1.5 for subtle effects)
+heatmap_zscore_clip <- 2.5  ## Clip z-scores at ±2.5 for visualization
 ## ============================================================
 
 ## ============================================================
@@ -389,33 +413,38 @@ gene_categories <- list(
 ## ============================================================
 
 
-## Function to create grouped heatmap with log2FC coloring
-create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
-                                    lfc_clip = heatmap_lfc_clip,
+## Function to create grouped heatmap with VST z-scores (journal style)
+## Shows mean expression per treatment group
+create_grouped_heatmap <- function(contrast_name, gene_categories,
+                                    zscore_clip = heatmap_zscore_clip,
                                     output_dir = plots_dir) {
 
   cat("\n--- Creating grouped heatmap: ", contrast_name, " ---\n", sep = "")
 
-  if (!file.exists(de_file)) {
-    cat("[WARN] DE file not found: ", de_file, "\n")
+  if (!use_vst) {
+    cat("[WARN] VST data not available, skipping heatmap\n")
     return(NULL)
   }
 
-  de_data <- read.csv(de_file, row.names = 1, stringsAsFactors = FALSE)
+  ## Determine depot from contrast name
+  depot <- NA_character_
+  if (grepl("^iWAT", contrast_name)) depot <- "iWAT"
+  else if (grepl("^gWAT", contrast_name)) depot <- "gWAT"
 
-  ## Get log2FC column
-  if ("log2FoldChange" %in% colnames(de_data)) {
-    lfc_col <- "log2FoldChange"
-  } else if ("logFC" %in% colnames(de_data)) {
-    lfc_col <- "logFC"
-  } else {
-    cat("[WARN] Cannot find log2FC column\n")
+  if (is.na(depot)) {
+    cat("[WARN] Could not determine depot from contrast: ", contrast_name, "\n")
     return(NULL)
   }
 
-  ## Find genes in data
+  ## Get samples for this depot
+  depot_samples <- rownames(vst_coldata)[vst_coldata$Depot == depot]
+  depot_meta <- vst_coldata[depot_samples, , drop = FALSE]
+
+  cat("[INFO] Found ", length(depot_samples), " samples for ", depot, "\n", sep = "")
+
+  ## Find genes in VST data
   all_category_genes <- unique(unlist(gene_categories))
-  genes_in_data <- intersect(all_category_genes, rownames(de_data))
+  genes_in_data <- intersect(all_category_genes, rownames(vst_mat))
 
   cat("[INFO] Category genes found: ", length(genes_in_data), "/",
       length(all_category_genes), "\n", sep = "")
@@ -446,14 +475,22 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
     return(NULL)
   }
 
-  ## Create matrix using log2FC values
-  ## CTL = 0 (reference), KAT8KD = log2FC
-  log2fc_values <- de_data[genes_to_plot, lfc_col]
-  mat <- cbind(
-    CTL = rep(0, length(genes_to_plot)),
-    KAT8KD = log2fc_values
-  )
-  rownames(mat) <- genes_to_plot
+  ## Get VST expression for these genes
+  vst_subset <- vst_mat[genes_to_plot, depot_samples, drop = FALSE]
+
+  ## Calculate mean expression per treatment group
+  ctl_samples <- depot_samples[depot_meta$Genotype == "CTL"]
+  kd_samples <- depot_samples[depot_meta$Genotype == "KAT8KD"]
+
+  mean_ctl <- rowMeans(vst_subset[, ctl_samples, drop = FALSE])
+  mean_kd <- rowMeans(vst_subset[, kd_samples, drop = FALSE])
+
+  ## Create matrix with mean values
+  mat_means <- cbind(CTL = mean_ctl, KAT8KD = mean_kd)
+
+  ## Z-score across rows (each gene scaled to mean=0, sd=1)
+  ## This shows relative expression difference between conditions
+  mat_zscore <- t(scale(t(mat_means)))
 
   ## Order by category
   gene_order <- c()
@@ -461,34 +498,31 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
     cat_genes <- names(gene_to_category[gene_to_category == cat_name])
     gene_order <- c(gene_order, cat_genes)
   }
-  mat <- mat[gene_order, , drop = FALSE]
+  mat_zscore <- mat_zscore[gene_order, , drop = FALSE]
   gene_to_category <- gene_to_category[gene_order]
 
-  ## Clip values at ±lfc_clip
-  mat[mat > lfc_clip] <- lfc_clip
-  mat[mat < -lfc_clip] <- -lfc_clip
+  ## Clip z-scores for visualization
+  mat_zscore[mat_zscore > zscore_clip] <- zscore_clip
+  mat_zscore[mat_zscore < -zscore_clip] <- -zscore_clip
 
   ## Color scale: mako-inspired diverging scale centered at 0
-  ## Using mako endpoints with white center for diverging data
   col_fun <- colorRamp2(
-    c(-lfc_clip, 0, lfc_clip),
+    c(-zscore_clip, 0, zscore_clip),
     c("#0B0405", "white", "#DEF5E5")  ## Mako dark -> white -> mako light
   )
 
   ## Parameter caption
   param_caption <- paste0(
-    heatmap_params$lfc_label,
-    " | ",
-    heatmap_params$reference,
-    " | Clipped at \u00b1",
-    lfc_clip
+    "VST expression (z-scored) | ",
+    depot, " samples | ",
+    "n=", length(ctl_samples), " CTL, n=", length(kd_samples), " KAT8KD"
   )
 
   ## Create heatmap
   ht <- Heatmap(
-    mat,
+    mat_zscore,
     col = col_fun,
-    name = "log2FC",
+    name = "Z-score",
     cluster_rows = FALSE,
     cluster_columns = FALSE,
     show_row_names = TRUE,
@@ -500,21 +534,21 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
     row_title_rot = 0,
     row_title_gp = gpar(fontsize = 9, fontface = "bold"),
     row_names_gp = gpar(fontsize = 8, fontface = "italic"),
-    column_names_gp = gpar(fontsize = 9, fontface = "bold"),
-    column_title = contrast_name,
+    column_names_gp = gpar(fontsize = 10, fontface = "bold"),
+    column_title = paste0(contrast_name, "\n(Mean VST Expression)"),
     column_title_gp = gpar(fontsize = 11, fontface = "bold"),
     border = TRUE,
     border_gp = gpar(col = "black", lwd = 0.8),
     rect_gp = gpar(col = "grey80", lwd = 0.3),
-    width = unit(2.5, "cm"),
+    width = unit(2.8, "cm"),
     heatmap_legend_param = list(
-      title = "log2 fold change\n(DESeq2)",
+      title = "Relative\nExpression\n(Z-score)",
       title_position = "topcenter",
       title_gp = gpar(fontsize = 8, fontface = "bold"),
       labels_gp = gpar(fontsize = 7),
       legend_height = unit(2.5, "cm"),
-      at = c(-lfc_clip, 0, lfc_clip),
-      labels = c(paste0("\u2264", -lfc_clip), "0", paste0("\u2265", lfc_clip))
+      at = c(-zscore_clip, 0, zscore_clip),
+      labels = c(paste0("\u2264", -zscore_clip), "0", paste0("\u2265", zscore_clip))
     )
   )
 
@@ -524,10 +558,10 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   n_categories <- length(unique(gene_to_category))
 
   png(file.path(output_dir, plot_file),
-      width = 600,
-      height = max(400, n_genes * 18 + n_categories * 30 + 50),
+      width = 650,
+      height = max(400, n_genes * 18 + n_categories * 30 + 80),
       res = 150)
-  draw(ht, padding = unit(c(5, 12, 10, 5), "mm"))
+  draw(ht, padding = unit(c(5, 12, 12, 5), "mm"))
   ## Add parameter caption at bottom
   grid.text(
     param_caption,
@@ -549,7 +583,7 @@ for (de_file in de_files) {
   filename <- basename(de_file)
   contrast <- str_match(filename, "DE_tissue_(.+)_[0-9]+_[0-9]+\\.csv")[2]
   if (!is.na(contrast)) {
-    create_grouped_heatmap(de_file, contrast, gene_categories)
+    create_grouped_heatmap(contrast, gene_categories)
   }
 }
 
