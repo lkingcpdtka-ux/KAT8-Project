@@ -912,6 +912,9 @@ tryCatch({
               limits = c(0, fdr_max),  ## Start at 0 for proper scale
               breaks = scales::pretty_breaks(n = 4)
             ) +
+            scale_x_continuous(
+              expand = expansion(mult = c(0.05, 0.05))  ## Add padding on left/right
+            ) +
             labs(
               title = paste0(method_label, " ", toupper(db_name), ": ", contrast_name),
               x = "Normalized Enrichment Score (NES)",
