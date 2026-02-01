@@ -689,7 +689,7 @@ tryCatch({
         p_pathway <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = neg_log10_padj)) +
           geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
           scale_fill_viridis_c(
-            option = "mako",
+            option = "viridis",
             direction = -1,  ## Higher values = darker (more significant)
             name = expression(-log[10](FDR)),
             limits = c(0, fdr_max),  ## Start at 0 for proper scale

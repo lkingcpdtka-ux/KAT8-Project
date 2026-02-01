@@ -525,12 +525,12 @@ tryCatch({
   )
   vst_mat_hm <- assay(vst_tissue_hm)
   
-  genotype_colors <- c("CTL" = "#5FA8D3", "KAT8KD" = "#DEF5E5")  ## Mako mid/light
+  genotype_colors <- c("CTL" = "#3b528b", "KAT8KD" = "#21918c")  ## Viridis blue/teal
   depot_sex_fill <- c(
-    "iWAT_F" = "#0B0405",  ## Mako dark
-    "iWAT_M" = "#1B4965",  ## Mako blue
-    "gWAT_F" = "#5FA8D3",  ## Mako mid
-    "gWAT_M" = "#DEF5E5"   ## Mako light
+    "iWAT_F" = "#3b528b",  ## Viridis blue
+    "iWAT_M" = "#21918c",  ## Viridis teal
+    "gWAT_F" = "#5ec962",  ## Viridis green
+    "gWAT_M" = "#addc30"   ## Viridis lime (avoiding yellow)
   )
   
   ## 4.9) Density plots (VST before/after filtering) --------
@@ -832,7 +832,7 @@ tryCatch({
     ) +
       geom_point(size = 2, alpha = 0.8) +
       scale_color_manual(
-        values = c("Up" = "#DEF5E5", "Down" = "#0B0405", "NS" = "grey70"),  ## Mako light/dark
+        values = c("Up" = "#21918c", "Down" = "#3b528b", "NS" = "grey70"),  ## Viridis teal/blue
         name   = "Significance"
       ) +
       geom_point(data = label_genes, aes(color = sig_cat), size = 3) +
@@ -893,11 +893,12 @@ tryCatch({
         mat_scaled <- mat_scaled[!rowSums(is.na(mat_scaled)), , drop = FALSE]
         
         if (nrow(mat_scaled) >= 2) {
-          ## Mako-inspired diverging scale centered at 0
+          ## Viridis-inspired diverging scale centered at 0
+          ## Using blue and teal (avoiding extreme purple/yellow)
           max_val_deg <- max(abs(mat_scaled), na.rm = TRUE)
           deg_col_fun <- colorRamp2(
             c(-max_val_deg, 0, max_val_deg),
-            c("#0B0405", "white", "#DEF5E5")  ## Mako dark -> white -> mako light
+            c("#3b528b", "white", "#21918c")  ## Viridis blue -> white -> viridis teal
           )
 
           ## Column annotation (including Sex since depots combine both sexes)
@@ -905,8 +906,8 @@ tryCatch({
             Sex = heat_meta_deg$Sex,
             Genotype = heat_meta_deg$Genotype,
             col = list(
-              Sex = c(F = "#0B0405", M = "#1B4965"),         ## Mako dark/blue
-              Genotype = c(CTL = "#5FA8D3", KAT8KD = "#DEF5E5") ## Mako mid/light
+              Sex = c(F = "#3b528b", M = "#21918c"),         ## Viridis blue/teal
+              Genotype = c(CTL = "#3b528b", KAT8KD = "#21918c") ## Viridis blue/teal
             ),
             annotation_name_side = "left"
           )
@@ -987,11 +988,12 @@ tryCatch({
         
         if (nrow(heat_matrix_scaled) >= 2) {
 
-          ## Mako-inspired diverging scale centered at 0
+          ## Viridis-inspired diverging scale centered at 0
+          ## Using blue and teal (avoiding extreme purple/yellow)
           max_val <- max(abs(heat_matrix_scaled), na.rm = TRUE)
           heat_col_fun <- colorRamp2(
             c(-max_val, 0, max_val),
-            c("#0B0405", "white", "#DEF5E5")  ## Mako dark -> white -> mako light
+            c("#3b528b", "white", "#21918c")  ## Viridis blue -> white -> viridis teal
           )
 
           ## Column annotation (including Sex since depots combine both sexes)
@@ -999,8 +1001,8 @@ tryCatch({
             Sex = heat_meta$Sex,
             Genotype = heat_meta$Genotype,
             col = list(
-              Sex = c(F = "#0B0405", M = "#1B4965"),         ## Mako dark/blue
-              Genotype = c(CTL = "#5FA8D3", KAT8KD = "#DEF5E5") ## Mako mid/light
+              Sex = c(F = "#3b528b", M = "#21918c"),         ## Viridis blue/teal
+              Genotype = c(CTL = "#3b528b", KAT8KD = "#21918c") ## Viridis blue/teal
             ),
             annotation_name_side = "left"
           )
@@ -1138,16 +1140,16 @@ tryCatch({
       keyvals_color <- rep("grey70", nrow(volcano_df))
       names(keyvals_color) <- rep("NS", nrow(volcano_df))
       
-      ## Significant UP (orange)
+      ## Significant UP (viridis teal)
       sig_up_idx <- which(volcano_df$padj < cn_fdr_cut &
                             volcano_df$logFC >= cn_logFC_cut)
-      keyvals_color[sig_up_idx] <- "#DEF5E5"  ## Mako light
+      keyvals_color[sig_up_idx] <- "#21918c"  ## Viridis teal
       names(keyvals_color)[sig_up_idx] <- "Significant Up"
 
-      ## Significant DOWN
+      ## Significant DOWN (viridis blue)
       sig_down_idx <- which(volcano_df$padj < cn_fdr_cut &
                               volcano_df$logFC <= -cn_logFC_cut)
-      keyvals_color[sig_down_idx] <- "#0B0405"  ## Mako dark
+      keyvals_color[sig_down_idx] <- "#3b528b"  ## Viridis blue
       names(keyvals_color)[sig_down_idx] <- "Significant Down"
       
       ev_plot <- EnhancedVolcano(

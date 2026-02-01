@@ -775,10 +775,11 @@ tryCatch({
     ct_matrix <- ct_matrix[celltype_order, , drop = FALSE]
 
     ## Create color scale (diverging, centered at 0)
+    ## Using viridis blue and teal (avoiding extreme purple/yellow)
     max_abs <- max(abs(ct_matrix), na.rm = TRUE)
     col_fun <- colorRamp2(
       c(-max_abs, 0, max_abs),
-      c("#0B0405", "white", "#DEF5E5")  ## Mako dark -> white -> mako light
+      c("#3b528b", "white", "#21918c")  ## Viridis blue -> white -> viridis teal
     )
 
     ## Create cell type group annotation
