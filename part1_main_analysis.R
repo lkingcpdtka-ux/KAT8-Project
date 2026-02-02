@@ -67,6 +67,15 @@ if (file.exists(params_file)) {
   stop("parameters.R not found. Please ensure it exists in the project root.")
 }
 
+## ============================================================
+## PLOT GENERATION TOGGLE
+## ============================================================
+## Set to FALSE to skip all plot generation in this script.
+## Use part4_visualizations.R to generate plots separately.
+## This allows faster re-runs and separates analysis from visualization.
+GENERATE_PLOTS <- FALSE
+## ============================================================
+
 ## 2) save_core utilities -----------------------------------
 utils_dir <- file.path(getwd(), "save_core")
 if (file.exists(file.path(utils_dir, "save.R"))) {
@@ -448,7 +457,9 @@ tryCatch({
   saveRDS(
     list(
       vst_mat = vst_mat_hm,
-      sample_info = sample_annot
+      vst_mat_qc = vst_mat,  ## blind=TRUE version for QC plots
+      sample_info = sample_annot,
+      genes_of_interest = genes_of_interest
     ),
     file = file.path(outdir, "tables", vst_file)
   )
@@ -457,11 +468,9 @@ tryCatch({
   genotype_colors <- c("CTL" = "#0072B2", "KAT8KD" = "#E69F00")
   depot_sex_levels <- c("iWAT_F", "iWAT_M", "gWAT_F", "gWAT_M")
   depot_sex_fill <- setNames(viridis(length(depot_sex_levels), option = "viridis"), depot_sex_levels)
-  
-  ## 4.9) Density plots (VST before/after filtering) --------
-  cat("\n=== Creating before/after filtering density plots ===\n")
-  
-  ## Get VST for all genes (before filtering) for comparison
+
+  ## Get VST for all genes (before filtering) for density comparison
+  cat("\n=== Calculating pre-filter VST for density comparison ===\n")
   dds_all_genes <- DESeqDataSetFromMatrix(
     countData = round(count_matrix_tissue),
     colData   = sample_annot,
@@ -471,6 +480,27 @@ tryCatch({
   dds_all_genes <- estimateDispersions(dds_all_genes, fitType = "local")
   vst_all_genes <- vst(dds_all_genes, blind = TRUE)
   vst_mat_before <- assay(vst_all_genes)
+
+  ## Save QC data for visualization script (PCA, MDS, density)
+  qc_data_file <- paste0("QC_data_", run_tag, ".rds")
+  saveRDS(
+    list(
+      vst_mat_qc = vst_mat,              ## After filtering (for PCA/MDS)
+      vst_mat_before = vst_mat_before,   ## Before filtering (for density comparison)
+      sample_info = sample_annot,
+      genotype_colors = genotype_colors,
+      depot_sex_fill = depot_sex_fill,
+      depot_sex_levels = depot_sex_levels
+    ),
+    file = file.path(outdir, "tables", qc_data_file)
+  )
+  cat("[OK] Saved QC data for visualization: ", qc_data_file, "\n", sep = "")
+
+  ## 4.9) Density plots (VST before/after filtering) --------
+  ## NOTE: Plot generation controlled by GENERATE_PLOTS toggle
+  ## Use part4_visualizations.R for all visualization
+  if (GENERATE_PLOTS) {
+  cat("\n=== Creating before/after filtering density plots ===\n")
   
   plot_density_vst_comparison <- function(vst_before, vst_after) {
     dens_before <- apply(vst_before, 2, density)
@@ -605,7 +635,11 @@ tryCatch({
   mds_file <- paste0("MDS_tissue_VST_", run_tag, ".png")
   ggsave(file.path(outdir, "plots", mds_file), plot = p_mds, width = 8, height = 6, dpi = 300)
   cat("Saved MDS plot to ", file.path(outdir, "plots", mds_file), "\n")
-  
+  } else {
+    cat("\n=== SKIPPING QC PLOTS (GENERATE_PLOTS=FALSE) ===\n")
+    cat("[INFO] Run part4_visualizations.R to generate PCA, MDS, density plots\n")
+  }
+
   ## 4.12) Contrasts ----------------------------------------
   ## Depot-specific contrasts (combining sexes within each depot)
   contrast_definitions <- list(
@@ -716,7 +750,8 @@ tryCatch({
       fdr_cutoff = cn_fdr_cut
     )
     
-    ## Volcano
+    ## Volcano (only if GENERATE_PLOTS is TRUE)
+    if (GENERATE_PLOTS) {
     tt_plot <- tt %>%
       dplyr::filter(is.finite(logFC), is.finite(padj), padj > 0) %>%
       mutate(negLogFDR = -log10(padj))
@@ -1109,6 +1144,9 @@ tryCatch({
       
     } else {
       cat("[WARN] No valid data for EnhancedVolcano\n")
+    }
+    } else {
+      cat("[INFO] Skipping volcano/heatmap plots for ", cn, " (GENERATE_PLOTS=FALSE)\n", sep = "")
     }
   }
   
