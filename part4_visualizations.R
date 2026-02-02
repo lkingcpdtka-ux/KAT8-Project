@@ -257,7 +257,11 @@ if (generate_volcano_plots) {
       dplyr::arrange(padj) %>% dplyr::slice_head(n = 10)
     top_down <- tt_sig %>% dplyr::filter(sig_cat == "Down") %>%
       dplyr::arrange(padj) %>% dplyr::slice_head(n = 10)
-    label_genes <- dplyr::bind_rows(top_up, top_down)
+    top_fc <- tt_plot %>%
+      dplyr::arrange(dplyr::desc(abs(logFC))) %>%
+      dplyr::slice_head(n = 10)
+    label_genes <- dplyr::bind_rows(top_up, top_down, top_fc) %>%
+      dplyr::distinct(gene_name, .keep_all = TRUE)
 
     p <- ggplot(tt_plot, aes(x = logFC, y = negLogFDR, color = sig_cat)) +
       geom_point(size = 2, alpha = 0.8) +
