@@ -844,45 +844,32 @@ tryCatch({
             )
           }
 
-          ## Color by adjusted p-value with direction-specific gradients
-          ## Orange gradient for up-regulated, blue gradient for down-regulated
-          ## This matches the ORA bar plot style
+          ## Color by adjusted p-value - CONSISTENT WITH ORA
+          ## Use -log10(padj) for color, with legend showing actual p-values
+          ## This matches ORA bar plot style for consistency
           method_label <- "GSEA"
 
-          ## Separate up and down pathways for color mapping
-          ## Lower padj = more significant = darker color
+          ## Calculate -log10(padj) for color intensity
+          ## Higher value = more significant = brighter (yellow in viridis)
           plot_data <- plot_data %>%
             dplyr::mutate(
-              ## Use -log10(padj) for color intensity
-              ## Higher value = more significant
               padj_safe = pmax(padj, .Machine$double.eps),
               neg_log10_padj = -log10(padj_safe)
             )
 
-          ## Calculate nice breaks for the legend (show actual p-values)
-          min_padj <- min(plot_data$padj, na.rm = TRUE)
-          max_padj <- max(plot_data$padj, na.rm = TRUE)
+          ## Get range for color scale
+          max_neg_log <- max(plot_data$neg_log10_padj, na.rm = TRUE)
+          min_neg_log <- min(plot_data$neg_log10_padj, na.rm = TRUE)
 
-          ## Create a custom fill aesthetic per row based on direction
-          plot_data <- plot_data %>%
-            dplyr::mutate(
-              fill_value = ifelse(Direction == "Up-regulated", neg_log10_padj, -neg_log10_padj)
-            )
-
-          ## Get range for symmetric scale
-          max_neg_log <- max(abs(plot_data$fill_value), na.rm = TRUE)
-
-          ## Create bidirectional viridis palette: yellow (sig) -> teal (neutral) -> yellow (sig)
-          viridis_cols <- viridis(5)  ## [purple, blue, teal, green, yellow]
-          bidir_colors <- c(viridis_cols[5], viridis_cols[4], viridis_cols[3], viridis_cols[4], viridis_cols[5])
-
-          p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = fill_value)) +
+          ## Use standard viridis scale (same as ORA) with p-value labels
+          p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = neg_log10_padj)) +
             geom_bar(stat = "identity", color = "black", linewidth = 0.3, width = 0.95) +
-            scale_fill_gradientn(
-              colors = bidir_colors,  ## Yellow -> green -> teal -> green -> yellow
-              values = scales::rescale(c(-max_neg_log, -max_neg_log/2, 0, max_neg_log/2, max_neg_log)),
-              limits = c(-max_neg_log, max_neg_log),
-              name = "Adj. P-value"
+            scale_fill_viridis_c(
+              option = "viridis",
+              direction = 1,  ## purple (low significance) -> yellow (high significance)
+              limits = c(min_neg_log, max_neg_log),
+              name = "Adj. P-value",
+              labels = function(x) format(10^(-x), scientific = TRUE, digits = 1)
             ) +
             scale_x_continuous(expand = expansion(mult = c(0.06, 0.06))) +  ## Add padding at both ends
             labs(

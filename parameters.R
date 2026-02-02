@@ -104,10 +104,22 @@ dotplot_params <- list(
 ## ============================================================
 ## HEATMAP PARAMETERS
 ## ============================================================
-## Used by: part4_publication_plots.R
+## Used by: part4_publication_plots.R, part4b_visualizations.R
 
 heatmap_params <- list(
-  lfc_clip    = 2.0,         ## Clip log2FC at +/- this value
+  lfc_clip    = 2.0,         ## Clip log2FC/Z-score at +/- this value
+
+  ## Color palette options:
+  ##   "muted_diverging" - Blue-grey-red (publication-ready, less saturated)
+  ##   "viridis"         - Standard viridis (purple-teal-yellow)
+  ##   "coolwarm"        - Blue-white-red
+  color_palette = "muted_diverging",
+
+  ## Muted diverging colors (blue-grey-red): good for Z-scores, fold changes
+  ## These are less saturated/bold than default viridis
+  muted_colors = c("#3B4CC0", "#7092C0", "#B8B8B8", "#C07070", "#C03B3B"),
+
+  ## Legacy labels (for backward compatibility)
   lfc_label   = "log2FC (DESeq2)",
   reference   = "CTL=0 reference"
 )
@@ -169,4 +181,5 @@ cat("       DEG thresholds: iWAT FDR<", iWAT_fdr_cut, " |logFC|>", iWAT_logFC_cu
 cat("                       gWAT FDR<", gWAT_fdr_cut, " |logFC|>", gWAT_logFC_cut, "\n", sep = "")
 cat("       ORA: top_n=", ora_params$top_n, ", simplify=", ora_params$simplify_cutoff, "\n", sep = "")
 cat("       GSEA: top_n_per_direction=", gsea_params$top_n_per_direction, ", FDR<", gsea_params$fdr_cutoff, "\n", sep = "")
+cat("       Heatmap: color_palette=", heatmap_params$color_palette, ", clip=", heatmap_params$lfc_clip, "\n", sep = "")
 cat("       Interpretation: signature_method=", interpretation_params$signature_method, "\n", sep = "")
