@@ -16,7 +16,7 @@
 ## setwd("C:/Users/lking/OneDrive - Louisiana State University/PBRC/Bioinformatics/KAT8KD_RNAseq")
 
 ## 1) Packages ----------------------------------------------
-required_pkgs <- c("dplyr", "ggplot2")
+required_pkgs <- c("dplyr", "ggplot2", "viridis")
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
 if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
 
@@ -35,6 +35,7 @@ if (length(to_install_bioc) > 0) BiocManager::install(to_install_bioc, ask = FAL
 suppressPackageStartupMessages({
   library(dplyr)
   library(ggplot2)
+  library(viridis)
   library(clusterProfiler)
   library(org.Mm.eg.db)
   library(enrichplot)
@@ -625,25 +626,15 @@ tryCatch({
           dplyr::arrange(dplyr::desc(p.adjust)) %>%
           dplyr::mutate(pathway_name = factor(pathway_name, levels = pathway_name))
         
-        ## Direction-specific color gradient (orange for Up, blue for Down)
-        ## Lower p-value = more significant = darker color
-        if (direction == "Up") {
-          fill_scale <- scale_fill_gradient(
-            low   = "#E69F00",  ## Dark orange (most significant)
-            high  = "#FDD49E",  ## Light orange (least significant)
-            name  = "Adj. P-value",
-            labels = function(x) format(x, scientific = TRUE, digits = 2),
-            trans = "log10"
-          )
-        } else {
-          fill_scale <- scale_fill_gradient(
-            low   = "#0072B2",  ## Dark blue (most significant)
-            high  = "#9ECAE1",  ## Light blue (least significant)
-            name  = "Adj. P-value",
-            labels = function(x) format(x, scientific = TRUE, digits = 2),
-            trans = "log10"
-          )
-        }
+        ## Viridis gradient (REVERSED: yellow = significant, purple = less significant)
+        ## direction = -1 reverses the palette
+        fill_scale <- scale_fill_viridis_c(
+          option = "viridis",
+          direction = -1,  ## Reverse: yellow (significant) -> purple (less significant)
+          name = "Adj. P-value",
+          labels = function(x) format(x, scientific = TRUE, digits = 2),
+          trans = "log10"
+        )
         
         ## Parameter caption
         universe_label <- if (is.null(universe_entrez)) {
@@ -670,6 +661,7 @@ tryCatch({
         p_pathway <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = p.adjust)) +
           geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
           fill_scale +
+          scale_x_continuous(expand = expansion(mult = c(0, 0.02))) +  ## Minimal padding
           labs(
             title = paste0(toupper(db_name), " Pathways (ORA - ", direction, ")\n", contrast_name),
             x     = "Gene Ratio",

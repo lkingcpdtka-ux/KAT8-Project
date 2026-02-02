@@ -17,7 +17,7 @@
 ## setwd("C:/Users/lking/OneDrive - Louisiana State University/PBRC/Bioinformatics/KAT8KD_RNAseq")
 
 ## 1) Packages ----------------------------------------------
-required_pkgs <- c("dplyr", "ggplot2", "scales")
+required_pkgs <- c("dplyr", "ggplot2", "scales", "viridis")
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
 if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
 
@@ -37,6 +37,7 @@ suppressPackageStartupMessages({
   library(dplyr)
   library(ggplot2)
   library(scales)
+  library(viridis)
   library(org.Mm.eg.db)
   library(AnnotationDbi)
   library(GO.db)
@@ -871,20 +872,18 @@ tryCatch({
           ## Get range for symmetric scale
           max_neg_log <- max(abs(plot_data$fill_value), na.rm = TRUE)
 
+          ## Create bidirectional viridis palette: yellow (sig) -> teal (neutral) -> yellow (sig)
+          viridis_cols <- viridis(5)  ## [purple, blue, teal, green, yellow]
+          bidir_colors <- c(viridis_cols[5], viridis_cols[4], viridis_cols[3], viridis_cols[4], viridis_cols[5])
+
           p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = fill_value)) +
             geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
             scale_fill_gradientn(
-              colors = c(
-                "#0072B2",  ## Dark blue (most significant down)
-                "#9ECAE1",  ## Light blue (least significant down)
-                "grey95",   ## Near white (threshold)
-                "#FDD49E",  ## Light orange (least significant up)
-                "#E69F00"   ## Dark orange (most significant up)
-              ),
-              values = scales::rescale(c(-max_neg_log, -1.3, 0, 1.3, max_neg_log)),
+              colors = bidir_colors,  ## Yellow -> green -> teal -> green -> yellow
+              values = scales::rescale(c(-max_neg_log, -max_neg_log/2, 0, max_neg_log/2, max_neg_log)),
               limits = c(-max_neg_log, max_neg_log),
               name = "Adj. P-value",
-              breaks = c(-max_neg_log, -1.3, 0, 1.3, max_neg_log),
+              breaks = c(-max_neg_log, 0, max_neg_log),
               labels = function(x) {
                 sapply(x, function(val) {
                   if (abs(val) < 1e-6) return("1")
@@ -893,12 +892,13 @@ tryCatch({
                 })
               },
               guide = guide_colorbar(
-                title = "Adj. P-value\n(blue=down, orange=up)",
+                title = "Adj. P-value\n(yellow=significant)",
                 title.position = "top",
                 barwidth = 1,
                 barheight = 4
               )
             ) +
+            scale_x_continuous(expand = expansion(mult = c(0.02, 0.02))) +  ## Minimal padding
             labs(
               title = paste0(method_label, " ", toupper(db_name), ": ", contrast_name),
               x = "Normalized Enrichment Score (NES)",
@@ -918,11 +918,11 @@ tryCatch({
               plot.caption = element_text(size = 8, color = "grey40", hjust = 0.5, margin = margin(t = 8))
             ) +
             geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5) +
-            ## Add annotation for direction interpretation
+            ## Add annotation for direction interpretation (viridis colors)
             annotate("text", x = Inf, y = Inf, label = "Up", hjust = 1.1, vjust = -0.5,
-                     size = 3, color = "#E69F00", fontface = "bold") +
+                     size = 3, color = "#FDE725", fontface = "bold") +
             annotate("text", x = -Inf, y = Inf, label = "Down", hjust = -0.1, vjust = -0.5,
-                     size = 3, color = "#0072B2", fontface = "bold")
+                     size = 3, color = "#440154", fontface = "bold")
           
           plot_file <- paste0("fgsea_plot_", db_name, "_", contrast_name, "_", run_tag, ".png")
           ggsave(file.path(outdir, "plots", plot_file), plot = p_fgsea, width = 12,

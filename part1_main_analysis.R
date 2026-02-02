@@ -438,11 +438,22 @@ tryCatch({
   cat("\n=== VST FOR QC ===\n")
   vst_tissue <- vst(dds_tissue, blind = TRUE)
   vst_mat <- assay(vst_tissue)  ## genes x samples (log2-ish stabilized)
-  
+
   cat("\n=== VST FOR HEATMAPS (blind=FALSE) ===\n")
   vst_tissue_hm <- vst(dds_tissue, blind = FALSE)
   vst_mat_hm <- assay(vst_tissue_hm)
-  
+
+  ## Save VST matrix for use by part4 (individual sample heatmaps)
+  vst_file <- paste0("VST_matrix_heatmap_", run_tag, ".rds")
+  saveRDS(
+    list(
+      vst_mat = vst_mat_hm,
+      sample_info = sample_annot
+    ),
+    file = file.path(outdir, "tables", vst_file)
+  )
+  cat("[OK] Saved VST matrix for heatmaps: ", vst_file, "\n", sep = "")
+
   genotype_colors <- c("CTL" = "#0072B2", "KAT8KD" = "#E69F00")
   depot_sex_fill <- c(
     "iWAT_F" = "#56B4E9",
@@ -750,7 +761,7 @@ tryCatch({
     ) +
       geom_point(size = 2, alpha = 0.8) +
       scale_color_manual(
-        values = c("Up" = "#E69F00", "Down" = "#0072B2", "NS" = "grey70"),
+        values = c("Up" = "#FDE725", "Down" = "#440154", "NS" = "#21908C"),  ## Full viridis: yellow/purple/teal
         name   = "Significance"
       ) +
       geom_point(data = label_genes, aes(color = sig_cat), size = 3) +
@@ -811,11 +822,11 @@ tryCatch({
         mat_scaled <- mat_scaled[!rowSums(is.na(mat_scaled)), , drop = FALSE]
         
         if (nrow(mat_scaled) >= 2) {
-          ## Use volcano colors (teal to white to orange)
+          ## Use full viridis gradient via viridis package
           max_val_deg <- max(abs(mat_scaled), na.rm = TRUE)
           deg_col_fun <- colorRamp2(
-            c(-max_val_deg, 0, max_val_deg),
-            c("#0072B2", "white", "#E69F00")  ## Teal (down) -> white -> orange (up)
+            c(-max_val_deg, -max_val_deg/2, 0, max_val_deg/2, max_val_deg),
+            viridis(5)
           )
           
           ## Column annotation (including Sex since depots combine both sexes)
@@ -905,11 +916,11 @@ tryCatch({
         
         if (nrow(heat_matrix_scaled) >= 2) {
 
-          ## Use volcano colors (teal to white to orange)
+          ## Use full viridis gradient via viridis package
           max_val <- max(abs(heat_matrix_scaled), na.rm = TRUE)
           heat_col_fun <- colorRamp2(
-            c(-max_val, 0, max_val),
-            c("#0072B2", "white", "#E69F00")  ## Teal (down) -> white -> orange (up)
+            c(-max_val, -max_val/2, 0, max_val/2, max_val),
+            viridis(5)
           )
 
           ## Column annotation (including Sex since depots combine both sexes)
@@ -1052,20 +1063,20 @@ tryCatch({
     
     if (nrow(volcano_df) > 0) {
       
-      ## Create custom color scheme using keyvals
-      keyvals_color <- rep("grey70", nrow(volcano_df))
+      ## Create custom color scheme using keyvals (full viridis palette)
+      keyvals_color <- rep("#21908C", nrow(volcano_df))  ## Viridis teal for NS
       names(keyvals_color) <- rep("NS", nrow(volcano_df))
-      
-      ## Significant UP (orange)
+
+      ## Significant UP (viridis yellow)
       sig_up_idx <- which(volcano_df$padj < cn_fdr_cut &
                             volcano_df$logFC >= cn_logFC_cut)
-      keyvals_color[sig_up_idx] <- "#E69F00"
+      keyvals_color[sig_up_idx] <- "#FDE725"
       names(keyvals_color)[sig_up_idx] <- "Significant Up"
 
-      ## Significant DOWN (teal/blue)
+      ## Significant DOWN (viridis purple)
       sig_down_idx <- which(volcano_df$padj < cn_fdr_cut &
                               volcano_df$logFC <= -cn_logFC_cut)
-      keyvals_color[sig_down_idx] <- "#0072B2"
+      keyvals_color[sig_down_idx] <- "#440154"
       names(keyvals_color)[sig_down_idx] <- "Significant Down"
       
       ev_plot <- EnhancedVolcano(
