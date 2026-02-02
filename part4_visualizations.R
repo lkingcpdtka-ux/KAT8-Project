@@ -492,7 +492,7 @@ if (!is.null(vst_data)) {
       top_degs <- tt %>%
         dplyr::filter(padj < thresholds$fdr_cut, abs(logFC) >= thresholds$logFC_cut) %>%
         dplyr::arrange(padj) %>%
-        dplyr::slice_head(n = 50)
+        dplyr::slice_head(n = 100)
 
       if (nrow(top_degs) < 5) next
 
