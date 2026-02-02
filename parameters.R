@@ -104,38 +104,43 @@ dotplot_params <- list(
 ## ============================================================
 ## HEATMAP PARAMETERS
 ## ============================================================
-## Used by: part4_visualizations.R (combined from part4 + part4b)
+## Used by: part4_visualizations.R
 
 heatmap_params <- list(
-  lfc_clip    = 2.0,         ## Clip values at +/- this value for visualization
+  lfc_clip    = 2.0,         ## Clip z-scores at +/- this value
 
-  ## Color palette options for heatmaps:
-  ##   "mako"            - Dark blue to light turquoise (viridis family, recommended)
-  ##   "mako_dark"       - Darker variant of mako
-  ##   "viridis"         - Standard viridis (purple-teal-yellow)
-  ##   "muted_diverging" - Blue-grey-red (legacy)
-  color_palette = "mako",
+  ## Custom gradient: Orange-Yellow-Lime-Green (high to low significance/expression)
+  ## Used for heatmaps, bar plots, and dot plots
+  custom_gradient = c("#E97132", "#D9B11C", "#8EB21E", "#408F1C", "#196B23"),
 
-  ## Mako palette (viridis family): dark blue -> light turquoise
-  ## Perfect for showing expression intensity (high = light, low = dark)
-  ## Colorblind-friendly and perceptually uniform
-  mako_colors = c("#0B0405", "#357BA2", "#7ED7D1"),  ## Dark to light (3-point)
-  mako_5pt = c("#0B0405", "#1E466E", "#357BA2", "#5EB7AE", "#DEF5E5"),  ## 5-point for finer gradation
+  ## Display mode: "zscore" is standard for heatmaps
+  display_mode = "zscore",
 
-  ## Alternative: darker variant for high contrast
-  mako_dark_5pt = c("#0B0405", "#1B3A5C", "#2A6088", "#4A9CA8", "#7ED7D1"),
-
-  ## Legacy muted diverging colors (blue-grey-red) - kept for backward compatibility
-  muted_colors = c("#3B4CC0", "#7092C0", "#B8B8B8", "#C07070", "#C03B3B"),
-
-  ## Expression display mode for heatmaps:
-  ##   "expression" - Show log2(VST) actual expression values (recommended for showing CTL vs KD)
-  ##   "zscore"     - Z-score normalized (relative, legacy)
-  display_mode = "expression",
-
-  ## Legacy labels (for backward compatibility)
+  ## Legacy labels
   lfc_label   = "log2FC (DESeq2)",
   reference   = "CTL=0 reference"
+)
+
+## ============================================================
+## ENRICHMENT PLOT COLORS
+## ============================================================
+## Used by: part4_visualizations.R (ORA bar plots, dot plots, fGSEA)
+
+enrichment_colors <- list(
+  ## Gradient for significance: Orange (high) -> Green (low)
+  ## -log10(FDR): higher values = more significant = orange
+  gradient = c("#E97132", "#D9B11C", "#8EB21E", "#408F1C", "#196B23")
+)
+
+## ============================================================
+## VOLCANO PLOT COLORS
+## ============================================================
+## Used by: part1_main_analysis.R, part4_visualizations.R
+
+volcano_colors <- list(
+  up   = "#D95F02",   ## Orange for up-regulated
+  down = "#02C8D3",   ## Cyan for down-regulated
+  ns   = "grey70"     ## Grey for non-significant
 )
 
 ## ============================================================
@@ -195,5 +200,5 @@ cat("       DEG thresholds: iWAT FDR<", iWAT_fdr_cut, " |logFC|>", iWAT_logFC_cu
 cat("                       gWAT FDR<", gWAT_fdr_cut, " |logFC|>", gWAT_logFC_cut, "\n", sep = "")
 cat("       ORA: top_n=", ora_params$top_n, ", simplify=", ora_params$simplify_cutoff, "\n", sep = "")
 cat("       GSEA: top_n_per_direction=", gsea_params$top_n_per_direction, ", FDR<", gsea_params$fdr_cutoff, "\n", sep = "")
-cat("       Heatmap: color_palette=", heatmap_params$color_palette, ", display_mode=", heatmap_params$display_mode, ", clip=", heatmap_params$lfc_clip, "\n", sep = "")
+cat("       Heatmap: display_mode=", heatmap_params$display_mode, ", clip=", heatmap_params$lfc_clip, "\n", sep = "")
 cat("       Interpretation: signature_method=", interpretation_params$signature_method, "\n", sep = "")

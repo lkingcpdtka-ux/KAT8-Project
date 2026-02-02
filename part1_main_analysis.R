@@ -792,7 +792,7 @@ tryCatch({
     ) +
       geom_point(size = 2, alpha = 0.8) +
       scale_color_manual(
-        values = c("Up" = "#FDE725", "Down" = "#440154", "NS" = "#D3D3D3"),
+        values = c("Up" = volcano_colors$up, "Down" = volcano_colors$down, "NS" = volcano_colors$ns),
         name   = "Significance"
       ) +
       geom_point(data = label_genes, aes(color = sig_cat), size = 3) +
@@ -1094,20 +1094,20 @@ tryCatch({
     
     if (nrow(volcano_df) > 0) {
       
-      ## Create custom color scheme using keyvals (full viridis palette)
-      keyvals_color <- rep("#D3D3D3", nrow(volcano_df))
+      ## Create custom color scheme using keyvals (from parameters)
+      keyvals_color <- rep(volcano_colors$ns, nrow(volcano_df))
       names(keyvals_color) <- rep("NS", nrow(volcano_df))
 
-      ## Significant UP (viridis yellow)
+      ## Significant UP
       sig_up_idx <- which(volcano_df$padj < cn_fdr_cut &
                             volcano_df$logFC >= cn_logFC_cut)
-      keyvals_color[sig_up_idx] <- "#FDE725"
+      keyvals_color[sig_up_idx] <- volcano_colors$up
       names(keyvals_color)[sig_up_idx] <- "Significant Up"
 
-      ## Significant DOWN (viridis purple)
+      ## Significant DOWN (cyan)
       sig_down_idx <- which(volcano_df$padj < cn_fdr_cut &
                               volcano_df$logFC <= -cn_logFC_cut)
-      keyvals_color[sig_down_idx] <- "#440154"
+      keyvals_color[sig_down_idx] <- volcano_colors$down
       names(keyvals_color)[sig_down_idx] <- "Significant Down"
       
       ev_plot <- EnhancedVolcano(
