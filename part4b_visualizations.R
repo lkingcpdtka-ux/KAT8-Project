@@ -146,28 +146,9 @@ if (generate_ora_barplots) {
     direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
     plot_title <- paste0(database, " Pathways (ORA - ", direction_label, ")\n", contrast_name)
 
-    ## Calculate pretty breaks at standard p-value thresholds
-    standard_pvals <- c(0.05, 0.01, 0.001, 1e-04, 1e-05, 1e-06, 1e-08, 1e-10)
-    standard_breaks <- -log10(standard_pvals)
-    data_range <- range(plot_data$neg_log10_padj, na.rm = TRUE)
-    valid_breaks <- standard_breaks[standard_breaks >= data_range[1] - 0.3 &
-                                    standard_breaks <= data_range[2] + 0.3]
-    if (length(valid_breaks) < 3) {
-      valid_breaks <- seq(floor(data_range[1]), ceiling(data_range[2]), by = 1)
-    }
-
     p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = neg_log10_padj)) +
       geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
-      scale_fill_viridis_c(
-        option = "viridis",
-        direction = 1,
-        name = "Adj. P-value",
-        breaks = valid_breaks,
-        labels = function(x) {
-          pvals <- 10^(-x)
-          ifelse(pvals >= 0.01, sprintf("%.2f", pvals), formatC(pvals, format = "e", digits = 0))
-        }
-      ) +
+      scale_fill_viridis_c(option = "viridis", direction = 1, name = "Adj. P-value") +
       scale_x_continuous(expand = expansion(mult = c(0, 0.02))) +
       labs(
         title = plot_title,
@@ -276,30 +257,9 @@ if (generate_fgsea_barplots) {
 
     if (nrow(plot_data) == 0) return(NULL)
 
-    ## Calculate pretty breaks at standard p-value thresholds
-    standard_pvals <- c(0.05, 0.01, 0.001, 1e-04, 1e-05, 1e-06, 1e-08, 1e-10)
-    standard_breaks <- -log10(standard_pvals)
-    data_range <- range(plot_data$neg_log10_padj, na.rm = TRUE)
-    valid_breaks <- standard_breaks[standard_breaks >= data_range[1] - 0.3 &
-                                    standard_breaks <= data_range[2] + 0.3]
-    if (length(valid_breaks) < 3) {
-      valid_breaks <- seq(floor(data_range[1]), ceiling(data_range[2]), by = 1)
-    }
-
-    ## Use consistent viridis scale like ORA
-    ## Color by -log10(padj), legend shows actual p-values
     p <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = neg_log10_padj)) +
       geom_bar(stat = "identity", color = "black", linewidth = 0.3, width = 0.95) +
-      scale_fill_viridis_c(
-        option = "viridis",
-        direction = 1,
-        name = "Adj. P-value",
-        breaks = valid_breaks,
-        labels = function(x) {
-          pvals <- 10^(-x)
-          ifelse(pvals >= 0.01, sprintf("%.2f", pvals), formatC(pvals, format = "e", digits = 0))
-        }
-      ) +
+      scale_fill_viridis_c(option = "viridis", direction = 1, name = "Adj. P-value") +
       scale_x_continuous(expand = expansion(mult = c(0.06, 0.06))) +
       labs(
         title = paste0("GSEA ", database, ": ", contrast_name),
@@ -427,29 +387,9 @@ if (generate_ora_dotplots) {
     direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
     plot_title <- paste0(database, " Enrichment\n(", contrast_name, ", ", direction_label, ")")
 
-    ## Calculate pretty breaks at standard p-value thresholds
-    standard_pvals <- c(0.05, 0.01, 0.001, 1e-04, 1e-05, 1e-06, 1e-08, 1e-10)
-    standard_breaks <- -log10(standard_pvals)
-    data_range <- c(min(plot_data$neg_log10_fdr_clipped), fdr_cap)
-    valid_breaks <- standard_breaks[standard_breaks >= data_range[1] - 0.3 &
-                                    standard_breaks <= data_range[2] + 0.3]
-    if (length(valid_breaks) < 3) {
-      valid_breaks <- seq(floor(data_range[1]), ceiling(data_range[2]), by = 1)
-    }
-
     p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
       geom_point(aes(size = Count, color = neg_log10_fdr_clipped)) +
-      scale_color_viridis_c(
-        option = "viridis",
-        direction = 1,
-        name = "Adj. P-value",
-        limits = c(min(plot_data$neg_log10_fdr_clipped), fdr_cap),
-        breaks = valid_breaks,
-        labels = function(x) {
-          pvals <- 10^(-x)
-          ifelse(pvals >= 0.01, sprintf("%.2f", pvals), formatC(pvals, format = "e", digits = 0))
-        }
-      ) +
+      scale_color_viridis_c(option = "viridis", direction = 1, name = "Adj. P-value") +
       scale_size_continuous(
         name = "Gene Count",
         range = c(2, 6),
