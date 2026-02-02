@@ -467,7 +467,15 @@ tryCatch({
 
   genotype_colors <- c("CTL" = "#0072B2", "KAT8KD" = "#E69F00")
   depot_sex_levels <- c("iWAT_F", "iWAT_M", "gWAT_F", "gWAT_M")
-  depot_sex_fill <- setNames(viridis(length(depot_sex_levels), option = "viridis"), depot_sex_levels)
+  if (!is.null(qc_plot_params$depot_sex_manual) &&
+      qc_plot_params$depot_sex_palette == "manual") {
+    depot_sex_fill <- qc_plot_params$depot_sex_manual[depot_sex_levels]
+  } else {
+    depot_sex_fill <- setNames(
+      viridis(length(depot_sex_levels), option = qc_plot_params$depot_sex_palette),
+      depot_sex_levels
+    )
+  }
 
   ## Get VST for all genes (before filtering) for density comparison
   cat("\n=== Calculating pre-filter VST for density comparison ===\n")

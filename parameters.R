@@ -145,6 +145,18 @@ volcano_colors <- list(
 )
 
 ## ============================================================
+## QC PLOT COLORS (PCA/MDS/Density)
+## ============================================================
+## Used by: part1_main_analysis.R, part4_visualizations.R
+
+qc_plot_params <- list(
+  ## Palette for DepotSex colors: any viridis option or "manual"
+  depot_sex_palette = "viridis",
+  ## Optional manual colors (named vector by DepotSex). Used when palette = "manual".
+  depot_sex_manual = NULL
+)
+
+## ============================================================
 ## BARCODE PLOT PARAMETERS
 ## ============================================================
 ## Used by: part5_barcode_plots.R

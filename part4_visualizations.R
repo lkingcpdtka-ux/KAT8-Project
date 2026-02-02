@@ -115,7 +115,18 @@ if (generate_pca_plot || generate_mds_plot || generate_density_plot) {
 
     vst_mat <- qc_data$vst_mat_qc
     sample_info <- qc_data$sample_info
-    depot_sex_fill <- qc_data$depot_sex_fill
+    depot_sex_levels <- unique(sample_info$DepotSex)
+    if (!is.null(qc_plot_params$depot_sex_manual) &&
+        qc_plot_params$depot_sex_palette == "manual") {
+      depot_sex_fill <- qc_plot_params$depot_sex_manual[depot_sex_levels]
+    } else if (!is.null(qc_plot_params$depot_sex_palette)) {
+      depot_sex_fill <- setNames(
+        viridis(length(depot_sex_levels), option = qc_plot_params$depot_sex_palette),
+        depot_sex_levels
+      )
+    } else {
+      depot_sex_fill <- qc_data$depot_sex_fill
+    }
 
     ## A.1) PCA Plot
     if (generate_pca_plot && !is.null(vst_mat)) {
