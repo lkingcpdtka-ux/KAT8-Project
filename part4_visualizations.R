@@ -295,6 +295,25 @@ if (generate_ora_barplots) {
     list.files(tables_dir, pattern = "^ORA_kegg_.*\\.csv$", full.names = TRUE)
   )
 
+  get_padded_limits <- function(values, extra_steps = 1) {
+    vals <- values[is.finite(values)]
+    if (length(vals) == 0) return(NULL)
+    pretty_vals <- pretty(range(vals), n = 4)
+    step <- if (length(pretty_vals) > 1) diff(pretty_vals)[1] else 1
+    c(min(pretty_vals) - extra_steps * step, max(pretty_vals) + extra_steps * step)
+  }
+
+  ora_global_ratio_max <- 0
+  for (ora_file in ora_files) {
+    ora_data <- read.csv(ora_file, stringsAsFactors = FALSE)
+    if (nrow(ora_data) == 0) next
+    ratios <- sapply(strsplit(ora_data$GeneRatio, "/"), function(x) {
+      as.numeric(x[1]) / as.numeric(x[2])
+    })
+    ora_global_ratio_max <- max(ora_global_ratio_max, max(ratios, na.rm = TRUE))
+  }
+  ora_xlim <- get_padded_limits(c(0, ora_global_ratio_max), extra_steps = 1)
+
   for (ora_file in ora_files) {
     filename <- basename(ora_file)
     parts <- str_match(filename, "ORA_(gobp|kegg)_(.+)_(Up|Down)_[0-9]+_[0-9]+\\.csv")
@@ -328,7 +347,7 @@ if (generate_ora_barplots) {
     p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = neg_log10_padj)) +
       geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
       scale_fill_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
-      scale_x_continuous(expand = expansion(mult = c(0.06, 0.08))) +
+      scale_x_continuous(limits = ora_xlim, expand = expansion(mult = c(0.02, 0.02))) +
       labs(title = paste0(db, " - ", direction_label, "\n", contrast), x = "Gene Ratio", y = NULL) +
       theme_classic(base_size = 12) +
       theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 12),
@@ -351,6 +370,22 @@ if (generate_fgsea_barplots) {
     list.files(tables_dir, pattern = "^fgsea_gobp_.*\\.csv$", full.names = TRUE),
     list.files(tables_dir, pattern = "^fgsea_kegg_.*\\.csv$", full.names = TRUE)
   )
+
+  get_padded_limits <- function(values, extra_steps = 1) {
+    vals <- values[is.finite(values)]
+    if (length(vals) == 0) return(NULL)
+    pretty_vals <- pretty(range(vals), n = 4)
+    step <- if (length(pretty_vals) > 1) diff(pretty_vals)[1] else 1
+    c(min(pretty_vals) - extra_steps * step, max(pretty_vals) + extra_steps * step)
+  }
+
+  fgsea_global_abs_nes <- 0
+  for (fgsea_file in fgsea_files) {
+    fgsea_data <- read.csv(fgsea_file, stringsAsFactors = FALSE)
+    if (nrow(fgsea_data) == 0) next
+    fgsea_global_abs_nes <- max(fgsea_global_abs_nes, max(abs(fgsea_data$NES), na.rm = TRUE))
+  }
+  fgsea_xlim <- get_padded_limits(c(-fgsea_global_abs_nes, fgsea_global_abs_nes), extra_steps = 1)
 
   for (fgsea_file in fgsea_files) {
     filename <- basename(fgsea_file)
@@ -381,7 +416,7 @@ if (generate_fgsea_barplots) {
     p <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = neg_log10_padj)) +
       geom_bar(stat = "identity", color = "black", linewidth = 0.3, width = 0.75) +
       scale_fill_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
-      scale_x_continuous(expand = expansion(mult = c(0.04, 0.06))) +
+      scale_x_continuous(limits = fgsea_xlim, expand = expansion(mult = c(0.02, 0.02))) +
       labs(title = paste0("GSEA ", db, "\n", contrast), x = "NES", y = NULL) +
       theme_classic(base_size = 12) +
       theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 12),
@@ -407,6 +442,14 @@ if (generate_ora_dotplots) {
     list.files(tables_dir, pattern = "^ORA_gobp_.*\\.csv$", full.names = TRUE),
     list.files(tables_dir, pattern = "^ORA_kegg_.*\\.csv$", full.names = TRUE)
   )
+
+  get_padded_limits <- function(values, extra_steps = 1) {
+    vals <- values[is.finite(values)]
+    if (length(vals) == 0) return(NULL)
+    pretty_vals <- pretty(range(vals), n = 4)
+    step <- if (length(pretty_vals) > 1) diff(pretty_vals)[1] else 1
+    c(min(pretty_vals) - extra_steps * step, max(pretty_vals) + extra_steps * step)
+  }
 
   for (ora_file in ora_files) {
     filename <- basename(ora_file)
@@ -441,11 +484,13 @@ if (generate_ora_dotplots) {
 
     direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
 
+    dot_xlim <- get_padded_limits(plot_data$GeneRatio_numeric, extra_steps = 1)
+
     p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
       geom_point(aes(size = Count, color = neg_log10_fdr)) +
       scale_color_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
       scale_size_continuous(name = "Count", range = c(2, 6)) +
-      scale_x_continuous(expand = expansion(mult = c(0.06, 0.08))) +
+      scale_x_continuous(limits = dot_xlim, expand = expansion(mult = c(0.02, 0.02))) +
       labs(title = paste0(db, " - ", direction_label, "\n", contrast), x = "Gene Ratio", y = NULL) +
       theme_bw(base_size = 10) +
       theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 11),
