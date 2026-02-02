@@ -761,7 +761,7 @@ tryCatch({
     ) +
       geom_point(size = 2, alpha = 0.8) +
       scale_color_manual(
-        values = c("Up" = "#FDE725", "Down" = "#440154", "NS" = "grey70"),  ## Viridis yellow/purple
+        values = c("Up" = "#7AD151", "Down" = "#2D708E", "NS" = "grey70"),  ## Viridis lime/teal
         name   = "Significance"
       ) +
       geom_point(data = label_genes, aes(color = sig_cat), size = 3) +
@@ -822,11 +822,11 @@ tryCatch({
         mat_scaled <- mat_scaled[!rowSums(is.na(mat_scaled)), , drop = FALSE]
         
         if (nrow(mat_scaled) >= 2) {
-          ## Use viridis-inspired diverging colors (purple -> white -> yellow)
+          ## Use viridis-inspired diverging colors (teal -> white -> lime green)
           max_val_deg <- max(abs(mat_scaled), na.rm = TRUE)
           deg_col_fun <- colorRamp2(
             c(-max_val_deg, 0, max_val_deg),
-            c("#440154", "white", "#FDE725")  ## Purple (down) -> white -> yellow (up)
+            c("#2D708E", "white", "#7AD151")  ## Teal (down) -> white -> lime green (up)
           )
           
           ## Column annotation (including Sex since depots combine both sexes)
@@ -916,11 +916,11 @@ tryCatch({
         
         if (nrow(heat_matrix_scaled) >= 2) {
 
-          ## Use viridis-inspired diverging colors (purple -> white -> yellow)
+          ## Use viridis-inspired diverging colors (teal -> white -> lime green)
           max_val <- max(abs(heat_matrix_scaled), na.rm = TRUE)
           heat_col_fun <- colorRamp2(
             c(-max_val, 0, max_val),
-            c("#440154", "white", "#FDE725")  ## Purple (down) -> white -> yellow (up)
+            c("#2D708E", "white", "#7AD151")  ## Teal (down) -> white -> lime green (up)
           )
 
           ## Column annotation (including Sex since depots combine both sexes)
@@ -1063,20 +1063,20 @@ tryCatch({
     
     if (nrow(volcano_df) > 0) {
       
-      ## Create custom color scheme using keyvals (viridis-inspired)
+      ## Create custom color scheme using keyvals (viridis-inspired teal/lime)
       keyvals_color <- rep("grey70", nrow(volcano_df))
       names(keyvals_color) <- rep("NS", nrow(volcano_df))
 
-      ## Significant UP (viridis yellow)
+      ## Significant UP (viridis lime green)
       sig_up_idx <- which(volcano_df$padj < cn_fdr_cut &
                             volcano_df$logFC >= cn_logFC_cut)
-      keyvals_color[sig_up_idx] <- "#FDE725"
+      keyvals_color[sig_up_idx] <- "#7AD151"
       names(keyvals_color)[sig_up_idx] <- "Significant Up"
 
-      ## Significant DOWN (viridis purple)
+      ## Significant DOWN (viridis teal)
       sig_down_idx <- which(volcano_df$padj < cn_fdr_cut &
                               volcano_df$logFC <= -cn_logFC_cut)
-      keyvals_color[sig_down_idx] <- "#440154"
+      keyvals_color[sig_down_idx] <- "#2D708E"
       names(keyvals_color)[sig_down_idx] <- "Significant Down"
       
       ev_plot <- EnhancedVolcano(

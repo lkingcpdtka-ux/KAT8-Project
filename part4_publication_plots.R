@@ -481,10 +481,10 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   mat[mat > lfc_clip] <- lfc_clip
   mat[mat < -lfc_clip] <- -lfc_clip
 
-  ## Color scale: viridis-inspired diverging (purple -> white -> yellow)
+  ## Color scale: viridis-inspired diverging (teal -> white -> lime green)
   col_fun <- colorRamp2(
     c(-lfc_clip, 0, lfc_clip),
-    c("#440154", "white", "#FDE725")  ## Purple (down) -> white -> yellow (up)
+    c("#2D708E", "white", "#7AD151")  ## Teal (down) -> white -> lime green (up)
   )
 
   ## Parameter caption
@@ -653,10 +653,10 @@ create_individual_heatmap <- function(vst_data, de_file, contrast_name, gene_cat
   mat_scaled[mat_scaled > z_clip] <- z_clip
   mat_scaled[mat_scaled < -z_clip] <- -z_clip
 
-  ## Color scale: viridis-inspired diverging (purple -> white -> yellow)
+  ## Color scale: viridis-inspired diverging (teal -> white -> lime green)
   col_fun <- colorRamp2(
     c(-z_clip, 0, z_clip),
-    c("#440154", "white", "#FDE725")
+    c("#2D708E", "white", "#7AD151")
   )
 
   ## Column annotation for genotype
