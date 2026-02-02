@@ -554,6 +554,204 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   return(ht)
 }
 
+## ============================================================
+## Function to create INDIVIDUAL SAMPLE heatmap with z-scored VST
+## This shows expression gradation across all samples
+## ============================================================
+create_individual_heatmap <- function(vst_data, de_file, contrast_name, gene_categories,
+                                       output_dir = plots_dir) {
+
+  cat("\n--- Creating individual sample heatmap: ", contrast_name, " ---\n", sep = "")
+
+  if (is.null(vst_data)) {
+    cat("[WARN] VST data not available\n")
+    return(NULL)
+  }
+
+  vst_mat <- vst_data$vst_mat
+  sample_info <- vst_data$sample_info
+
+  ## Identify samples for this contrast (extract tissue from contrast name)
+  tissue <- sub("_.*", "", contrast_name)  ## e.g., "iWAT" from "iWAT_KAT8KD_vs_CTL"
+
+  ## Filter samples for this tissue
+  if ("Depot" %in% colnames(sample_info)) {
+    tissue_samples <- rownames(sample_info)[sample_info$Depot == tissue]
+  } else if ("Tissue" %in% colnames(sample_info)) {
+    tissue_samples <- rownames(sample_info)[sample_info$Tissue == tissue]
+  } else {
+    ## Fallback: try to match sample names
+    tissue_samples <- colnames(vst_mat)[grepl(tissue, colnames(vst_mat), ignore.case = TRUE)]
+  }
+
+  if (length(tissue_samples) == 0) {
+    cat("[WARN] No samples found for tissue: ", tissue, "\n")
+    return(NULL)
+  }
+
+  ## Filter VST matrix to tissue samples
+  vst_tissue <- vst_mat[, colnames(vst_mat) %in% tissue_samples, drop = FALSE]
+  sample_info_tissue <- sample_info[colnames(vst_tissue), , drop = FALSE]
+
+  ## Find genes in categories
+  all_category_genes <- unique(unlist(gene_categories))
+  genes_in_data <- intersect(all_category_genes, rownames(vst_tissue))
+
+  cat("[INFO] Category genes found in VST: ", length(genes_in_data), "/",
+      length(all_category_genes), "\n", sep = "")
+
+  if (length(genes_in_data) < 3) {
+    cat("[WARN] Too few genes found for heatmap\n")
+    return(NULL)
+  }
+
+  ## Map genes to categories
+  gene_to_category <- character(length(genes_in_data))
+  names(gene_to_category) <- genes_in_data
+
+  for (cat_name in names(gene_categories)) {
+    cat_genes <- intersect(gene_categories[[cat_name]], genes_in_data)
+    for (g in cat_genes) {
+      if (gene_to_category[g] == "") {
+        gene_to_category[g] <- cat_name
+      }
+    }
+  }
+
+  gene_to_category <- gene_to_category[gene_to_category != ""]
+  genes_to_plot <- names(gene_to_category)
+
+  if (length(genes_to_plot) < 3) {
+    cat("[WARN] Too few categorized genes for heatmap\n")
+    return(NULL)
+  }
+
+  ## Extract VST values for selected genes
+  mat <- vst_tissue[genes_to_plot, , drop = FALSE]
+
+  ## Z-score normalize per gene (row)
+  mat_scaled <- t(scale(t(mat)))
+
+  ## Order genes by category
+  gene_order <- c()
+  for (cat_name in names(gene_categories)) {
+    cat_genes <- names(gene_to_category[gene_to_category == cat_name])
+    gene_order <- c(gene_order, cat_genes)
+  }
+  mat_scaled <- mat_scaled[gene_order, , drop = FALSE]
+  gene_to_category <- gene_to_category[gene_order]
+
+  ## Order samples by genotype (CTL first, then KAT8KD)
+  if ("Genotype" %in% colnames(sample_info_tissue)) {
+    sample_order <- order(sample_info_tissue$Genotype)
+    mat_scaled <- mat_scaled[, sample_order, drop = FALSE]
+    sample_info_tissue <- sample_info_tissue[sample_order, , drop = FALSE]
+  }
+
+  ## Clip extreme z-scores for visualization
+  z_clip <- 2.5
+  mat_scaled[mat_scaled > z_clip] <- z_clip
+  mat_scaled[mat_scaled < -z_clip] <- -z_clip
+
+  ## Color scale: viridis-inspired diverging (purple -> white -> yellow)
+  col_fun <- colorRamp2(
+    c(-z_clip, 0, z_clip),
+    c("#440154", "white", "#FDE725")
+  )
+
+  ## Column annotation for genotype
+  if ("Genotype" %in% colnames(sample_info_tissue)) {
+    col_anno <- HeatmapAnnotation(
+      Genotype = sample_info_tissue$Genotype,
+      col = list(Genotype = c("CTL" = "#1B9E77", "KAT8KD" = "#D95F02")),
+      annotation_name_side = "left",
+      annotation_name_gp = gpar(fontsize = 8, fontface = "bold"),
+      simple_anno_size = unit(4, "mm")
+    )
+  } else {
+    col_anno <- NULL
+  }
+
+  ## Parameter caption
+  param_caption <- paste0(
+    "Z-scored VST expression | Individual samples | Clipped at \u00b1", z_clip
+  )
+
+  ## Create heatmap
+  ht <- Heatmap(
+    mat_scaled,
+    col = col_fun,
+    name = "Z-score",
+    cluster_rows = FALSE,
+    cluster_columns = FALSE,
+    show_row_names = TRUE,
+    show_column_names = TRUE,
+    column_names_rot = 45,
+    top_annotation = col_anno,
+    row_split = factor(gene_to_category, levels = names(gene_categories)),
+    row_gap = unit(1.5, "mm"),
+    row_title_rot = 0,
+    row_title_gp = gpar(fontsize = 9, fontface = "bold"),
+    row_names_gp = gpar(fontsize = 8, fontface = "italic"),
+    column_names_gp = gpar(fontsize = 8),
+    column_title = paste0(contrast_name, " (Individual Samples)"),
+    column_title_gp = gpar(fontsize = 11, fontface = "bold"),
+    border = TRUE,
+    border_gp = gpar(col = "black", lwd = 0.8),
+    rect_gp = gpar(col = "grey80", lwd = 0.3),
+    heatmap_legend_param = list(
+      title = "Z-score\n(VST)",
+      title_position = "topcenter",
+      title_gp = gpar(fontsize = 8, fontface = "bold"),
+      labels_gp = gpar(fontsize = 7),
+      legend_height = unit(2.5, "cm"),
+      at = c(-z_clip, 0, z_clip),
+      labels = c(paste0("\u2264", -z_clip), "0", paste0("\u2265", z_clip))
+    )
+  )
+
+  ## Save
+  plot_file <- paste0("Heatmap_individual_", contrast_name, "_", run_tag, ".png")
+  n_genes <- length(genes_to_plot)
+  n_samples <- ncol(mat_scaled)
+  n_categories <- length(unique(gene_to_category))
+
+  png(file.path(output_dir, plot_file),
+      width = max(600, n_samples * 50 + 200),
+      height = max(400, n_genes * 18 + n_categories * 30 + 100),
+      res = 150)
+  draw(ht, padding = unit(c(5, 12, 10, 5), "mm"))
+  ## Add parameter caption at bottom
+  grid.text(
+    param_caption,
+    x = 0.5, y = unit(3, "mm"),
+    just = "center",
+    gp = gpar(fontsize = 7, col = "grey40")
+  )
+  dev.off()
+
+  cat("[OK] Saved individual heatmap: ", plot_file, "\n", sep = "")
+
+  return(ht)
+}
+
+
+## ============================================================
+## Create BOTH heatmap types for each contrast
+## ============================================================
+
+## Load VST data if available
+vst_files <- list.files(tables_dir, pattern = "^VST_matrix_heatmap_.*\\.rds$", full.names = TRUE)
+vst_data <- NULL
+if (length(vst_files) > 0) {
+  vst_file <- vst_files[order(file.info(vst_files)$mtime, decreasing = TRUE)][1]
+  vst_data <- readRDS(vst_file)
+  cat("[OK] Loaded VST matrix from: ", basename(vst_file), "\n", sep = "")
+} else {
+  cat("[INFO] VST matrix not found - individual sample heatmaps will be skipped\n")
+  cat("[INFO] Re-run part1_main_analysis.R to generate VST data\n")
+}
+
 ## Create heatmaps for each contrast
 de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
 
@@ -561,7 +759,13 @@ for (de_file in de_files) {
   filename <- basename(de_file)
   contrast <- str_match(filename, "DE_tissue_(.+)_[0-9]+_[0-9]+\\.csv")[2]
   if (!is.na(contrast)) {
+    ## Create grouped heatmap (log2FC: CTL=0, KAT8KD=log2FC)
     create_grouped_heatmap(de_file, contrast, gene_categories)
+
+    ## Create individual sample heatmap (z-scored VST)
+    if (!is.null(vst_data)) {
+      create_individual_heatmap(vst_data, de_file, contrast, gene_categories)
+    }
   }
 }
 
@@ -572,5 +776,8 @@ cat("======================================\n")
 cat("Created:\n")
 cat("  - GO:BP enrichment dot plots\n")
 cat("  - KEGG enrichment dot plots\n")
-cat("  - Grouped gene heatmaps (CTL vs KAT8KD)\n")
+cat("  - Grouped gene heatmaps (CTL vs KAT8KD log2FC)\n")
+if (!is.null(vst_data)) {
+  cat("  - Individual sample heatmaps (z-scored VST)\n")
+}
 cat("\nAll plots saved to: ", plots_dir, "\n\n", sep = "")

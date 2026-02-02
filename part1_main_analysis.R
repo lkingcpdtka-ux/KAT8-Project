@@ -438,11 +438,22 @@ tryCatch({
   cat("\n=== VST FOR QC ===\n")
   vst_tissue <- vst(dds_tissue, blind = TRUE)
   vst_mat <- assay(vst_tissue)  ## genes x samples (log2-ish stabilized)
-  
+
   cat("\n=== VST FOR HEATMAPS (blind=FALSE) ===\n")
   vst_tissue_hm <- vst(dds_tissue, blind = FALSE)
   vst_mat_hm <- assay(vst_tissue_hm)
-  
+
+  ## Save VST matrix for use by part4 (individual sample heatmaps)
+  vst_file <- paste0("VST_matrix_heatmap_", run_tag, ".rds")
+  saveRDS(
+    list(
+      vst_mat = vst_mat_hm,
+      sample_info = sample_annot
+    ),
+    file = file.path(outdir, "tables", vst_file)
+  )
+  cat("[OK] Saved VST matrix for heatmaps: ", vst_file, "\n", sep = "")
+
   genotype_colors <- c("CTL" = "#0072B2", "KAT8KD" = "#E69F00")
   depot_sex_fill <- c(
     "iWAT_F" = "#56B4E9",
