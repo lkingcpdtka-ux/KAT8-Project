@@ -578,29 +578,42 @@ if (!is.null(vst_data)) {
     if (length(iwat_fgsea) > 0) {
       mito_genes <- extract_leading_edge(iwat_fgsea[1], c(
         "mitochondrial ATP synthesis", "mitochondrial translation",
-        "respiratory chain", "fatty acid beta-oxidation"
+        "respiratory chain complex", "fatty acid beta-oxidation"
       ), 10)
-      if (length(mito_genes) > 0) gene_categories[["Mitochondrial"]] <- head(mito_genes, 20)
+      if (length(mito_genes) > 0) {
+        gene_categories[["Mitochondrial /\nEnergy"]] <- head(mito_genes, 20)
+      }
     }
 
     gwat_fgsea <- fgsea_gobp_files[grep("gWAT", fgsea_gobp_files, ignore.case = TRUE)]
     if (length(gwat_fgsea) > 0) {
       immune_genes <- extract_leading_edge(gwat_fgsea[1], c(
-        "leukocyte degranulation", "myeloid cell activation", "cytokine"
+        "leukocyte degranulation", "myeloid cell activation", "positive regulation of cytokine"
       ), 10)
-      if (length(immune_genes) > 0) gene_categories[["Immune"]] <- head(immune_genes, 20)
+      if (length(immune_genes) > 0) {
+        gene_categories[["Immune /\nInflammatory"]] <- head(immune_genes, 20)
+      }
 
       lipid_genes <- extract_leading_edge(gwat_fgsea[1], c(
         "lipid localization", "lipid catabolic", "fatty acid"
       ), 10)
-      if (length(lipid_genes) > 0) gene_categories[["Lipid"]] <- head(lipid_genes, 15)
+      if (length(lipid_genes) > 0) {
+        gene_categories[["Lipid\nMetabolism"]] <- head(lipid_genes, 15)
+      }
+
+      ecm_genes <- extract_leading_edge(gwat_fgsea[1], c(
+        "tissue remodeling", "extracellular matrix", "cell adhesion"
+      ), 10)
+      if (length(ecm_genes) > 0) {
+        gene_categories[["ECM /\nRemodeling"]] <- head(ecm_genes, 15)
+      }
     }
 
     if (length(gene_categories) == 0) {
       gene_categories <- list(
-        "Inflammatory" = c("Il1b", "Il6", "Tnf", "Ccl2", "Cxcl12"),
-        "Collagen" = c("Col1a1", "Col1a2", "Col3a1", "Col4a1"),
-        "Adipocyte" = c("Lep", "Adipoq", "Pparg", "Fabp4", "Plin1")
+        "Inflammatory\nResponse" = c("Il1b", "Il6", "Tnf", "Il1a", "Ccl2", "Ccl7", "Cxcl12"),
+        "ECM /\nCollagens" = c("Col1a1", "Col1a2", "Col3a1", "Col4a1", "Col4a2", "Col5a1", "Col6a1"),
+        "Adipocyte\nMarkers" = c("Lep", "Adipoq", "Pparg", "Ppargc1a", "Fabp4", "Plin1")
       )
     }
 
