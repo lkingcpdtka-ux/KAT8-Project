@@ -609,90 +609,10 @@ tryCatch({
         table_file <- paste0("ORA_", db_name, "_", contrast_name, "_", direction, "_", run_tag, ".csv")
         write.csv(sig_results, file = file.path(outdir, "tables", table_file), row.names = FALSE)
         cat("[OK] Saved pathway table: ", table_file, " (", nrow(sig_results), " terms)\n", sep = "")
-        
-        ## Create bar plot (top 15 terms) - ordered by adjusted p-value, direction-specific colors
-        plot_data <- sig_results %>%
-          dplyr::slice_head(n = ora_plot_params$top_n)
-        
-        ## Parse GeneRatio to numeric
-        plot_data$GeneRatio_numeric <- sapply(strsplit(plot_data$GeneRatio, "/"), function(x) {
-          num <- as.numeric(x[1]); denom <- as.numeric(x[2])
-          if (is.na(denom) || denom == 0) return(0)
-          num / denom
-        })
-        
-        ## Order by adjusted p-value (most significant at top)
-        plot_data <- plot_data %>%
-          dplyr::arrange(p.adjust) %>%
-          dplyr::mutate(pathway_name = factor(pathway_name, levels = rev(pathway_name)))
-
-        ## Viridis gradient (default: purple -> yellow)
-        ## Use -log10(p.adjust) so most significant = highest = yellow
-        plot_data$neg_log10_padj <- -log10(plot_data$p.adjust)
-        fill_scale <- scale_fill_viridis_c(
-          option = "viridis",
-          direction = 1,
-          name = expression(-log[10]~"(Adj. P-value)"),
-          labels = function(x) format(10^(-x), scientific = TRUE, digits = 2)
-        )
-        
-        ## Parameter caption
-        universe_label <- if (is.null(universe_entrez)) {
-          "Universe: all genes (default)"
-        } else {
-          paste0("Universe: ", length(universe_entrez), " DESeq2-tested genes")
-        }
-        ## Add simplification info for GO:BP
-        simplify_label <- if (db_name == "gobp") {
-          paste0(" | Simplified (cutoff=", ora_enrich_params$simplify_cutoff, ")")
-        } else {
-          ""
-        }
-        param_caption <- paste(
-          paste0(
-            "FDR < ", fdr_cutoff,
-            " | |log2FC| > ", logfc_cutoff,
-            " | Top ", ora_plot_params$top_n, " pathways", simplify_label
-          ),
-          paste0("Ordered by ", ora_plot_params$order_by, " | ", universe_label),
-          sep = "\n"
-        )
-
-        p_pathway <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = neg_log10_padj)) +
-          geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
-          fill_scale +
-          scale_x_continuous(expand = expansion(mult = c(0, 0.02))) +  ## Minimal padding
-          labs(
-            title = paste0(toupper(db_name), " Pathways (ORA - ", direction, ")\n", contrast_name),
-            x     = "Gene Ratio",
-            y     = NULL,
-            caption = param_caption
-          ) +
-          theme_classic(base_size = 12) +
-          theme(
-            plot.title      = element_text(face = "bold", hjust = 0.5, size = 14),
-            axis.text.y     = element_text(size = 10, color = "black"),
-            axis.text.x     = element_text(size = 10, color = "black", face = "bold"),
-            axis.title.x    = element_text(size = 12, face = "bold"),
-            legend.title    = element_text(size = 10, face = "bold"),
-            legend.text     = element_text(size = 9),
-            legend.position = "right",
-            panel.border    = element_rect(color = "black", fill = NA, linewidth = 1),
-            plot.caption    = element_text(size = 8, color = "grey40", hjust = 0.5, margin = margin(t = 8))
-          )
-        
-        plot_file <- paste0("ORA_barplot_", db_name, "_", contrast_name, "_", direction, "_", run_tag, ".png")
-        ggsave(
-          file.path(outdir, "plots", plot_file),
-          plot   = p_pathway,
-          width  = 10,
-          height = max(6, nrow(plot_data) * 0.3),
-          dpi    = 300,
-          bg     = "white"
-        )
-        cat("[OK] Saved pathway bar plot: ", plot_file, "\n", sep = "")
       }
     }
+
+    ## NOTE: Plots are generated separately in part4b_visualizations.R
     
     return(results)
   }

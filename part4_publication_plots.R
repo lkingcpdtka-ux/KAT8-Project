@@ -81,269 +81,14 @@ ora_dotplot_params <- list(
 
 
 ## ============================================================
-## SECTION 1: DOT PLOTS FOR ORA PATHWAY ENRICHMENT
+## NOTE: DOT PLOTS AND BAR PLOTS ARE IN part4b_visualizations.R
 ## ============================================================
-## Style:
-## - Size = Gene Count (number of genes)
-## - Color = -log10(FDR)
-## - Most significant at TOP
-## - Separate plots for Up/Down
-## - GO:BP: top 15, KEGG: top 10
+## For ORA bar plots, fGSEA bar plots, and dot plots,
+## use part4b_visualizations.R instead of this script.
+## This script now only handles HEATMAPS.
 ## ============================================================
 
-cat("\n=== CREATING ORA ENRICHMENT DOT PLOTS ===\n")
-
-create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
-                                       database = "GO:BP",
-                                       output_dir = plots_dir) {
-
-  if (!file.exists(ora_file)) {
-    cat("[WARN] File not found: ", ora_file, "\n")
-    return(NULL)
-  }
-
-  ora_data <- read.csv(ora_file, stringsAsFactors = FALSE)
-
-  if (nrow(ora_data) == 0) {
-    cat("[WARN] No pathways in: ", basename(ora_file), "\n")
-    return(NULL)
-  }
-
-  ## Standardize column names - handle both 'Description' and 'pathway_name'
-  if (!"Description" %in% colnames(ora_data) && "pathway_name" %in% colnames(ora_data)) {
-    ora_data$Description <- ora_data$pathway_name
-    cat("[INFO] Using 'pathway_name' column as Description\n")
-  }
-
-  if (!"Description" %in% colnames(ora_data)) {
-    cat("[WARN] No Description or pathway_name column found in: ", basename(ora_file), "\n")
-    return(NULL)
-  }
-
-  ## Set top_n based on database
-  top_n <- ora_dotplot_params$top_n[[database]]
-  if (is.null(top_n)) {
-    top_n <- ora_dotplot_params$default_top_n
-  }
-
-  ## Parse GeneRatio to numeric
-  if ("GeneRatio" %in% colnames(ora_data) && is.character(ora_data$GeneRatio)) {
-    ora_data$GeneRatio_numeric <- sapply(strsplit(ora_data$GeneRatio, "/"), function(x) {
-      num <- as.numeric(x[1])
-      denom <- as.numeric(x[2])
-      if (is.na(denom) || denom == 0) return(0)
-      num / denom
-    })
-  }
-
-  ## Get gene count if not present
-  if (!"Count" %in% colnames(ora_data)) {
-    ora_data$Count <- sapply(strsplit(ora_data$GeneRatio, "/"), function(x) {
-      as.numeric(x[1])
-    })
-  }
-
-  ## Calculate -log10(FDR) for color mapping
-  ora_data$neg_log10_fdr <- -log10(ora_data$p.adjust)
-
-  ## Determine thresholds from file metadata if available
-  plot_fdr_cutoff <- ora_dotplot_params$fdr_cutoff
-  if ("fdr_cutoff" %in% colnames(ora_data)) {
-    fdr_vals <- unique(na.omit(ora_data$fdr_cutoff))
-    if (length(fdr_vals) > 0) {
-      plot_fdr_cutoff <- fdr_vals[1]
-    }
-  }
-
-  plot_logfc_cutoff <- NULL
-  if ("logFC_cutoff" %in% colnames(ora_data)) {
-    logfc_vals <- unique(na.omit(ora_data$logFC_cutoff))
-    if (length(logfc_vals) > 0) {
-      plot_logfc_cutoff <- logfc_vals[1]
-    }
-  }
-
-  ## Filter and select top pathways
-  ## - FDR < cutoff
-  ## - Count >= 3 (minimum genes for reliable enrichment)
-  ## - Rank by p.adjust (ascending), break ties by GeneRatio (descending)
-  plot_data <- ora_data %>%
-    dplyr::filter(p.adjust < plot_fdr_cutoff, Count >= ora_dotplot_params$min_count) %>%
-    dplyr::arrange(p.adjust, desc(GeneRatio_numeric)) %>%
-    dplyr::slice_head(n = top_n)
-
-  if (nrow(plot_data) == 0) {
-    cat(
-      "[WARN] No significant pathways meeting criteria (FDR<",
-      plot_fdr_cutoff,
-      ", Count>=",
-      ora_dotplot_params$min_count,
-      ")\n",
-      sep = ""
-    )
-    return(NULL)
-  }
-
-  ## Clip extreme -log10(FDR) values to prevent one pathway dominating color scale
-  ## Cap at 99th percentile or max of 10, whichever is smaller
-  fdr_cap <- min(quantile(plot_data$neg_log10_fdr, 0.99, na.rm = TRUE), 10)
-  plot_data$neg_log10_fdr_clipped <- pmin(plot_data$neg_log10_fdr, fdr_cap)
-
-  ## Order y-axis: most significant at TOP
-  ## Factor levels reversed so smallest p-value appears at the top
-  plot_data <- plot_data %>%
-    dplyr::arrange(p.adjust) %>%
-    dplyr::mutate(
-      Description = str_wrap(Description, width = 45),
-      Description = factor(Description, levels = rev(Description))
-    )
-
-  ## Full viridis gradient (default: purple -> yellow)
-  ## High -log10 FDR = more significant = yellow
-
-  ## Build title in journal format
-  direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
-  plot_title <- paste0(database, " Enrichment\n(", contrast_name, ", ", direction_label, ")")
-
-  ## Parameter caption for bottom of plot
-  ## Add simplification info for GO:BP
-  simplify_label <- if (database == "GO:BP") {
-    paste0(" | Simplified (cutoff=", ora_dotplot_params$gobp_simplify_cutoff, ")")
-  } else {
-    ""
-  }
-  if (!is.null(plot_logfc_cutoff)) {
-    param_caption <- paste(
-      paste0(
-        "FDR < ", plot_fdr_cutoff,
-        " | |log2FC| > ", plot_logfc_cutoff,
-        " | Top ", top_n, " pathways", simplify_label
-      ),
-      paste0("Ordered by ", ora_dotplot_params$order_by),
-      sep = "\n"
-    )
-  } else {
-    param_caption <- paste(
-      paste0(
-        "FDR < ", plot_fdr_cutoff,
-        " | Top ", top_n, " pathways", simplify_label
-      ),
-      paste0("Ordered by ", ora_dotplot_params$order_by),
-      sep = "\n"
-    )
-  }
-
-  ## Create dot plot
-  ## Size = Count, Color = -log10(FDR) but labeled as actual p-values
-  ## Generate nice breaks for the color scale
-  color_breaks <- c(
-    min(plot_data$neg_log10_fdr_clipped),
-    (min(plot_data$neg_log10_fdr_clipped) + fdr_cap) / 2,
-    fdr_cap
-  )
-
-  p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
-    geom_point(aes(size = Count, color = neg_log10_fdr_clipped)) +
-    scale_color_viridis_c(
-      option = "viridis",
-      direction = 1,  ## Default: purple (low) -> yellow (high), so high -log10 = yellow = significant
-      name = "Adj. P-value",
-      limits = c(min(plot_data$neg_log10_fdr_clipped), fdr_cap),
-      breaks = color_breaks,
-      labels = function(x) {
-        ## Convert -log10(p) back to p-value for display
-        pvals <- 10^(-x)
-        sapply(pvals, function(p) format(p, scientific = TRUE, digits = 1))
-      }
-    ) +
-    scale_size_continuous(
-      name = "Gene Count",
-      range = c(2, 6),
-      breaks = pretty(plot_data$Count, n = 4)
-    ) +
-    scale_x_continuous(
-      expand = expansion(mult = c(0.1, 0.1))  ## More padding on both sides
-    ) +
-    labs(
-      title = plot_title,
-      x = "Gene Ratio",
-      y = NULL,
-      caption = param_caption
-    ) +
-    theme_bw(base_size = 10) +
-    theme(
-      ## Title
-      plot.title = element_text(face = "bold", hjust = 0.5, size = 11, lineheight = 1.1),
-      ## Axes
-      axis.text.y = element_text(size = 8, color = "black"),
-      axis.text.x = element_text(size = 7, color = "black"),
-      axis.title.x = element_text(size = 8, margin = margin(t = 5)),
-      axis.ticks = element_line(color = "black", linewidth = 0.3),
-      ## Grid - light lines for both axes
-      panel.grid.major.x = element_line(color = "grey85", linewidth = 0.3),
-      panel.grid.major.y = element_line(color = "grey85", linewidth = 0.3),
-      panel.grid.minor = element_blank(),
-      ## Border
-      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.6),
-      ## Legend
-      legend.title = element_text(size = 8, face = "bold"),
-      legend.text = element_text(size = 7),
-      legend.key.size = unit(0.4, "cm"),
-      legend.background = element_blank(),
-      legend.box.background = element_blank(),
-      ## Caption (parameters)
-      plot.caption = element_text(size = 7, color = "grey40", hjust = 0.5, margin = margin(t = 8)),
-      ## Margins
-      plot.margin = margin(10, 10, 10, 10)
-    ) +
-    guides(
-      color = guide_colorbar(order = 1, barwidth = 0.8, barheight = 3),
-      size = guide_legend(order = 2)
-    )
-
-  ## Save
-  db_short <- gsub(":", "", database)
-  plot_file <- paste0("Dotplot_", db_short, "_", contrast_name, "_", direction, "_", run_tag, ".png")
-  ggsave(
-    file.path(output_dir, plot_file),
-    plot = p,
-    width = 6.5,
-    height = max(4, nrow(plot_data) * 0.25 + 1.5),
-    dpi = 300,
-    bg = "white"
-  )
-  cat("[OK] Saved: ", plot_file, " (", nrow(plot_data), " pathways)\n", sep = "")
-
-  return(p)
-}
-
-## Process GO:BP results
-cat("\n--- Processing GO:BP results ---\n")
-gobp_files <- list.files(tables_dir, pattern = "^ORA_gobp_.*\\.csv$", full.names = TRUE)
-
-for (ora_file in gobp_files) {
-  filename <- basename(ora_file)
-  parts <- str_match(filename, "ORA_gobp_(.+)_(Up|Down)_[0-9]+_[0-9]+\\.csv")
-  if (!is.na(parts[1])) {
-    contrast <- parts[2]
-    direction <- parts[3]
-    create_enrichment_dotplot(ora_file, contrast, direction, database = "GO:BP")
-  }
-}
-
-## Process KEGG results
-cat("\n--- Processing KEGG results ---\n")
-kegg_files <- list.files(tables_dir, pattern = "^ORA_kegg_.*\\.csv$", full.names = TRUE)
-
-for (ora_file in kegg_files) {
-  filename <- basename(ora_file)
-  parts <- str_match(filename, "ORA_kegg_(.+)_(Up|Down)_[0-9]+_[0-9]+\\.csv")
-  if (!is.na(parts[1])) {
-    contrast <- parts[2]
-    direction <- parts[3]
-    create_enrichment_dotplot(ora_file, contrast, direction, database = "KEGG")
-  }
-}
+cat("\n=== SKIPPING DOT PLOTS (use part4b_visualizations.R) ===\n")
 
 
 ## ============================================================
@@ -502,7 +247,9 @@ cat("[INFO] Total genes: ", sum(sapply(gene_categories, length)), "\n")
 ## ============================================================
 
 
-## Function to create grouped heatmap with log2FC coloring
+## Function to create grouped heatmap with Z-scored VST expression
+## UPDATED: Always uses Z-scored VST (shows actual expression patterns in BOTH groups)
+## This avoids the "binary" appearance of CTL=0 reference approach
 create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
                                     lfc_clip = heatmap_lfc_clip,
                                     output_dir = plots_dir,
@@ -515,49 +262,41 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
     return(NULL)
   }
 
-  de_data <- read.csv(de_file, row.names = 1, stringsAsFactors = FALSE)
+  ## Check if VST data is available - REQUIRED for proper grouped heatmap
+  if (is.null(vst_data) || is.null(vst_data$vst_mat) || is.null(vst_data$sample_info)) {
+    cat("[WARN] VST data required for grouped heatmap (avoids binary CTL=0 display)\n")
+    cat("[INFO] Re-run part1_main_analysis.R to generate VST data\n")
+    return(NULL)
+  }
 
-  ## Get log2FC column
-  if ("log2FoldChange" %in% colnames(de_data)) {
-    lfc_col <- "log2FoldChange"
-  } else if ("logFC" %in% colnames(de_data)) {
-    lfc_col <- "logFC"
+  tissue <- sub("_.*", "", contrast_name)
+  sample_info <- vst_data$sample_info
+
+  ## Find tissue samples
+  if ("Depot" %in% colnames(sample_info)) {
+    tissue_samples <- rownames(sample_info)[sample_info$Depot == tissue]
+  } else if ("Tissue" %in% colnames(sample_info)) {
+    tissue_samples <- rownames(sample_info)[sample_info$Tissue == tissue]
   } else {
-    cat("[WARN] Cannot find log2FC column\n")
+    tissue_samples <- colnames(vst_data$vst_mat)[grepl(tissue, colnames(vst_data$vst_mat), ignore.case = TRUE)]
+  }
+
+  if (length(tissue_samples) == 0 || !"Genotype" %in% colnames(sample_info)) {
+    cat("[WARN] Cannot find tissue samples or Genotype column\n")
+    return(NULL)
+  }
+
+  vst_tissue <- vst_data$vst_mat[, colnames(vst_data$vst_mat) %in% tissue_samples, drop = FALSE]
+  sample_info_tissue <- sample_info[colnames(vst_tissue), , drop = FALSE]
+
+  if (!all(c("CTL", "KAT8KD") %in% sample_info_tissue$Genotype)) {
+    cat("[WARN] Both CTL and KAT8KD genotypes required\n")
     return(NULL)
   }
 
   ## Find genes in data
   all_category_genes <- unique(unlist(gene_categories))
-
-  use_vst_group <- FALSE
-  vst_tissue <- NULL
-  if (!is.null(vst_data) && !is.null(vst_data$vst_mat) && !is.null(vst_data$sample_info)) {
-    tissue <- sub("_.*", "", contrast_name)
-    sample_info <- vst_data$sample_info
-
-    if ("Depot" %in% colnames(sample_info)) {
-      tissue_samples <- rownames(sample_info)[sample_info$Depot == tissue]
-    } else if ("Tissue" %in% colnames(sample_info)) {
-      tissue_samples <- rownames(sample_info)[sample_info$Tissue == tissue]
-    } else {
-      tissue_samples <- colnames(vst_data$vst_mat)[grepl(tissue, colnames(vst_data$vst_mat), ignore.case = TRUE)]
-    }
-
-    if (length(tissue_samples) > 0 && "Genotype" %in% colnames(sample_info)) {
-      vst_tissue <- vst_data$vst_mat[, colnames(vst_data$vst_mat) %in% tissue_samples, drop = FALSE]
-      sample_info_tissue <- sample_info[colnames(vst_tissue), , drop = FALSE]
-      if (all(c("CTL", "KAT8KD") %in% sample_info_tissue$Genotype)) {
-        use_vst_group <- TRUE
-      }
-    }
-  }
-
-  if (use_vst_group) {
-    genes_in_data <- intersect(all_category_genes, rownames(vst_tissue))
-  } else {
-    genes_in_data <- intersect(all_category_genes, rownames(de_data))
-  }
+  genes_in_data <- intersect(all_category_genes, rownames(vst_tissue))
 
   cat("[INFO] Category genes found: ", length(genes_in_data), "/",
       length(all_category_genes), "\n", sep = "")
@@ -588,23 +327,12 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
     return(NULL)
   }
 
-  if (use_vst_group) {
-    sample_info_tissue <- vst_data$sample_info[colnames(vst_tissue), , drop = FALSE]
-    genotype_levels <- c("CTL", "KAT8KD")
-    group_means <- sapply(genotype_levels, function(geno) {
-      rowMeans(vst_tissue[, sample_info_tissue$Genotype == geno, drop = FALSE], na.rm = TRUE)
-    })
-    mat <- group_means[genes_to_plot, , drop = FALSE]
-  } else {
-    ## Create matrix using log2FC values
-    ## CTL = 0 (reference), KAT8KD = log2FC
-    log2fc_values <- de_data[genes_to_plot, lfc_col]
-    mat <- cbind(
-      CTL = rep(0, length(genes_to_plot)),
-      KAT8KD = log2fc_values
-    )
-    rownames(mat) <- genes_to_plot
-  }
+  ## Calculate group means (VST expression)
+  genotype_levels <- c("CTL", "KAT8KD")
+  group_means <- sapply(genotype_levels, function(geno) {
+    rowMeans(vst_tissue[, sample_info_tissue$Genotype == geno, drop = FALSE], na.rm = TRUE)
+  })
+  mat <- group_means[genes_to_plot, , drop = FALSE]
 
   ## Order by category
   gene_order <- c()
@@ -615,50 +343,29 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   mat <- mat[gene_order, , drop = FALSE]
   gene_to_category <- gene_to_category[gene_order]
 
-  if (use_vst_group) {
-    mat <- t(scale(t(mat)))
-    mat <- mat[!rowSums(is.na(mat)), , drop = FALSE]
-    z_clip <- lfc_clip
-    mat[mat > z_clip] <- z_clip
-    mat[mat < -z_clip] <- -z_clip
+  ## Z-score normalize ACROSS BOTH GROUPS (shows relative expression)
+  mat <- t(scale(t(mat)))
+  mat <- mat[!rowSums(is.na(mat)), , drop = FALSE]
 
-    col_fun <- colorRamp2(
-      c(-z_clip, -z_clip/2, 0, z_clip/2, z_clip),
-      viridis(5)
-    )
+  ## Clip at specified value
+  z_clip <- lfc_clip
+  mat[mat > z_clip] <- z_clip
+  mat[mat < -z_clip] <- -z_clip
 
-    param_caption <- paste0(
-      "Z-scored mean VST by genotype | Clipped at \u00b1",
-      z_clip
-    )
-    legend_title <- "Z-score\n(VST mean)"
-    legend_at <- c(-z_clip, 0, z_clip)
-    legend_labels <- c(paste0("\u2264", -z_clip), "0", paste0("\u2265", z_clip))
-    heatmap_name <- "Z-score"
-  } else {
-    ## Clip values at ±lfc_clip
-    mat[mat > lfc_clip] <- lfc_clip
-    mat[mat < -lfc_clip] <- -lfc_clip
+  ## TONED DOWN COLORS: Use muted diverging palette from parameters.R
+  ## Blue-grey-red: publication-ready, less saturated
+  col_fun <- colorRamp2(
+    c(-z_clip, -z_clip/2, 0, z_clip/2, z_clip),
+    heatmap_params$muted_colors
+  )
 
-    ## Full viridis gradient using viridis package
-    col_fun <- colorRamp2(
-      c(-lfc_clip, -lfc_clip/2, 0, lfc_clip/2, lfc_clip),
-      viridis(5)  ## 5 colors from viridis palette
-    )
-
-    ## Parameter caption
-    param_caption <- paste0(
-      heatmap_params$lfc_label,
-      " | ",
-      heatmap_params$reference,
-      " | Clipped at \u00b1",
-      lfc_clip
-    )
-    legend_title <- "log2 fold change\n(DESeq2)"
-    legend_at <- c(-lfc_clip, 0, lfc_clip)
-    legend_labels <- c(paste0("\u2264", -lfc_clip), "0", paste0("\u2265", lfc_clip))
-    heatmap_name <- "log2FC"
-  }
+  param_caption <- paste0(
+    "Z-scored mean VST by genotype | Clipped at \u00b1", z_clip
+  )
+  legend_title <- "Z-score\n(VST mean)"
+  legend_at <- c(-z_clip, 0, z_clip)
+  legend_labels <- c(paste0("\u2264", -z_clip), "0", paste0("\u2265", z_clip))
+  heatmap_name <- "Z-score"
 
   ## Create heatmap
   ht <- Heatmap(
@@ -817,10 +524,11 @@ create_individual_heatmap <- function(vst_data, de_file, contrast_name, gene_cat
   mat_scaled[mat_scaled > z_clip] <- z_clip
   mat_scaled[mat_scaled < -z_clip] <- -z_clip
 
-  ## Full viridis gradient using viridis package
+  ## TONED DOWN COLORS: Use muted diverging palette from parameters.R
+  ## Blue-grey-red: publication-ready, less saturated
   col_fun <- colorRamp2(
     c(-z_clip, -z_clip/2, 0, z_clip/2, z_clip),
-    viridis(5)  ## 5 colors from viridis palette
+    heatmap_params$muted_colors
   )
 
   ## Column annotation for genotype
