@@ -190,17 +190,16 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   plot_data$neg_log10_fdr_clipped <- pmin(plot_data$neg_log10_fdr, fdr_cap)
 
   ## Order y-axis: most significant at TOP
-  ## Factor levels in reverse order of p-value (smallest p = top)
+  ## Factor levels reversed so smallest p-value appears at the top
   plot_data <- plot_data %>%
-    dplyr::arrange(desc(p.adjust)) %>%
+    dplyr::arrange(p.adjust) %>%
     dplyr::mutate(
       Description = str_wrap(Description, width = 45),
-      Description = factor(Description, levels = Description)
+      Description = factor(Description, levels = rev(Description))
     )
 
-  ## Full viridis gradient (REVERSED: yellow = significant, purple = less significant)
-  ## Note: high -log10 FDR = more significant = yellow
-  ## low -log10 FDR = less significant = purple
+  ## Full viridis gradient (default: purple -> yellow)
+  ## High -log10 FDR = more significant = yellow
 
   ## Build title in journal format
   direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
@@ -506,7 +505,8 @@ cat("[INFO] Total genes: ", sum(sapply(gene_categories, length)), "\n")
 ## Function to create grouped heatmap with log2FC coloring
 create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
                                     lfc_clip = heatmap_lfc_clip,
-                                    output_dir = plots_dir) {
+                                    output_dir = plots_dir,
+                                    vst_data = NULL) {
 
   cat("\n--- Creating grouped heatmap: ", contrast_name, " ---\n", sep = "")
 
@@ -529,7 +529,35 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
 
   ## Find genes in data
   all_category_genes <- unique(unlist(gene_categories))
-  genes_in_data <- intersect(all_category_genes, rownames(de_data))
+
+  use_vst_group <- FALSE
+  vst_tissue <- NULL
+  if (!is.null(vst_data) && !is.null(vst_data$vst_mat) && !is.null(vst_data$sample_info)) {
+    tissue <- sub("_.*", "", contrast_name)
+    sample_info <- vst_data$sample_info
+
+    if ("Depot" %in% colnames(sample_info)) {
+      tissue_samples <- rownames(sample_info)[sample_info$Depot == tissue]
+    } else if ("Tissue" %in% colnames(sample_info)) {
+      tissue_samples <- rownames(sample_info)[sample_info$Tissue == tissue]
+    } else {
+      tissue_samples <- colnames(vst_data$vst_mat)[grepl(tissue, colnames(vst_data$vst_mat), ignore.case = TRUE)]
+    }
+
+    if (length(tissue_samples) > 0 && "Genotype" %in% colnames(sample_info)) {
+      vst_tissue <- vst_data$vst_mat[, colnames(vst_data$vst_mat) %in% tissue_samples, drop = FALSE]
+      sample_info_tissue <- sample_info[colnames(vst_tissue), , drop = FALSE]
+      if (all(c("CTL", "KAT8KD") %in% sample_info_tissue$Genotype)) {
+        use_vst_group <- TRUE
+      }
+    }
+  }
+
+  if (use_vst_group) {
+    genes_in_data <- intersect(all_category_genes, rownames(vst_tissue))
+  } else {
+    genes_in_data <- intersect(all_category_genes, rownames(de_data))
+  }
 
   cat("[INFO] Category genes found: ", length(genes_in_data), "/",
       length(all_category_genes), "\n", sep = "")
@@ -560,14 +588,23 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
     return(NULL)
   }
 
-  ## Create matrix using log2FC values
-  ## CTL = 0 (reference), KAT8KD = log2FC
-  log2fc_values <- de_data[genes_to_plot, lfc_col]
-  mat <- cbind(
-    CTL = rep(0, length(genes_to_plot)),
-    KAT8KD = log2fc_values
-  )
-  rownames(mat) <- genes_to_plot
+  if (use_vst_group) {
+    sample_info_tissue <- vst_data$sample_info[colnames(vst_tissue), , drop = FALSE]
+    genotype_levels <- c("CTL", "KAT8KD")
+    group_means <- sapply(genotype_levels, function(geno) {
+      rowMeans(vst_tissue[, sample_info_tissue$Genotype == geno, drop = FALSE], na.rm = TRUE)
+    })
+    mat <- group_means[genes_to_plot, , drop = FALSE]
+  } else {
+    ## Create matrix using log2FC values
+    ## CTL = 0 (reference), KAT8KD = log2FC
+    log2fc_values <- de_data[genes_to_plot, lfc_col]
+    mat <- cbind(
+      CTL = rep(0, length(genes_to_plot)),
+      KAT8KD = log2fc_values
+    )
+    rownames(mat) <- genes_to_plot
+  }
 
   ## Order by category
   gene_order <- c()
@@ -578,30 +615,56 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   mat <- mat[gene_order, , drop = FALSE]
   gene_to_category <- gene_to_category[gene_order]
 
-  ## Clip values at ±lfc_clip
-  mat[mat > lfc_clip] <- lfc_clip
-  mat[mat < -lfc_clip] <- -lfc_clip
+  if (use_vst_group) {
+    mat <- t(scale(t(mat)))
+    mat <- mat[!rowSums(is.na(mat)), , drop = FALSE]
+    z_clip <- lfc_clip
+    mat[mat > z_clip] <- z_clip
+    mat[mat < -z_clip] <- -z_clip
 
-  ## Full viridis gradient using viridis package
-  col_fun <- colorRamp2(
-    c(-lfc_clip, -lfc_clip/2, 0, lfc_clip/2, lfc_clip),
-    viridis(5)  ## 5 colors from viridis palette
-  )
+    col_fun <- colorRamp2(
+      c(-z_clip, -z_clip/2, 0, z_clip/2, z_clip),
+      viridis(5)
+    )
 
-  ## Parameter caption
-  param_caption <- paste0(
-    heatmap_params$lfc_label,
-    " | ",
-    heatmap_params$reference,
-    " | Clipped at \u00b1",
-    lfc_clip
-  )
+    param_caption <- paste0(
+      "Z-scored mean VST by genotype | Clipped at \u00b1",
+      z_clip
+    )
+    legend_title <- "Z-score\n(VST mean)"
+    legend_at <- c(-z_clip, 0, z_clip)
+    legend_labels <- c(paste0("\u2264", -z_clip), "0", paste0("\u2265", z_clip))
+    heatmap_name <- "Z-score"
+  } else {
+    ## Clip values at ±lfc_clip
+    mat[mat > lfc_clip] <- lfc_clip
+    mat[mat < -lfc_clip] <- -lfc_clip
+
+    ## Full viridis gradient using viridis package
+    col_fun <- colorRamp2(
+      c(-lfc_clip, -lfc_clip/2, 0, lfc_clip/2, lfc_clip),
+      viridis(5)  ## 5 colors from viridis palette
+    )
+
+    ## Parameter caption
+    param_caption <- paste0(
+      heatmap_params$lfc_label,
+      " | ",
+      heatmap_params$reference,
+      " | Clipped at \u00b1",
+      lfc_clip
+    )
+    legend_title <- "log2 fold change\n(DESeq2)"
+    legend_at <- c(-lfc_clip, 0, lfc_clip)
+    legend_labels <- c(paste0("\u2264", -lfc_clip), "0", paste0("\u2265", lfc_clip))
+    heatmap_name <- "log2FC"
+  }
 
   ## Create heatmap
   ht <- Heatmap(
     mat,
     col = col_fun,
-    name = "log2FC",
+    name = heatmap_name,
     cluster_rows = FALSE,
     cluster_columns = FALSE,
     show_row_names = TRUE,
@@ -621,13 +684,13 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
     rect_gp = gpar(col = "grey80", lwd = 0.3),
     width = unit(2.5, "cm"),
     heatmap_legend_param = list(
-      title = "log2 fold change\n(DESeq2)",
+      title = legend_title,
       title_position = "topcenter",
       title_gp = gpar(fontsize = 8, fontface = "bold"),
       labels_gp = gpar(fontsize = 7),
       legend_height = unit(2.5, "cm"),
-      at = c(-lfc_clip, 0, lfc_clip),
-      labels = c(paste0("\u2264", -lfc_clip), "0", paste0("\u2265", lfc_clip))
+      at = legend_at,
+      labels = legend_labels
     )
   )
 
@@ -861,7 +924,7 @@ for (de_file in de_files) {
   contrast <- str_match(filename, "DE_tissue_(.+)_[0-9]+_[0-9]+\\.csv")[2]
   if (!is.na(contrast)) {
     ## Create grouped heatmap (log2FC: CTL=0, KAT8KD=log2FC)
-    create_grouped_heatmap(de_file, contrast, gene_categories)
+    create_grouped_heatmap(de_file, contrast, gene_categories, vst_data = vst_data)
 
     ## Create individual sample heatmap (z-scored VST)
     if (!is.null(vst_data)) {

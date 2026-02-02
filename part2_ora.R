@@ -623,17 +623,17 @@ tryCatch({
         
         ## Order by adjusted p-value (most significant at top)
         plot_data <- plot_data %>%
-          dplyr::arrange(dplyr::desc(p.adjust)) %>%
-          dplyr::mutate(pathway_name = factor(pathway_name, levels = pathway_name))
-        
-        ## Viridis gradient (REVERSED: yellow = significant, purple = less significant)
-        ## direction = -1 reverses the palette
+          dplyr::arrange(p.adjust) %>%
+          dplyr::mutate(pathway_name = factor(pathway_name, levels = rev(pathway_name)))
+
+        ## Viridis gradient (default: purple -> yellow)
+        ## Use -log10(p.adjust) so most significant = highest = yellow
+        plot_data$neg_log10_padj <- -log10(plot_data$p.adjust)
         fill_scale <- scale_fill_viridis_c(
           option = "viridis",
-          direction = -1,  ## Reverse: yellow (significant) -> purple (less significant)
-          name = "Adj. P-value",
-          labels = function(x) format(x, scientific = TRUE, digits = 2),
-          trans = "log10"
+          direction = 1,
+          name = expression(-log[10]~"(Adj. P-value)"),
+          labels = function(x) format(10^(-x), scientific = TRUE, digits = 2)
         )
         
         ## Parameter caption
@@ -658,7 +658,7 @@ tryCatch({
           sep = "\n"
         )
 
-        p_pathway <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = p.adjust)) +
+        p_pathway <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = neg_log10_padj)) +
           geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
           fill_scale +
           scale_x_continuous(expand = expansion(mult = c(0, 0.02))) +  ## Minimal padding
