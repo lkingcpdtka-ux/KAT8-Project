@@ -84,6 +84,16 @@ gsea_params <- list(
 )
 
 ## ============================================================
+## GSEA PLOT PARAMETERS
+## ============================================================
+## Used by: part4_visualizations.R
+
+gsea_plot_params <- list(
+  plot_width  = 9,
+  plot_height = 4.8
+)
+
+## ============================================================
 ## PUBLICATION PLOT PARAMETERS
 ## ============================================================
 ## Used by: part4_publication_plots.R
@@ -96,6 +106,10 @@ dotplot_params <- list(
   ## Top pathways to show
   top_n_gobp      = 15,
   top_n_kegg      = 15,
+
+  ## Plot sizing (fixed to keep dot plots consistent)
+  plot_width      = 5.2,
+  plot_height     = 4.6,
 
   ## GO:BP simplification cutoff (should match ora_params)
   gobp_simplify_cutoff = 0.7
@@ -142,6 +156,18 @@ volcano_colors <- list(
   up   = "#D95F02",   ## Orange for up-regulated
   down = "#02C8D3",   ## Cyan for down-regulated
   ns   = "grey70"     ## Grey for non-significant
+)
+
+## ============================================================
+## QC PLOT COLORS (PCA/MDS/Density)
+## ============================================================
+## Used by: part1_main_analysis.R, part4_visualizations.R
+
+qc_plot_params <- list(
+  ## Palette for DepotSex colors: any viridis option or "manual"
+  depot_sex_palette = "viridis",
+  ## Optional manual colors (named vector by DepotSex). Used when palette = "manual".
+  depot_sex_manual = NULL
 )
 
 ## ============================================================
