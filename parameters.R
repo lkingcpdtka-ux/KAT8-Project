@@ -104,24 +104,44 @@ dotplot_params <- list(
 ## ============================================================
 ## HEATMAP PARAMETERS
 ## ============================================================
-## Used by: part4_publication_plots.R, part4b_visualizations.R
+## Used by: part4_visualizations.R
 
 heatmap_params <- list(
-  lfc_clip    = 2.0,         ## Clip log2FC/Z-score at +/- this value
+  lfc_clip    = 2.0,         ## Clip z-scores at +/- this value
 
-  ## Color palette options:
-  ##   "muted_diverging" - Blue-grey-red (publication-ready, less saturated)
-  ##   "viridis"         - Standard viridis (purple-teal-yellow)
-  ##   "coolwarm"        - Blue-white-red
-  color_palette = "muted_diverging",
+  ## Custom gradient: Green (low) -> Orange (high)
+  ## For z-scores: negative = green, positive = orange
+  ## For -log10(FDR): low significance = green, high significance = orange
+  custom_gradient = c("#196B23", "#408F1C", "#8EB21E", "#D9B11C", "#E97132"),
 
-  ## Muted diverging colors (blue-grey-red): good for Z-scores, fold changes
-  ## These are less saturated/bold than default viridis
-  muted_colors = c("#3B4CC0", "#7092C0", "#B8B8B8", "#C07070", "#C03B3B"),
+  ## Display mode: "zscore" is standard for heatmaps
+  display_mode = "zscore",
 
-  ## Legacy labels (for backward compatibility)
+  ## Legacy labels
   lfc_label   = "log2FC (DESeq2)",
   reference   = "CTL=0 reference"
+)
+
+## ============================================================
+## ENRICHMENT PLOT COLORS
+## ============================================================
+## Used by: part4_visualizations.R (ORA bar plots, dot plots, fGSEA)
+
+enrichment_colors <- list(
+  ## Gradient for significance: Green (low) -> Orange (high)
+  ## Higher -log10(FDR) = more significant = orange
+  gradient = c("#196B23", "#408F1C", "#8EB21E", "#D9B11C", "#E97132")
+)
+
+## ============================================================
+## VOLCANO PLOT COLORS
+## ============================================================
+## Used by: part1_main_analysis.R, part4_visualizations.R
+
+volcano_colors <- list(
+  up   = "#D95F02",   ## Orange for up-regulated
+  down = "#02C8D3",   ## Cyan for down-regulated
+  ns   = "grey70"     ## Grey for non-significant
 )
 
 ## ============================================================
@@ -181,5 +201,5 @@ cat("       DEG thresholds: iWAT FDR<", iWAT_fdr_cut, " |logFC|>", iWAT_logFC_cu
 cat("                       gWAT FDR<", gWAT_fdr_cut, " |logFC|>", gWAT_logFC_cut, "\n", sep = "")
 cat("       ORA: top_n=", ora_params$top_n, ", simplify=", ora_params$simplify_cutoff, "\n", sep = "")
 cat("       GSEA: top_n_per_direction=", gsea_params$top_n_per_direction, ", FDR<", gsea_params$fdr_cutoff, "\n", sep = "")
-cat("       Heatmap: color_palette=", heatmap_params$color_palette, ", clip=", heatmap_params$lfc_clip, "\n", sep = "")
+cat("       Heatmap: display_mode=", heatmap_params$display_mode, ", clip=", heatmap_params$lfc_clip, "\n", sep = "")
 cat("       Interpretation: signature_method=", interpretation_params$signature_method, "\n", sep = "")
