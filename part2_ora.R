@@ -16,7 +16,7 @@
 ## setwd("C:/Users/lking/OneDrive - Louisiana State University/PBRC/Bioinformatics/KAT8KD_RNAseq")
 
 ## 1) Packages ----------------------------------------------
-required_pkgs <- c("dplyr", "ggplot2")
+required_pkgs <- c("dplyr", "ggplot2", "viridis")
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
 if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
 
@@ -35,6 +35,7 @@ if (length(to_install_bioc) > 0) BiocManager::install(to_install_bioc, ask = FAL
 suppressPackageStartupMessages({
   library(dplyr)
   library(ggplot2)
+  library(viridis)
   library(clusterProfiler)
   library(org.Mm.eg.db)
   library(enrichplot)
@@ -625,12 +626,12 @@ tryCatch({
           dplyr::arrange(dplyr::desc(p.adjust)) %>%
           dplyr::mutate(pathway_name = factor(pathway_name, levels = pathway_name))
         
-        ## Full viridis gradient (REVERSED: yellow = significant, purple = less significant)
-        ## Lower p-value = more significant = yellow
-        ## Higher p-value = less significant = purple
-        fill_scale <- scale_fill_gradientn(
-          colors = c("#FDE725", "#35B779", "#21908C", "#31688E", "#440154"),  ## Reversed viridis
-          name  = "Adj. P-value",
+        ## Viridis gradient (REVERSED: yellow = significant, purple = less significant)
+        ## direction = -1 reverses the palette
+        fill_scale <- scale_fill_viridis_c(
+          option = "viridis",
+          direction = -1,  ## Reverse: yellow (significant) -> purple (less significant)
+          name = "Adj. P-value",
           labels = function(x) format(x, scientific = TRUE, digits = 2),
           trans = "log10"
         )

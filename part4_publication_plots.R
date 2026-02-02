@@ -10,7 +10,7 @@
 ## =========================================================
 
 ## 1) Packages ----------------------------------------------
-required_pkgs <- c("dplyr", "ggplot2", "tidyr", "stringr")
+required_pkgs <- c("dplyr", "ggplot2", "tidyr", "stringr", "viridis")
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
 if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
 
@@ -28,6 +28,7 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(tidyr)
   library(stringr)
+  library(viridis)
   library(ComplexHeatmap)
   library(circlize)
   library(grid)
@@ -244,8 +245,9 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
 
   p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
     geom_point(aes(size = Count, color = neg_log10_fdr_clipped)) +
-    scale_color_gradientn(
-      colors = c("#440154", "#31688E", "#21908C", "#35B779", "#FDE725"),  ## Full viridis (purple=low, yellow=high)
+    scale_color_viridis_c(
+      option = "viridis",
+      direction = 1,  ## Default: purple (low) -> yellow (high), so high -log10 = yellow = significant
       name = "Adj. P-value",
       limits = c(min(plot_data$neg_log10_fdr_clipped), fdr_cap),
       breaks = color_breaks,
@@ -580,10 +582,10 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   mat[mat > lfc_clip] <- lfc_clip
   mat[mat < -lfc_clip] <- -lfc_clip
 
-  ## Full viridis gradient (purple -> blue -> teal -> green -> yellow)
+  ## Full viridis gradient using viridis package
   col_fun <- colorRamp2(
     c(-lfc_clip, -lfc_clip/2, 0, lfc_clip/2, lfc_clip),
-    c("#440154", "#31688E", "#21908C", "#35B779", "#FDE725")
+    viridis(5)  ## 5 colors from viridis palette
   )
 
   ## Parameter caption
@@ -752,10 +754,10 @@ create_individual_heatmap <- function(vst_data, de_file, contrast_name, gene_cat
   mat_scaled[mat_scaled > z_clip] <- z_clip
   mat_scaled[mat_scaled < -z_clip] <- -z_clip
 
-  ## Full viridis gradient (purple -> blue -> teal -> green -> yellow)
+  ## Full viridis gradient using viridis package
   col_fun <- colorRamp2(
     c(-z_clip, -z_clip/2, 0, z_clip/2, z_clip),
-    c("#440154", "#31688E", "#21908C", "#35B779", "#FDE725")
+    viridis(5)  ## 5 colors from viridis palette
   )
 
   ## Column annotation for genotype

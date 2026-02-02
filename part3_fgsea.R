@@ -17,7 +17,7 @@
 ## setwd("C:/Users/lking/OneDrive - Louisiana State University/PBRC/Bioinformatics/KAT8KD_RNAseq")
 
 ## 1) Packages ----------------------------------------------
-required_pkgs <- c("dplyr", "ggplot2", "scales")
+required_pkgs <- c("dplyr", "ggplot2", "scales", "viridis")
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
 if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
 
@@ -37,6 +37,7 @@ suppressPackageStartupMessages({
   library(dplyr)
   library(ggplot2)
   library(scales)
+  library(viridis)
   library(org.Mm.eg.db)
   library(AnnotationDbi)
   library(GO.db)
@@ -871,16 +872,14 @@ tryCatch({
           ## Get range for symmetric scale
           max_neg_log <- max(abs(plot_data$fill_value), na.rm = TRUE)
 
+          ## Create bidirectional viridis palette: yellow (sig) -> teal (neutral) -> yellow (sig)
+          viridis_cols <- viridis(5)  ## [purple, blue, teal, green, yellow]
+          bidir_colors <- c(viridis_cols[5], viridis_cols[4], viridis_cols[3], viridis_cols[4], viridis_cols[5])
+
           p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = fill_value)) +
             geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
             scale_fill_gradientn(
-              colors = c(
-                "#FDE725",  ## Yellow (most significant down)
-                "#35B779",  ## Green
-                "#21908C",  ## Teal (threshold/neutral)
-                "#35B779",  ## Green
-                "#FDE725"   ## Yellow (most significant up)
-              ),
+              colors = bidir_colors,  ## Yellow -> green -> teal -> green -> yellow
               values = scales::rescale(c(-max_neg_log, -max_neg_log/2, 0, max_neg_log/2, max_neg_log)),
               limits = c(-max_neg_log, max_neg_log),
               name = "Adj. P-value",

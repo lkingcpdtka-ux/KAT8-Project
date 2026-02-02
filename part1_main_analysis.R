@@ -822,11 +822,11 @@ tryCatch({
         mat_scaled <- mat_scaled[!rowSums(is.na(mat_scaled)), , drop = FALSE]
         
         if (nrow(mat_scaled) >= 2) {
-          ## Use full viridis gradient (purple -> blue -> teal -> green -> yellow)
+          ## Use full viridis gradient via viridis package
           max_val_deg <- max(abs(mat_scaled), na.rm = TRUE)
           deg_col_fun <- colorRamp2(
             c(-max_val_deg, -max_val_deg/2, 0, max_val_deg/2, max_val_deg),
-            c("#440154", "#31688E", "#21908C", "#35B779", "#FDE725")
+            viridis(5)
           )
           
           ## Column annotation (including Sex since depots combine both sexes)
@@ -916,11 +916,11 @@ tryCatch({
         
         if (nrow(heat_matrix_scaled) >= 2) {
 
-          ## Use full viridis gradient (purple -> blue -> teal -> green -> yellow)
+          ## Use full viridis gradient via viridis package
           max_val <- max(abs(heat_matrix_scaled), na.rm = TRUE)
           heat_col_fun <- colorRamp2(
             c(-max_val, -max_val/2, 0, max_val/2, max_val),
-            c("#440154", "#31688E", "#21908C", "#35B779", "#FDE725")
+            viridis(5)
           )
 
           ## Column annotation (including Sex since depots combine both sexes)
