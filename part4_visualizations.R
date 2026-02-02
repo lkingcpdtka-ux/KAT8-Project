@@ -343,14 +343,17 @@ if (generate_ora_barplots) {
     p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = neg_log10_padj)) +
       geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
       scale_fill_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
+      scale_x_continuous(expand = expansion(mult = c(0.08, 0.12))) +
       labs(title = paste0(db, " - ", direction_label, "\n", contrast), x = "Gene Ratio", y = NULL) +
       theme_classic(base_size = 12) +
       theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 12),
-            panel.border = element_rect(color = "black", fill = NA, linewidth = 1))
+            panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+            plot.margin = margin(6, 10, 6, 10))
 
     db_short <- gsub(":", "", db)
     ggsave(file.path(plots_dir, paste0("ORA_", db_short, "_", contrast, "_", direction, "_", run_tag, ".png")),
-           p, width = 10, height = max(5, nrow(plot_data) * 0.3), dpi = 300, bg = "white")
+           p, width = barplot_params$plot_width, height = barplot_params$plot_height,
+           dpi = 300, bg = "white")
     cat("[OK] Saved ORA bar plot: ", db, " ", contrast, " ", direction, "\n", sep = "")
   }
 }
@@ -393,18 +396,19 @@ if (generate_fgsea_barplots) {
     p <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = neg_log10_padj)) +
       geom_bar(stat = "identity", color = "black", linewidth = 0.3, width = 0.75) +
       scale_fill_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
+      scale_x_continuous(expand = expansion(mult = c(0.08, 0.12))) +
       labs(title = paste0("GSEA ", db, "\n", contrast), x = "NES", y = NULL) +
       theme_classic(base_size = 12) +
       theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 12),
             panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
-            plot.margin = margin(5, 5, 5, 5)) +
+            plot.margin = margin(6, 10, 6, 10)) +
       geom_vline(xintercept = 0, linetype = "dashed", color = "grey50")
 
     db_short <- tolower(gsub(":", "", db))
     ggsave(file.path(plots_dir, paste0("fGSEA_", db_short, "_", contrast, "_", run_tag, ".png")),
            p,
            width = gsea_plot_params$plot_width,
-           height = max(gsea_plot_params$plot_height, nrow(plot_data) * 0.3),
+           height = gsea_plot_params$plot_height,
            dpi = 300, bg = "white")
     cat("[OK] Saved fGSEA plot: ", db, " ", contrast, "\n", sep = "")
   }
@@ -456,12 +460,12 @@ if (generate_ora_dotplots) {
       geom_point(aes(size = Count, color = neg_log10_fdr)) +
       scale_color_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
       scale_size_continuous(name = "Count", range = c(2, 6)) +
-      scale_x_continuous(expand = expansion(mult = c(0.02, 0.04))) +
+      scale_x_continuous(expand = expansion(mult = c(0.08, 0.12))) +
       labs(title = paste0(db, " - ", direction_label, "\n", contrast), x = "Gene Ratio", y = NULL) +
       theme_bw(base_size = 10) +
       theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 11),
             panel.grid.minor = element_blank(),
-            plot.margin = margin(4, 4, 4, 4))
+            plot.margin = margin(6, 10, 6, 10))
 
     db_short <- gsub(":", "", db)
     ggsave(file.path(plots_dir, paste0("Dotplot_", db_short, "_", contrast, "_", direction, "_", run_tag, ".png")),
