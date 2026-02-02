@@ -453,6 +453,17 @@ if (generate_ora_dotplots) {
     c(min(pretty_vals) - extra_steps * step, max(pretty_vals) + extra_steps * step)
   }
 
+  dot_global_ratio_max <- 0
+  for (ora_file in ora_files) {
+    ora_data <- read.csv(ora_file, stringsAsFactors = FALSE)
+    if (nrow(ora_data) == 0) next
+    ratios <- sapply(strsplit(ora_data$GeneRatio, "/"), function(x) {
+      as.numeric(x[1]) / as.numeric(x[2])
+    })
+    dot_global_ratio_max <- max(dot_global_ratio_max, max(ratios, na.rm = TRUE))
+  }
+  dot_xlim <- get_padded_limits(c(0, dot_global_ratio_max), extra_steps = 1)
+
   for (ora_file in ora_files) {
     filename <- basename(ora_file)
     parts <- str_match(filename, "ORA_(gobp|kegg)_(.+)_(Up|Down)_[0-9]+_[0-9]+\\.csv")
@@ -485,8 +496,6 @@ if (generate_ora_dotplots) {
                     Description = factor(Description, levels = rev(Description)))
 
     direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
-
-    dot_xlim <- get_padded_limits(plot_data$GeneRatio_numeric, extra_steps = 1)
 
     p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
       geom_point(aes(size = Count, color = neg_log10_fdr)) +
