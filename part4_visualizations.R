@@ -295,12 +295,12 @@ if (generate_ora_barplots) {
     list.files(tables_dir, pattern = "^ORA_kegg_.*\\.csv$", full.names = TRUE)
   )
 
-  get_padded_limits <- function(values, extra_steps = 1) {
+  get_padded_limits <- function(values, pad_fraction = 0.05) {
     vals <- values[is.finite(values)]
     if (length(vals) == 0) return(NULL)
-    pretty_vals <- pretty(range(vals), n = 4)
-    step <- if (length(pretty_vals) > 1) diff(pretty_vals)[1] else 1
-    c(min(pretty_vals) - extra_steps * step, max(pretty_vals) + extra_steps * step)
+    rng <- range(vals)
+    pad <- diff(rng) * pad_fraction
+    c(rng[1] - pad, rng[2] + pad)
   }
 
   ora_global_ratio_max <- 0
@@ -312,7 +312,7 @@ if (generate_ora_barplots) {
     })
     ora_global_ratio_max <- max(ora_global_ratio_max, max(ratios, na.rm = TRUE))
   }
-  ora_xlim <- get_padded_limits(c(0, ora_global_ratio_max), extra_steps = 1)
+  ora_xlim <- get_padded_limits(c(0, ora_global_ratio_max), pad_fraction = 0.05)
 
   for (ora_file in ora_files) {
     filename <- basename(ora_file)
@@ -371,12 +371,12 @@ if (generate_fgsea_barplots) {
     list.files(tables_dir, pattern = "^fgsea_kegg_.*\\.csv$", full.names = TRUE)
   )
 
-  get_padded_limits <- function(values, extra_steps = 1) {
+  get_padded_limits <- function(values, pad_fraction = 0.05) {
     vals <- values[is.finite(values)]
     if (length(vals) == 0) return(NULL)
-    pretty_vals <- pretty(range(vals), n = 4)
-    step <- if (length(pretty_vals) > 1) diff(pretty_vals)[1] else 1
-    c(min(pretty_vals) - extra_steps * step, max(pretty_vals) + extra_steps * step)
+    rng <- range(vals)
+    pad <- diff(rng) * pad_fraction
+    c(rng[1] - pad, rng[2] + pad)
   }
 
   fgsea_global_abs_nes <- 0
@@ -385,7 +385,7 @@ if (generate_fgsea_barplots) {
     if (nrow(fgsea_data) == 0) next
     fgsea_global_abs_nes <- max(fgsea_global_abs_nes, max(abs(fgsea_data$NES), na.rm = TRUE))
   }
-  fgsea_xlim <- get_padded_limits(c(-fgsea_global_abs_nes, fgsea_global_abs_nes), extra_steps = 1)
+  fgsea_xlim <- get_padded_limits(c(-fgsea_global_abs_nes, fgsea_global_abs_nes), pad_fraction = 0.05)
 
   for (fgsea_file in fgsea_files) {
     filename <- basename(fgsea_file)
