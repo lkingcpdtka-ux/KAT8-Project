@@ -625,25 +625,17 @@ tryCatch({
           dplyr::arrange(dplyr::desc(p.adjust)) %>%
           dplyr::mutate(pathway_name = factor(pathway_name, levels = pathway_name))
         
-        ## Direction-specific color gradient (orange for Up, blue for Down)
-        ## Lower p-value = more significant = darker color
-        if (direction == "Up") {
-          fill_scale <- scale_fill_gradient(
-            low   = "#E69F00",  ## Dark orange (most significant)
-            high  = "#FDD49E",  ## Light orange (least significant)
-            name  = "Adj. P-value",
-            labels = function(x) format(x, scientific = TRUE, digits = 2),
-            trans = "log10"
-          )
-        } else {
-          fill_scale <- scale_fill_gradient(
-            low   = "#0072B2",  ## Dark blue (most significant)
-            high  = "#9ECAE1",  ## Light blue (least significant)
-            name  = "Adj. P-value",
-            labels = function(x) format(x, scientific = TRUE, digits = 2),
-            trans = "log10"
-          )
-        }
+        ## Color gradient: light green (significant) to purple (less significant)
+        ## Lower p-value = more significant = light green
+        ## Higher p-value = less significant = purple
+        ## Same colors for both directions (consistent viridis-inspired scheme)
+        fill_scale <- scale_fill_gradient(
+          low   = "#7AD151",  ## Light green (most significant)
+          high  = "#440154",  ## Purple (least significant)
+          name  = "Adj. P-value",
+          labels = function(x) format(x, scientific = TRUE, digits = 2),
+          trans = "log10"
+        )
         
         ## Parameter caption
         universe_label <- if (is.null(universe_entrez)) {
@@ -670,6 +662,7 @@ tryCatch({
         p_pathway <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = p.adjust)) +
           geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
           fill_scale +
+          scale_x_continuous(expand = expansion(mult = c(0, 0.02))) +  ## Minimal padding
           labs(
             title = paste0(toupper(db_name), " Pathways (ORA - ", direction, ")\n", contrast_name),
             x     = "Gene Ratio",

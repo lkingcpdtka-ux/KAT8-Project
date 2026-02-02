@@ -197,16 +197,11 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
       Description = factor(Description, levels = Description)
     )
 
-  ## Direction-specific color gradient (cool to warm, light to dark)
-  if (direction == "Up") {
-    ## Orange gradient for upregulated
-    color_low <- "#FDD49E"   ## Light orange
-    color_high <- "#E69F00"  ## Orange
-  } else {
-    ## Blue gradient for downregulated
-    color_low <- "#9ECAE1"   ## Light blue
-    color_high <- "#0072B2"  ## Blue
-  }
+  ## Color gradient: light green (significant) to purple (less significant)
+  ## Same colors for both directions (viridis-inspired scheme)
+  ## Note: low = most significant (high -log10 FDR), high = least significant (low -log10 FDR)
+  color_low <- "#440154"   ## Purple (least significant - low -log10 FDR value)
+  color_high <- "#7AD151"  ## Light green (most significant - high -log10 FDR value)
 
   ## Build title in journal format
   direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
@@ -269,7 +264,7 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
       breaks = pretty(plot_data$Count, n = 4)
     ) +
     scale_x_continuous(
-      expand = expansion(mult = c(0.02, 0.08))
+      expand = expansion(mult = c(0.1, 0.1))  ## More padding on both sides
     ) +
     labs(
       title = plot_title,
@@ -486,10 +481,10 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   mat[mat > lfc_clip] <- lfc_clip
   mat[mat < -lfc_clip] <- -lfc_clip
 
-  ## Color scale: blue-white-orange, centered at 0
+  ## Color scale: viridis-inspired diverging (purple -> white -> yellow)
   col_fun <- colorRamp2(
     c(-lfc_clip, 0, lfc_clip),
-    c("#2166AC", "white", "#E69F00")  ## Blue-white-orange
+    c("#440154", "white", "#FDE725")  ## Purple (down) -> white -> yellow (up)
   )
 
   ## Parameter caption

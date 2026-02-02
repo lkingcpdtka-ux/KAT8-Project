@@ -875,11 +875,11 @@ tryCatch({
             geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
             scale_fill_gradientn(
               colors = c(
-                "#0072B2",  ## Dark blue (most significant down)
-                "#9ECAE1",  ## Light blue (least significant down)
+                "#7AD151",  ## Light green (most significant down)
+                "#440154",  ## Purple (least significant down)
                 "grey95",   ## Near white (threshold)
-                "#FDD49E",  ## Light orange (least significant up)
-                "#E69F00"   ## Dark orange (most significant up)
+                "#440154",  ## Purple (least significant up)
+                "#7AD151"   ## Light green (most significant up)
               ),
               values = scales::rescale(c(-max_neg_log, -1.3, 0, 1.3, max_neg_log)),
               limits = c(-max_neg_log, max_neg_log),
@@ -893,12 +893,13 @@ tryCatch({
                 })
               },
               guide = guide_colorbar(
-                title = "Adj. P-value\n(blue=down, orange=up)",
+                title = "Adj. P-value\n(green=significant)",
                 title.position = "top",
                 barwidth = 1,
                 barheight = 4
               )
             ) +
+            scale_x_continuous(expand = expansion(mult = c(0.02, 0.02))) +  ## Minimal padding
             labs(
               title = paste0(method_label, " ", toupper(db_name), ": ", contrast_name),
               x = "Normalized Enrichment Score (NES)",
@@ -918,11 +919,11 @@ tryCatch({
               plot.caption = element_text(size = 8, color = "grey40", hjust = 0.5, margin = margin(t = 8))
             ) +
             geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5) +
-            ## Add annotation for direction interpretation
+            ## Add annotation for direction interpretation (viridis colors)
             annotate("text", x = Inf, y = Inf, label = "Up", hjust = 1.1, vjust = -0.5,
-                     size = 3, color = "#E69F00", fontface = "bold") +
+                     size = 3, color = "#FDE725", fontface = "bold") +
             annotate("text", x = -Inf, y = Inf, label = "Down", hjust = -0.1, vjust = -0.5,
-                     size = 3, color = "#0072B2", fontface = "bold")
+                     size = 3, color = "#440154", fontface = "bold")
           
           plot_file <- paste0("fgsea_plot_", db_name, "_", contrast_name, "_", run_tag, ".png")
           ggsave(file.path(outdir, "plots", plot_file), plot = p_fgsea, width = 12,
