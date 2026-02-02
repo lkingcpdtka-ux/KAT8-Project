@@ -455,11 +455,10 @@ tryCatch({
   cat("[OK] Saved VST matrix for heatmaps: ", vst_file, "\n", sep = "")
 
   genotype_colors <- c("CTL" = "#0072B2", "KAT8KD" = "#E69F00")
-  depot_sex_fill <- c(
-    "iWAT_F" = "#56B4E9",
-    "iWAT_M" = "#0072B2",
-    "gWAT_F" = "#F0E442",
-    "gWAT_M" = "#E69F00"
+  depot_sex_levels <- sort(unique(as.character(colData(dds_tissue)$DepotSex)))
+  depot_sex_fill <- setNames(
+    viridis(length(depot_sex_levels), option = "viridis"),
+    depot_sex_levels
   )
   
   ## 4.9) Density plots (VST before/after filtering) --------
@@ -754,6 +753,12 @@ tryCatch({
     
     label_genes <- dplyr::bind_rows(up_top_fdr, up_top_fc, down_top_fdr, down_top_fc) %>%
       dplyr::distinct(gene_name, .keep_all = TRUE)
+
+    volcano_colors <- c(
+      "Up" = viridis(6, option = "viridis")[4],
+      "Down" = viridis(6, option = "viridis")[3],
+      "NS" = "grey85"
+    )
     
     vol_tissue <- ggplot(
       tt_plot,
@@ -761,7 +766,7 @@ tryCatch({
     ) +
       geom_point(size = 2, alpha = 0.8) +
       scale_color_manual(
-        values = c("Up" = "#FDE725", "Down" = "#440154", "NS" = "#21908C"),  ## Full viridis: yellow/purple/teal
+        values = volcano_colors,
         name   = "Significance"
       ) +
       geom_point(data = label_genes, aes(color = sig_cat), size = 3) +
@@ -826,7 +831,7 @@ tryCatch({
           max_val_deg <- max(abs(mat_scaled), na.rm = TRUE)
           deg_col_fun <- colorRamp2(
             c(-max_val_deg, -max_val_deg/2, 0, max_val_deg/2, max_val_deg),
-            viridis(5)
+            viridis(5, option = "cividis")
           )
           
           ## Column annotation (including Sex since depots combine both sexes)
@@ -920,7 +925,7 @@ tryCatch({
           max_val <- max(abs(heat_matrix_scaled), na.rm = TRUE)
           heat_col_fun <- colorRamp2(
             c(-max_val, -max_val/2, 0, max_val/2, max_val),
-            viridis(5)
+            viridis(5, option = "cividis")
           )
 
           ## Column annotation (including Sex since depots combine both sexes)
@@ -1063,20 +1068,20 @@ tryCatch({
     
     if (nrow(volcano_df) > 0) {
       
-      ## Create custom color scheme using keyvals (full viridis palette)
-      keyvals_color <- rep("#21908C", nrow(volcano_df))  ## Viridis teal for NS
+      ## Create custom color scheme using viridis palette (no color for NS)
+      keyvals_color <- rep(volcano_colors["NS"], nrow(volcano_df))
       names(keyvals_color) <- rep("NS", nrow(volcano_df))
 
-      ## Significant UP (viridis yellow)
+      ## Significant UP (viridis)
       sig_up_idx <- which(volcano_df$padj < cn_fdr_cut &
                             volcano_df$logFC >= cn_logFC_cut)
-      keyvals_color[sig_up_idx] <- "#FDE725"
+      keyvals_color[sig_up_idx] <- volcano_colors["Up"]
       names(keyvals_color)[sig_up_idx] <- "Significant Up"
 
-      ## Significant DOWN (viridis purple)
+      ## Significant DOWN (viridis)
       sig_down_idx <- which(volcano_df$padj < cn_fdr_cut &
                               volcano_df$logFC <= -cn_logFC_cut)
-      keyvals_color[sig_down_idx] <- "#440154"
+      keyvals_color[sig_down_idx] <- volcano_colors["Down"]
       names(keyvals_color)[sig_down_idx] <- "Significant Down"
       
       ev_plot <- EnhancedVolcano(

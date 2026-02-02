@@ -77,9 +77,9 @@ suppressPackageStartupMessages({
 ## UNIFIED PLOT THEME & COLORS
 ## =======================================================
 plot_colors <- list(
-  genotype = c(CTL = "#0072B2", KAT8KD = "#D55E00"),
+  genotype = setNames(viridis(2, option = "viridis"), c("CTL", "KAT8KD")),
   viridis_option = "viridis",
-  ns_grey = "grey75",
+  ns_grey = "grey85",
   text_black = "black",
   line_grey = "grey40"
 )
@@ -383,8 +383,8 @@ tryCatch({
     paste0("  Source: msigdbr package (MSigDB v2024.1 or later)"),
     "",
     "--- Color Schemes ---",
-    paste0("  Genotype: CTL=#0072B2 (blue), KAT8KD=#D55E00 (orange)"),
-    paste0("  Significance: Up=#E69F00 (orange), Down=#0072B2 (teal), NS=grey70"),
+    paste0("  Genotype: viridis palette (CTL -> KAT8KD)"),
+    paste0("  Significance: viridis mid-tones for Up/Down, NS=grey85"),
     paste0("  Heatmap: Teal-White-Orange (diverging, centered at 0)"),
     paste0("  Theme: Publication-ready (clean, high-contrast, black axes)"),
     "",
@@ -628,10 +628,16 @@ tryCatch({
   label_genes <- dplyr::bind_rows(up_top_fdr, up_top_fc, down_top_fdr, down_top_fc) %>%
     dplyr::distinct(gene_name, .keep_all = TRUE)
 
+  volcano_colors <- c(
+    "Up" = viridis(6, option = plot_colors$viridis_option)[4],
+    "Down" = viridis(6, option = plot_colors$viridis_option)[3],
+    "NS" = plot_colors$ns_grey
+  )
+
   vol_cells <- ggplot(tt_plot, aes(x = logFC, y = negLogFDR, color = sig_cat)) +
     geom_point(size = 2, alpha = 0.8) +
     scale_color_manual(
-      values = c("Up" = "#E69F00", "Down" = "#0072B2", "NS" = "grey70"),
+      values = volcano_colors,
       name   = "Significance"
     ) +
     geom_point(data = label_genes, aes(color = sig_cat), size = 3) +

@@ -623,8 +623,8 @@ tryCatch({
         
         ## Order by adjusted p-value (most significant at top)
         plot_data <- plot_data %>%
-          dplyr::arrange(dplyr::desc(p.adjust)) %>%
-          dplyr::mutate(pathway_name = factor(pathway_name, levels = pathway_name))
+          dplyr::arrange(p.adjust, desc(GeneRatio_numeric)) %>%
+          dplyr::mutate(pathway_name = factor(pathway_name, levels = rev(pathway_name)))
         
         ## Viridis gradient (REVERSED: yellow = significant, purple = less significant)
         ## direction = -1 reverses the palette
