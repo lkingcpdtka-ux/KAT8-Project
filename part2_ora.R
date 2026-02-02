@@ -627,13 +627,14 @@ tryCatch({
           dplyr::mutate(pathway_name = factor(pathway_name, levels = rev(pathway_name)))
 
         ## Viridis gradient (default: purple -> yellow)
-        ## Use -log10(p.adjust) so most significant = highest = yellow
+        ## Use -log10(p.adjust) internally so most significant = yellow
+        ## Legend shows ACTUAL p-values (standard journal practice)
         plot_data$neg_log10_padj <- -log10(plot_data$p.adjust)
         fill_scale <- scale_fill_viridis_c(
           option = "viridis",
           direction = 1,
-          name = expression(-log[10]~"(Adj. P-value)"),
-          labels = function(x) format(10^(-x), scientific = TRUE, digits = 2)
+          name = "Adj. P-value",
+          labels = function(x) format(10^(-x), scientific = TRUE, digits = 1)
         )
         
         ## Parameter caption
