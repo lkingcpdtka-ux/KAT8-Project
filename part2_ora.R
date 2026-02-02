@@ -630,11 +630,31 @@ tryCatch({
         ## Use -log10(p.adjust) internally so most significant = yellow
         ## Legend shows ACTUAL p-values (standard journal practice)
         plot_data$neg_log10_padj <- -log10(plot_data$p.adjust)
+
+        ## Calculate pretty breaks at standard p-value thresholds
+        ## Standard thresholds: 0.05, 0.01, 0.001, 1e-04, 1e-05, etc.
+        standard_pvals <- c(0.05, 0.01, 0.001, 1e-04, 1e-05, 1e-06, 1e-08, 1e-10)
+        standard_breaks <- -log10(standard_pvals)
+        data_range <- range(plot_data$neg_log10_padj, na.rm = TRUE)
+        ## Select breaks within data range (with small buffer)
+        valid_breaks <- standard_breaks[standard_breaks >= data_range[1] - 0.3 &
+                                        standard_breaks <= data_range[2] + 0.3]
+        ## Ensure at least 3 breaks
+        if (length(valid_breaks) < 3) {
+          valid_breaks <- seq(floor(data_range[1]), ceiling(data_range[2]), by = 1)
+        }
+
         fill_scale <- scale_fill_viridis_c(
           option = "viridis",
           direction = 1,
           name = "Adj. P-value",
-          labels = function(x) format(10^(-x), scientific = TRUE, digits = 1)
+          breaks = valid_breaks,
+          labels = function(x) {
+            pvals <- 10^(-x)
+            ifelse(pvals >= 0.01,
+                   sprintf("%.2f", pvals),
+                   formatC(pvals, format = "e", digits = 0))
+          }
         )
         
         ## Parameter caption

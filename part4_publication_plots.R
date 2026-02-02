@@ -235,12 +235,17 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
 
   ## Create dot plot
   ## Size = Count, Color = -log10(FDR) but labeled as actual p-values
-  ## Generate nice breaks for the color scale
-  color_breaks <- c(
-    min(plot_data$neg_log10_fdr_clipped),
-    (min(plot_data$neg_log10_fdr_clipped) + fdr_cap) / 2,
-    fdr_cap
-  )
+  ## Use standard p-value thresholds for pretty breaks (consistent with bar plots)
+  standard_pvals <- c(0.05, 0.01, 0.001, 1e-04, 1e-05, 1e-06, 1e-08, 1e-10)
+  standard_breaks <- -log10(standard_pvals)
+  data_range <- c(min(plot_data$neg_log10_fdr_clipped), fdr_cap)
+  ## Select breaks within data range (with small buffer)
+  valid_breaks <- standard_breaks[standard_breaks >= data_range[1] - 0.3 &
+                                  standard_breaks <= data_range[2] + 0.3]
+  ## Ensure at least 3 breaks
+  if (length(valid_breaks) < 3) {
+    valid_breaks <- seq(floor(data_range[1]), ceiling(data_range[2]), by = 1)
+  }
 
   p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
     geom_point(aes(size = Count, color = neg_log10_fdr_clipped)) +
@@ -249,11 +254,12 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
       direction = 1,  ## Default: purple (low) -> yellow (high), so high -log10 = yellow = significant
       name = "Adj. P-value",
       limits = c(min(plot_data$neg_log10_fdr_clipped), fdr_cap),
-      breaks = color_breaks,
+      breaks = valid_breaks,
       labels = function(x) {
-        ## Convert -log10(p) back to p-value for display
         pvals <- 10^(-x)
-        sapply(pvals, function(p) format(p, scientific = TRUE, digits = 1))
+        ifelse(pvals >= 0.01,
+               sprintf("%.2f", pvals),
+               formatC(pvals, format = "e", digits = 0))
       }
     ) +
     scale_size_continuous(
