@@ -109,9 +109,10 @@ dotplot_params <- list(
 heatmap_params <- list(
   lfc_clip    = 2.0,         ## Clip z-scores at +/- this value
 
-  ## Custom gradient: Orange-Yellow-Lime-Green (high to low significance/expression)
-  ## Used for heatmaps, bar plots, and dot plots
-  custom_gradient = c("#E97132", "#D9B11C", "#8EB21E", "#408F1C", "#196B23"),
+  ## Custom gradient: Green (low) -> Orange (high)
+  ## For z-scores: negative = green, positive = orange
+  ## For -log10(FDR): low significance = green, high significance = orange
+  custom_gradient = c("#196B23", "#408F1C", "#8EB21E", "#D9B11C", "#E97132"),
 
   ## Display mode: "zscore" is standard for heatmaps
   display_mode = "zscore",
@@ -127,9 +128,9 @@ heatmap_params <- list(
 ## Used by: part4_visualizations.R (ORA bar plots, dot plots, fGSEA)
 
 enrichment_colors <- list(
-  ## Gradient for significance: Orange (high) -> Green (low)
-  ## -log10(FDR): higher values = more significant = orange
-  gradient = c("#E97132", "#D9B11C", "#8EB21E", "#408F1C", "#196B23")
+  ## Gradient for significance: Green (low) -> Orange (high)
+  ## Higher -log10(FDR) = more significant = orange
+  gradient = c("#196B23", "#408F1C", "#8EB21E", "#D9B11C", "#E97132")
 )
 
 ## ============================================================
