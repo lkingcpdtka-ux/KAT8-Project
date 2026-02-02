@@ -625,13 +625,11 @@ tryCatch({
           dplyr::arrange(dplyr::desc(p.adjust)) %>%
           dplyr::mutate(pathway_name = factor(pathway_name, levels = pathway_name))
         
-        ## Color gradient: light green (significant) to purple (less significant)
-        ## Lower p-value = more significant = light green
+        ## Full viridis gradient (REVERSED: yellow = significant, purple = less significant)
+        ## Lower p-value = more significant = yellow
         ## Higher p-value = less significant = purple
-        ## Same colors for both directions (consistent viridis-inspired scheme)
-        fill_scale <- scale_fill_gradient(
-          low   = "#7AD151",  ## Light green (most significant)
-          high  = "#440154",  ## Purple (least significant)
+        fill_scale <- scale_fill_gradientn(
+          colors = c("#FDE725", "#35B779", "#21908C", "#31688E", "#440154"),  ## Reversed viridis
           name  = "Adj. P-value",
           labels = function(x) format(x, scientific = TRUE, digits = 2),
           trans = "log10"

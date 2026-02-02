@@ -197,11 +197,9 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
       Description = factor(Description, levels = Description)
     )
 
-  ## Color gradient: light green (significant) to purple (less significant)
-  ## Same colors for both directions (viridis-inspired scheme)
-  ## Note: low = most significant (high -log10 FDR), high = least significant (low -log10 FDR)
-  color_low <- "#440154"   ## Purple (least significant - low -log10 FDR value)
-  color_high <- "#7AD151"  ## Light green (most significant - high -log10 FDR value)
+  ## Full viridis gradient (REVERSED: yellow = significant, purple = less significant)
+  ## Note: high -log10 FDR = more significant = yellow
+  ## low -log10 FDR = less significant = purple
 
   ## Build title in journal format
   direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
@@ -246,9 +244,8 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
 
   p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
     geom_point(aes(size = Count, color = neg_log10_fdr_clipped)) +
-    scale_color_gradient(
-      low = color_low,
-      high = color_high,
+    scale_color_gradientn(
+      colors = c("#440154", "#31688E", "#21908C", "#35B779", "#FDE725"),  ## Full viridis (purple=low, yellow=high)
       name = "Adj. P-value",
       limits = c(min(plot_data$neg_log10_fdr_clipped), fdr_cap),
       breaks = color_breaks,
@@ -583,10 +580,10 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   mat[mat > lfc_clip] <- lfc_clip
   mat[mat < -lfc_clip] <- -lfc_clip
 
-  ## Color scale: viridis-inspired diverging (teal -> white -> lime green)
+  ## Full viridis gradient (purple -> blue -> teal -> green -> yellow)
   col_fun <- colorRamp2(
-    c(-lfc_clip, 0, lfc_clip),
-    c("#2D708E", "white", "#7AD151")  ## Teal (down) -> white -> lime green (up)
+    c(-lfc_clip, -lfc_clip/2, 0, lfc_clip/2, lfc_clip),
+    c("#440154", "#31688E", "#21908C", "#35B779", "#FDE725")
   )
 
   ## Parameter caption
@@ -755,10 +752,10 @@ create_individual_heatmap <- function(vst_data, de_file, contrast_name, gene_cat
   mat_scaled[mat_scaled > z_clip] <- z_clip
   mat_scaled[mat_scaled < -z_clip] <- -z_clip
 
-  ## Color scale: viridis-inspired diverging (teal -> white -> lime green)
+  ## Full viridis gradient (purple -> blue -> teal -> green -> yellow)
   col_fun <- colorRamp2(
-    c(-z_clip, 0, z_clip),
-    c("#2D708E", "white", "#7AD151")
+    c(-z_clip, -z_clip/2, 0, z_clip/2, z_clip),
+    c("#440154", "#31688E", "#21908C", "#35B779", "#FDE725")
   )
 
   ## Column annotation for genotype

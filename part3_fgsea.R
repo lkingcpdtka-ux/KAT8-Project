@@ -875,16 +875,16 @@ tryCatch({
             geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
             scale_fill_gradientn(
               colors = c(
-                "#7AD151",  ## Light green (most significant down)
-                "#440154",  ## Purple (least significant down)
-                "grey95",   ## Near white (threshold)
-                "#440154",  ## Purple (least significant up)
-                "#7AD151"   ## Light green (most significant up)
+                "#FDE725",  ## Yellow (most significant down)
+                "#35B779",  ## Green
+                "#21908C",  ## Teal (threshold/neutral)
+                "#35B779",  ## Green
+                "#FDE725"   ## Yellow (most significant up)
               ),
-              values = scales::rescale(c(-max_neg_log, -1.3, 0, 1.3, max_neg_log)),
+              values = scales::rescale(c(-max_neg_log, -max_neg_log/2, 0, max_neg_log/2, max_neg_log)),
               limits = c(-max_neg_log, max_neg_log),
               name = "Adj. P-value",
-              breaks = c(-max_neg_log, -1.3, 0, 1.3, max_neg_log),
+              breaks = c(-max_neg_log, 0, max_neg_log),
               labels = function(x) {
                 sapply(x, function(val) {
                   if (abs(val) < 1e-6) return("1")
@@ -893,7 +893,7 @@ tryCatch({
                 })
               },
               guide = guide_colorbar(
-                title = "Adj. P-value\n(green=significant)",
+                title = "Adj. P-value\n(yellow=significant)",
                 title.position = "top",
                 barwidth = 1,
                 barheight = 4
