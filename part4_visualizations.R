@@ -223,6 +223,16 @@ if (generate_pca_plot || generate_mds_plot || generate_density_plot) {
 if (generate_volcano_plots) {
   cat("\n=== SECTION B: VOLCANO PLOTS ===\n")
 
+  volcano_label_genes <- NULL
+  vst_files <- list.files(tables_dir, pattern = "^VST_matrix_heatmap_.*\\.rds$", full.names = TRUE)
+  if (length(vst_files) > 0) {
+    vst_file <- vst_files[order(file.info(vst_files)$mtime, decreasing = TRUE)][1]
+    vst_data <- readRDS(vst_file)
+    if (!is.null(vst_data$genes_of_interest)) {
+      volcano_label_genes <- unique(vst_data$genes_of_interest)
+    }
+  }
+
   de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
 
   for (de_file in de_files) {
@@ -251,14 +261,18 @@ if (generate_volcano_plots) {
         sig_cat = factor(sig_cat, levels = c("Up", "Down", "NS"))
       )
 
-    ## Get top genes to label
-    tt_sig <- tt_plot %>% dplyr::filter(sig_cat != "NS")
+    ## Get genes to label (match heatmap genes when available)
+    if (!is.null(volcano_label_genes)) {
+      label_genes <- tt_plot %>% dplyr::filter(gene_name %in% volcano_label_genes)
+    } else {
+      tt_sig <- tt_plot %>% dplyr::filter(sig_cat != "NS")
 
-    top_up <- tt_sig %>% dplyr::filter(sig_cat == "Up") %>%
-      dplyr::arrange(padj) %>% dplyr::slice_head(n = 10)
-    top_down <- tt_sig %>% dplyr::filter(sig_cat == "Down") %>%
-      dplyr::arrange(padj) %>% dplyr::slice_head(n = 10)
-    label_genes <- dplyr::bind_rows(top_up, top_down)
+      top_up <- tt_sig %>% dplyr::filter(sig_cat == "Up") %>%
+        dplyr::arrange(padj) %>% dplyr::slice_head(n = 10)
+      top_down <- tt_sig %>% dplyr::filter(sig_cat == "Down") %>%
+        dplyr::arrange(padj) %>% dplyr::slice_head(n = 10)
+      label_genes <- dplyr::bind_rows(top_up, top_down)
+    }
 
     p <- ggplot(tt_plot, aes(x = logFC, y = negLogFDR, color = sig_cat)) +
       geom_point(size = 2, alpha = 0.8) +
@@ -377,17 +391,21 @@ if (generate_fgsea_barplots) {
     if (nrow(plot_data) == 0) next
 
     p <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = neg_log10_padj)) +
-      geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
+      geom_bar(stat = "identity", color = "black", linewidth = 0.3, width = 0.75) +
       scale_fill_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
       labs(title = paste0("GSEA ", db, "\n", contrast), x = "NES", y = NULL) +
       theme_classic(base_size = 12) +
       theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 12),
-            panel.border = element_rect(color = "black", fill = NA, linewidth = 1)) +
+            panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+            plot.margin = margin(5, 5, 5, 5)) +
       geom_vline(xintercept = 0, linetype = "dashed", color = "grey50")
 
     db_short <- tolower(gsub(":", "", db))
     ggsave(file.path(plots_dir, paste0("fGSEA_", db_short, "_", contrast, "_", run_tag, ".png")),
-           p, width = 11, height = max(5, nrow(plot_data) * 0.35), dpi = 300, bg = "white")
+           p,
+           width = gsea_plot_params$plot_width,
+           height = max(gsea_plot_params$plot_height, nrow(plot_data) * 0.3),
+           dpi = 300, bg = "white")
     cat("[OK] Saved fGSEA plot: ", db, " ", contrast, "\n", sep = "")
   }
 }
@@ -429,7 +447,7 @@ if (generate_ora_dotplots) {
     if (nrow(plot_data) == 0) next
 
     plot_data <- plot_data %>%
-      dplyr::mutate(Description = str_wrap(Description, width = 45),
+      dplyr::mutate(Description = str_wrap(Description, width = 32),
                     Description = factor(Description, levels = rev(Description)))
 
     direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
@@ -438,14 +456,17 @@ if (generate_ora_dotplots) {
       geom_point(aes(size = Count, color = neg_log10_fdr)) +
       scale_color_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
       scale_size_continuous(name = "Count", range = c(2, 6)) +
+      scale_x_continuous(expand = expansion(mult = c(0.02, 0.04))) +
       labs(title = paste0(db, " - ", direction_label, "\n", contrast), x = "Gene Ratio", y = NULL) +
       theme_bw(base_size = 10) +
       theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 11),
-            panel.grid.minor = element_blank())
+            panel.grid.minor = element_blank(),
+            plot.margin = margin(4, 4, 4, 4))
 
     db_short <- gsub(":", "", db)
     ggsave(file.path(plots_dir, paste0("Dotplot_", db_short, "_", contrast, "_", direction, "_", run_tag, ".png")),
-           p, width = 6.5, height = max(4, nrow(plot_data) * 0.25 + 1.5), dpi = 300, bg = "white")
+           p, width = dotplot_params$plot_width, height = dotplot_params$plot_height,
+           dpi = 300, bg = "white")
     cat("[OK] Saved dot plot: ", db, " ", contrast, " ", direction, "\n", sep = "")
   }
 }
