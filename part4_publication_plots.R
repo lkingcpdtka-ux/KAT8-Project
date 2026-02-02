@@ -561,12 +561,12 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
     return(NULL)
   }
 
-  ## Create matrix using log2FC values
-  ## CTL = 0 (reference), KAT8KD = log2FC
+  ## Create matrix using log2FC values centered around zero
+  ## CTL = -log2FC/2, KAT8KD = +log2FC/2 to show direction in both columns
   log2fc_values <- de_data[genes_to_plot, lfc_col]
   mat <- cbind(
-    CTL = rep(0, length(genes_to_plot)),
-    KAT8KD = log2fc_values
+    CTL = -log2fc_values / 2,
+    KAT8KD = log2fc_values / 2
   )
   rownames(mat) <- genes_to_plot
 
@@ -594,7 +594,7 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
     heatmap_params$lfc_label,
     " | ",
     heatmap_params$reference,
-    " | Clipped at \u00b1",
+    " | CTL=-log2FC/2, KAT8KD=+log2FC/2 | Clipped at \u00b1",
     lfc_clip
   )
 

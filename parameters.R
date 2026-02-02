@@ -109,7 +109,7 @@ dotplot_params <- list(
 heatmap_params <- list(
   lfc_clip    = 2.0,         ## Clip log2FC at +/- this value
   lfc_label   = "log2FC (DESeq2)",
-  reference   = "CTL=0 reference"
+  reference   = "Centered on 0 (CTL=-log2FC/2, KAT8KD=+log2FC/2)"
 )
 
 ## ============================================================

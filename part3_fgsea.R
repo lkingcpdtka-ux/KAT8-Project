@@ -872,14 +872,14 @@ tryCatch({
           ## Get range for symmetric scale
           max_neg_log <- max(abs(plot_data$fill_value), na.rm = TRUE)
 
-          ## Create bidirectional viridis palette: yellow (sig) -> teal (neutral) -> yellow (sig)
-          viridis_cols <- viridis(5)  ## [purple, blue, teal, green, yellow]
-          bidir_colors <- c(viridis_cols[5], viridis_cols[4], viridis_cols[3], viridis_cols[4], viridis_cols[5])
+          ## Create bidirectional viridis palette (green -> blue mid-range, no yellow/purple)
+          viridis_cols <- viridis(5, begin = 0.3, end = 0.7, option = "viridis")
+          bidir_colors <- c(viridis_cols[1], viridis_cols[2], viridis_cols[3], viridis_cols[4], viridis_cols[5])
 
           p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = fill_value)) +
             geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
             scale_fill_gradientn(
-              colors = bidir_colors,  ## Yellow -> green -> teal -> green -> yellow
+              colors = bidir_colors,  ## Mid-range viridis: blue -> teal -> green
               values = scales::rescale(c(-max_neg_log, -max_neg_log/2, 0, max_neg_log/2, max_neg_log)),
               limits = c(-max_neg_log, max_neg_log),
               name = "Adj. P-value",
@@ -892,7 +892,7 @@ tryCatch({
                 })
               },
               guide = guide_colorbar(
-                title = "Adj. P-value\n(yellow=significant)",
+                title = "Adj. P-value\n(darker=significant)",
                 title.position = "top",
                 barwidth = 1,
                 barheight = 4
@@ -917,12 +917,7 @@ tryCatch({
               panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
               plot.caption = element_text(size = 8, color = "grey40", hjust = 0.5, margin = margin(t = 8))
             ) +
-            geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5) +
-            ## Add annotation for direction interpretation (viridis colors)
-            annotate("text", x = Inf, y = Inf, label = "Up", hjust = 1.1, vjust = -0.5,
-                     size = 3, color = "#FDE725", fontface = "bold") +
-            annotate("text", x = -Inf, y = Inf, label = "Down", hjust = -0.1, vjust = -0.5,
-                     size = 3, color = "#440154", fontface = "bold")
+            geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5)
           
           plot_file <- paste0("fgsea_plot_", db_name, "_", contrast_name, "_", run_tag, ".png")
           ggsave(file.path(outdir, "plots", plot_file), plot = p_fgsea, width = 12,
