@@ -328,7 +328,7 @@ if (generate_ora_barplots) {
     p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = neg_log10_padj)) +
       geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
       scale_fill_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
-      scale_x_continuous(expand = expansion(mult = c(0.04, 0.06))) +
+      scale_x_continuous(expand = expansion(mult = c(0.06, 0.08))) +
       labs(title = paste0(db, " - ", direction_label, "\n", contrast), x = "Gene Ratio", y = NULL) +
       theme_classic(base_size = 12) +
       theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 12),
@@ -445,7 +445,7 @@ if (generate_ora_dotplots) {
       geom_point(aes(size = Count, color = neg_log10_fdr)) +
       scale_color_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
       scale_size_continuous(name = "Count", range = c(2, 6)) +
-      scale_x_continuous(expand = expansion(mult = c(0.04, 0.06))) +
+      scale_x_continuous(expand = expansion(mult = c(0.06, 0.08))) +
       labs(title = paste0(db, " - ", direction_label, "\n", contrast), x = "Gene Ratio", y = NULL) +
       theme_bw(base_size = 10) +
       theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 11),

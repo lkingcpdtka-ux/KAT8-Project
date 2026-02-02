@@ -108,7 +108,7 @@ dotplot_params <- list(
   top_n_kegg      = 15,
 
   ## Plot sizing (fixed to keep dot plots consistent)
-  plot_width      = 4.6,
+  plot_width      = 4.4,
   plot_height     = 4.6,
 
   ## GO:BP simplification cutoff (should match ora_params)
@@ -121,8 +121,8 @@ dotplot_params <- list(
 ## Used by: part4_visualizations.R
 
 barplot_params <- list(
-  plot_width  = 7.5,
-  plot_height = 5.2
+  plot_width  = 6.5,
+  plot_height = 4.8
 )
 
 ## ============================================================
