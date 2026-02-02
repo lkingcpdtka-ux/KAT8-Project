@@ -455,12 +455,8 @@ tryCatch({
   cat("[OK] Saved VST matrix for heatmaps: ", vst_file, "\n", sep = "")
 
   genotype_colors <- c("CTL" = "#0072B2", "KAT8KD" = "#E69F00")
-  depot_sex_fill <- c(
-    "iWAT_F" = "#56B4E9",
-    "iWAT_M" = "#0072B2",
-    "gWAT_F" = "#F0E442",
-    "gWAT_M" = "#E69F00"
-  )
+  depot_sex_levels <- c("iWAT_F", "iWAT_M", "gWAT_F", "gWAT_M")
+  depot_sex_fill <- setNames(viridis(length(depot_sex_levels), option = "viridis"), depot_sex_levels)
   
   ## 4.9) Density plots (VST before/after filtering) --------
   cat("\n=== Creating before/after filtering density plots ===\n")
@@ -761,7 +757,7 @@ tryCatch({
     ) +
       geom_point(size = 2, alpha = 0.8) +
       scale_color_manual(
-        values = c("Up" = "#FDE725", "Down" = "#440154", "NS" = "#21908C"),  ## Full viridis: yellow/purple/teal
+        values = c("Up" = "#FDE725", "Down" = "#440154", "NS" = "#D3D3D3"),
         name   = "Significance"
       ) +
       geom_point(data = label_genes, aes(color = sig_cat), size = 3) +
@@ -1064,7 +1060,7 @@ tryCatch({
     if (nrow(volcano_df) > 0) {
       
       ## Create custom color scheme using keyvals (full viridis palette)
-      keyvals_color <- rep("#21908C", nrow(volcano_df))  ## Viridis teal for NS
+      keyvals_color <- rep("#D3D3D3", nrow(volcano_df))
       names(keyvals_color) <- rep("NS", nrow(volcano_df))
 
       ## Significant UP (viridis yellow)

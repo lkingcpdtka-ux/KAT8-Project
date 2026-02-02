@@ -877,28 +877,14 @@ tryCatch({
           bidir_colors <- c(viridis_cols[5], viridis_cols[4], viridis_cols[3], viridis_cols[4], viridis_cols[5])
 
           p_fgsea <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = fill_value)) +
-            geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
+            geom_bar(stat = "identity", color = "black", linewidth = 0.3, width = 0.95) +
             scale_fill_gradientn(
               colors = bidir_colors,  ## Yellow -> green -> teal -> green -> yellow
               values = scales::rescale(c(-max_neg_log, -max_neg_log/2, 0, max_neg_log/2, max_neg_log)),
               limits = c(-max_neg_log, max_neg_log),
-              name = "Adj. P-value",
-              breaks = c(-max_neg_log, 0, max_neg_log),
-              labels = function(x) {
-                sapply(x, function(val) {
-                  if (abs(val) < 1e-6) return("1")
-                  pval <- 10^(-abs(val))
-                  format(pval, scientific = TRUE, digits = 1)
-                })
-              },
-              guide = guide_colorbar(
-                title = "Adj. P-value\n(yellow=significant)",
-                title.position = "top",
-                barwidth = 1,
-                barheight = 4
-              )
+              name = "Adj. P-value"
             ) +
-            scale_x_continuous(expand = expansion(mult = c(0.02, 0.02))) +  ## Minimal padding
+            scale_x_continuous(expand = expansion(mult = c(0.06, 0.06))) +  ## Add padding at both ends
             labs(
               title = paste0(method_label, " ", toupper(db_name), ": ", contrast_name),
               x = "Normalized Enrichment Score (NES)",
@@ -917,12 +903,7 @@ tryCatch({
               panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
               plot.caption = element_text(size = 8, color = "grey40", hjust = 0.5, margin = margin(t = 8))
             ) +
-            geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5) +
-            ## Add annotation for direction interpretation (viridis colors)
-            annotate("text", x = Inf, y = Inf, label = "Up", hjust = 1.1, vjust = -0.5,
-                     size = 3, color = "#FDE725", fontface = "bold") +
-            annotate("text", x = -Inf, y = Inf, label = "Down", hjust = -0.1, vjust = -0.5,
-                     size = 3, color = "#440154", fontface = "bold")
+            geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.5)
           
           plot_file <- paste0("fgsea_plot_", db_name, "_", contrast_name, "_", run_tag, ".png")
           ggsave(file.path(outdir, "plots", plot_file), plot = p_fgsea, width = 12,
