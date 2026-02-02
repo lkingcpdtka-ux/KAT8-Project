@@ -295,7 +295,7 @@ if (generate_ora_barplots) {
     list.files(tables_dir, pattern = "^ORA_kegg_.*\\.csv$", full.names = TRUE)
   )
 
-  get_padded_limits <- function(values, pad_fraction = 0) {
+  get_padded_limits <- function(values, pad_fraction = 0.05) {
     vals <- values[is.finite(values)]
     if (length(vals) == 0) return(NULL)
     rng <- range(vals)
@@ -312,7 +312,7 @@ if (generate_ora_barplots) {
     })
     ora_global_ratio_max <- max(ora_global_ratio_max, max(ratios, na.rm = TRUE))
   }
-  ora_xlim <- get_padded_limits(c(0, ora_global_ratio_max), pad_fraction = 0)
+  ora_xlim <- get_padded_limits(c(0, ora_global_ratio_max), pad_fraction = 0.05)
 
   for (ora_file in ora_files) {
     filename <- basename(ora_file)
@@ -348,7 +348,7 @@ if (generate_ora_barplots) {
     p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = neg_log10_padj)) +
       geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
       scale_fill_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
-      scale_x_continuous(limits = ora_xlim, expand = expansion(mult = c(0, 0))) +
+      scale_x_continuous(limits = ora_xlim, expand = expansion(mult = c(0.02, 0.02))) +
       labs(title = paste0(db, " - ", direction_label, "\n", contrast), x = "Gene Ratio", y = NULL) +
       theme_classic(base_size = 12) +
       theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 12),
@@ -372,7 +372,7 @@ if (generate_fgsea_barplots) {
     list.files(tables_dir, pattern = "^fgsea_kegg_.*\\.csv$", full.names = TRUE)
   )
 
-  get_padded_limits <- function(values, pad_fraction = 0) {
+  get_padded_limits <- function(values, pad_fraction = 0.05) {
     vals <- values[is.finite(values)]
     if (length(vals) == 0) return(NULL)
     rng <- range(vals)
@@ -386,7 +386,7 @@ if (generate_fgsea_barplots) {
     if (nrow(fgsea_data) == 0) next
     fgsea_global_abs_nes <- max(fgsea_global_abs_nes, max(abs(fgsea_data$NES), na.rm = TRUE))
   }
-  fgsea_xlim <- get_padded_limits(c(-fgsea_global_abs_nes, fgsea_global_abs_nes), pad_fraction = 0)
+  fgsea_xlim <- get_padded_limits(c(-fgsea_global_abs_nes, fgsea_global_abs_nes), pad_fraction = 0.05)
 
   for (fgsea_file in fgsea_files) {
     filename <- basename(fgsea_file)
@@ -418,7 +418,7 @@ if (generate_fgsea_barplots) {
     p <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = neg_log10_padj)) +
       geom_bar(stat = "identity", color = "black", linewidth = 0.3, width = 0.75) +
       scale_fill_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
-      scale_x_continuous(limits = fgsea_xlim, expand = expansion(mult = c(0, 0))) +
+      scale_x_continuous(limits = fgsea_xlim, expand = expansion(mult = c(0.02, 0.02))) +
       labs(title = paste0("GSEA ", db, "\n", contrast), x = "NES", y = NULL) +
       theme_classic(base_size = 12) +
       theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 12),
