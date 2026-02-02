@@ -78,6 +78,7 @@ ora_dotplot_params <- list(
 )
 
 ## heatmap_params is already defined in parameters.R
+heatmap_palette <- viridis(5, option = "cividis", begin = 0.1, end = 0.9)
 
 
 ## ============================================================
@@ -192,10 +193,10 @@ create_enrichment_dotplot <- function(ora_file, contrast_name, direction,
   ## Order y-axis: most significant at TOP
   ## Factor levels in reverse order of p-value (smallest p = top)
   plot_data <- plot_data %>%
-    dplyr::arrange(desc(p.adjust)) %>%
+    dplyr::arrange(p.adjust, desc(GeneRatio_numeric)) %>%
     dplyr::mutate(
       Description = str_wrap(Description, width = 45),
-      Description = factor(Description, levels = Description)
+      Description = factor(Description, levels = rev(Description))
     )
 
   ## Full viridis gradient (REVERSED: yellow = significant, purple = less significant)
@@ -582,10 +583,10 @@ create_grouped_heatmap <- function(de_file, contrast_name, gene_categories,
   mat[mat > lfc_clip] <- lfc_clip
   mat[mat < -lfc_clip] <- -lfc_clip
 
-  ## Full viridis gradient using viridis package
+  ## Muted viridis gradient using viridis package
   col_fun <- colorRamp2(
     c(-lfc_clip, -lfc_clip/2, 0, lfc_clip/2, lfc_clip),
-    viridis(5)  ## 5 colors from viridis palette
+    heatmap_palette
   )
 
   ## Parameter caption
@@ -754,10 +755,10 @@ create_individual_heatmap <- function(vst_data, de_file, contrast_name, gene_cat
   mat_scaled[mat_scaled > z_clip] <- z_clip
   mat_scaled[mat_scaled < -z_clip] <- -z_clip
 
-  ## Full viridis gradient using viridis package
+  ## Muted viridis gradient using viridis package
   col_fun <- colorRamp2(
     c(-z_clip, -z_clip/2, 0, z_clip/2, z_clip),
-    viridis(5)  ## 5 colors from viridis palette
+    heatmap_palette
   )
 
   ## Column annotation for genotype

@@ -413,7 +413,7 @@ tryCatch({
     paste0("  Max genes displayed: ", params$heatmap_max_genes),
     paste0("  Clustering: Hierarchical clustering on rows (genes), split by genotype on columns"),
     paste0("  Scaling: Z-score normalization (row-wise)"),
-    paste0("  Color scheme: Teal (down) -> white (neutral) -> orange (up)"),
+    paste0("  Color scheme: Muted viridis (cividis) for z-score heatmaps"),
     "",
     "--- ComplexHeatmap (Genes of Interest) ---",
     paste0("  Gene order: First contrast (iWAT) establishes reference clustering order"),
@@ -455,11 +455,15 @@ tryCatch({
   cat("[OK] Saved VST matrix for heatmaps: ", vst_file, "\n", sep = "")
 
   genotype_colors <- c("CTL" = "#0072B2", "KAT8KD" = "#E69F00")
-  depot_sex_fill <- c(
-    "iWAT_F" = "#56B4E9",
-    "iWAT_M" = "#0072B2",
-    "gWAT_F" = "#F0E442",
-    "gWAT_M" = "#E69F00"
+  depot_sex_levels <- levels(sample_annot$DepotSex)
+  depot_sex_fill <- setNames(
+    viridis(length(depot_sex_levels), option = "viridis"),
+    depot_sex_levels
+  )
+  heatmap_palette <- viridis(5, option = "cividis", begin = 0.1, end = 0.9)
+  volcano_palette <- setNames(
+    viridis(2, option = "mako", begin = 0.2, end = 0.85),
+    c("Down", "Up")
   )
   
   ## 4.9) Density plots (VST before/after filtering) --------
@@ -761,7 +765,7 @@ tryCatch({
     ) +
       geom_point(size = 2, alpha = 0.8) +
       scale_color_manual(
-        values = c("Up" = "#FDE725", "Down" = "#440154", "NS" = "#21908C"),  ## Full viridis: yellow/purple/teal
+        values = c("Up" = volcano_palette["Up"], "Down" = volcano_palette["Down"], "NS" = "grey80"),
         name   = "Significance"
       ) +
       geom_point(data = label_genes, aes(color = sig_cat), size = 3) +
@@ -822,11 +826,11 @@ tryCatch({
         mat_scaled <- mat_scaled[!rowSums(is.na(mat_scaled)), , drop = FALSE]
         
         if (nrow(mat_scaled) >= 2) {
-          ## Use full viridis gradient via viridis package
+          ## Muted viridis gradient via viridis package
           max_val_deg <- max(abs(mat_scaled), na.rm = TRUE)
           deg_col_fun <- colorRamp2(
             c(-max_val_deg, -max_val_deg/2, 0, max_val_deg/2, max_val_deg),
-            viridis(5)
+            heatmap_palette
           )
           
           ## Column annotation (including Sex since depots combine both sexes)
@@ -916,11 +920,11 @@ tryCatch({
         
         if (nrow(heat_matrix_scaled) >= 2) {
 
-          ## Use full viridis gradient via viridis package
+          ## Muted viridis gradient via viridis package
           max_val <- max(abs(heat_matrix_scaled), na.rm = TRUE)
           heat_col_fun <- colorRamp2(
             c(-max_val, -max_val/2, 0, max_val/2, max_val),
-            viridis(5)
+            heatmap_palette
           )
 
           ## Column annotation (including Sex since depots combine both sexes)
@@ -1063,20 +1067,20 @@ tryCatch({
     
     if (nrow(volcano_df) > 0) {
       
-      ## Create custom color scheme using keyvals (full viridis palette)
-      keyvals_color <- rep("#21908C", nrow(volcano_df))  ## Viridis teal for NS
+      ## Create custom color scheme using keyvals (muted viridis palette)
+      keyvals_color <- rep("grey80", nrow(volcano_df))  ## Neutral for NS
       names(keyvals_color) <- rep("NS", nrow(volcano_df))
 
-      ## Significant UP (viridis yellow)
+      ## Significant UP (viridis - no yellow)
       sig_up_idx <- which(volcano_df$padj < cn_fdr_cut &
                             volcano_df$logFC >= cn_logFC_cut)
-      keyvals_color[sig_up_idx] <- "#FDE725"
+      keyvals_color[sig_up_idx] <- volcano_palette["Up"]
       names(keyvals_color)[sig_up_idx] <- "Significant Up"
 
-      ## Significant DOWN (viridis purple)
+      ## Significant DOWN (viridis - no purple)
       sig_down_idx <- which(volcano_df$padj < cn_fdr_cut &
                               volcano_df$logFC <= -cn_logFC_cut)
-      keyvals_color[sig_down_idx] <- "#440154"
+      keyvals_color[sig_down_idx] <- volcano_palette["Down"]
       names(keyvals_color)[sig_down_idx] <- "Significant Down"
       
       ev_plot <- EnhancedVolcano(
