@@ -367,35 +367,137 @@ heatmap_lfc_clip <- heatmap_params$lfc_clip       ## Clip log2FC at ±2 (use 1.5
 ## ============================================================
 
 ## ============================================================
-## >>> ADD YOUR CUSTOM GENES HERE <<<
+## >>> PATHWAY-BASED GENE CATEGORIES FROM FGSEA RESULTS <<<
 ## ============================================================
+## These genes are automatically extracted from FGSEA leading edge
+## to show genes that actually drive pathway enrichment
 
-gene_categories <- list(
+## Function to extract leading edge genes from FGSEA CSV
+extract_leading_edge <- function(fgsea_file, pathway_patterns, max_genes_per_pathway = 15) {
+  if (!file.exists(fgsea_file)) {
+    cat("[WARN] FGSEA file not found: ", fgsea_file, "\n")
+    return(character(0))
+  }
 
-  "Inflammatory\nResponse" = c(
-    "Il1b", "Il6", "Tnf", "Il1a"
-  ),
+  fgsea_data <- read.csv(fgsea_file, stringsAsFactors = FALSE)
 
-  "Chemotaxis" = c(
-    "Ccl2", "Ccl7", "Cxcl12"
-  ),
+  genes <- character(0)
+  for (pattern in pathway_patterns) {
+    ## Find pathway by partial match (case-insensitive)
+    matched_rows <- grep(pattern, fgsea_data$pathway_name, ignore.case = TRUE)
+    if (length(matched_rows) > 0) {
+      ## Take the first (most significant) match
+      row <- matched_rows[1]
+      le_symbols <- fgsea_data$leadingEdge_symbols[row]
+      if (!is.na(le_symbols) && le_symbols != "") {
+        gene_vec <- unlist(strsplit(le_symbols, ","))
+        ## Take top genes
+        genes <- c(genes, head(gene_vec, max_genes_per_pathway))
+      }
+    }
+  }
+  unique(genes)
+}
 
-  "ECM /\nCollagens" = c(
-    "Col1a1", "Col1a2", "Col3a1", "Col4a1", "Col4a2",
-    "Col5a1", "Col5a3", "Col6a1", "Col6a2", "Col6a3",
-    "Col6a6", "Col15a1"
-  ),
+## Find FGSEA GO:BP files
+fgsea_gobp_files <- list.files(tables_dir, pattern = "^fgsea_gobp_.*\\.csv$", full.names = TRUE)
+## Also check project root (where user uploaded files)
+fgsea_gobp_root <- list.files(getwd(), pattern = "^fgsea_gobp_.*\\.csv$", full.names = TRUE)
+fgsea_gobp_files <- c(fgsea_gobp_files, fgsea_gobp_root)
 
-  "Matrix\nRemodeling" = c(
-    "Fn1", "Mmp2", "Mmp3", "Mmp9", "Mmp12", "Mmp14",
-    "Timp1", "Timp2", "Timp3", "Timp4"
-  ),
+## Initialize gene categories - will be populated from FGSEA or use defaults
+gene_categories <- list()
 
-  "Adipocyte\nMarkers" = c(
-    "Lep", "Adipoq", "Pparg", "Ppargc1a", "Fabp4", "Plin1"
+## Try to extract genes from iWAT FGSEA (has strong mitochondrial signal)
+iwat_fgsea <- fgsea_gobp_files[grep("iWAT", fgsea_gobp_files, ignore.case = TRUE)]
+if (length(iwat_fgsea) > 0) {
+  iwat_fgsea <- iwat_fgsea[1]
+  cat("[INFO] Extracting genes from iWAT FGSEA: ", basename(iwat_fgsea), "\n")
+
+  ## Mitochondrial/Energy genes (DOWN in iWAT)
+  mito_genes <- extract_leading_edge(iwat_fgsea, c(
+    "mitochondrial ATP synthesis",
+    "mitochondrial translation",
+    "respiratory chain complex",
+    "fatty acid beta-oxidation"
+  ), max_genes_per_pathway = 10)
+
+  if (length(mito_genes) > 0) {
+    gene_categories[["Mitochondrial /\nEnergy"]] <- head(mito_genes, 20)
+    cat("[OK] Found ", length(mito_genes), " mitochondrial genes\n")
+  }
+}
+
+## Try to extract genes from gWAT FGSEA (has strong immune signal)
+gwat_fgsea <- fgsea_gobp_files[grep("gWAT", fgsea_gobp_files, ignore.case = TRUE)]
+if (length(gwat_fgsea) > 0) {
+  gwat_fgsea <- gwat_fgsea[1]
+  cat("[INFO] Extracting genes from gWAT FGSEA: ", basename(gwat_fgsea), "\n")
+
+  ## Immune/Inflammatory genes (UP in both tissues)
+  immune_genes <- extract_leading_edge(gwat_fgsea, c(
+    "leukocyte degranulation",
+    "myeloid cell activation",
+    "positive regulation of cytokine"
+  ), max_genes_per_pathway = 10)
+
+  if (length(immune_genes) > 0) {
+    gene_categories[["Immune /\nInflammatory"]] <- head(immune_genes, 20)
+    cat("[OK] Found ", length(immune_genes), " immune genes\n")
+  }
+
+  ## Lipid metabolism genes
+  lipid_genes <- extract_leading_edge(gwat_fgsea, c(
+    "lipid localization",
+    "lipid catabolic",
+    "fatty acid"
+  ), max_genes_per_pathway = 10)
+
+  if (length(lipid_genes) > 0) {
+    gene_categories[["Lipid\nMetabolism"]] <- head(lipid_genes, 15)
+    cat("[OK] Found ", length(lipid_genes), " lipid metabolism genes\n")
+  }
+
+  ## Tissue remodeling / ECM genes
+  ecm_genes <- extract_leading_edge(gwat_fgsea, c(
+    "tissue remodeling",
+    "extracellular matrix",
+    "cell adhesion"
+  ), max_genes_per_pathway = 10)
+
+  if (length(ecm_genes) > 0) {
+    gene_categories[["ECM /\nRemodeling"]] <- head(ecm_genes, 15)
+    cat("[OK] Found ", length(ecm_genes), " ECM/remodeling genes\n")
+  }
+}
+
+## Fallback: if no FGSEA files found, use default categories
+if (length(gene_categories) == 0) {
+  cat("[INFO] No FGSEA files found, using default gene categories\n")
+  gene_categories <- list(
+
+    "Inflammatory\nResponse" = c(
+      "Il1b", "Il6", "Tnf", "Il1a", "Ccl2", "Ccl7", "Cxcl12"
+    ),
+
+    "ECM /\nCollagens" = c(
+      "Col1a1", "Col1a2", "Col3a1", "Col4a1", "Col4a2",
+      "Col5a1", "Col6a1", "Col6a2", "Col6a3"
+    ),
+
+    "Matrix\nRemodeling" = c(
+      "Fn1", "Mmp2", "Mmp3", "Mmp9", "Mmp12", "Mmp14",
+      "Timp1", "Timp2", "Timp3"
+    ),
+
+    "Adipocyte\nMarkers" = c(
+      "Lep", "Adipoq", "Pparg", "Ppargc1a", "Fabp4", "Plin1"
+    )
   )
+}
 
-)
+cat("[INFO] Gene categories: ", paste(names(gene_categories), collapse = ", "), "\n")
+cat("[INFO] Total genes: ", sum(sapply(gene_categories, length)), "\n")
 
 ## ============================================================
 ## >>> END OF CUSTOM GENE SECTION <<<
