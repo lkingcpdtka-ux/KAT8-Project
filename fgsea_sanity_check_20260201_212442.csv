@@ -1,0 +1,5 @@
+"Contrast","Database","N_Input_Genes","N_DEG_Up","N_DEG_Down","N_Pathways_Tested","N_Sig_Pathways","N_Sig_Up","N_Sig_Down","logFC_cutoff","fdr_cutoff"
+"gWAT_KD_vs_CTL","GO:BP",16190,737,422,33,33,30,3,1,0.05
+"gWAT_KD_vs_CTL","KEGG",16190,737,422,143,119,114,5,1,0.05
+"iWAT_KD_vs_CTL","GO:BP",16190,1867,1155,43,43,30,13,1,0.05
+"iWAT_KD_vs_CTL","KEGG",16190,1867,1155,185,165,90,75,1,0.05
