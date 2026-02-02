@@ -1,0 +1,9 @@
+"Contrast","Direction","Database","N_Input_Genes","N_Mapped_Entrez","N_Universe_Entrez","N_Sig_Pathways","logFC_cutoff","fdr_cutoff"
+"gWAT_KD_vs_CTL","Up","GO:BP",737,661,16190,111,1,0.05
+"gWAT_KD_vs_CTL","Up","KEGG",737,661,16190,9,1,0.05
+"gWAT_KD_vs_CTL","Down","GO:BP",422,340,16190,0,1,0.05
+"gWAT_KD_vs_CTL","Down","KEGG",422,340,16190,0,1,0.05
+"iWAT_KD_vs_CTL","Up","GO:BP",1867,1592,16190,105,1,0.05
+"iWAT_KD_vs_CTL","Up","KEGG",1867,1592,16190,21,1,0.05
+"iWAT_KD_vs_CTL","Down","GO:BP",1155,972,16190,101,1,0.05
+"iWAT_KD_vs_CTL","Down","KEGG",1155,972,16190,41,1,0.05

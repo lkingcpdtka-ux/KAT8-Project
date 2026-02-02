@@ -1,0 +1,3 @@
+"Contrast","N_DEG","N_Up","N_Down","logFC_cutoff","fdr_cutoff"
+"iWAT_KD_vs_CTL",3022,1867,1155,1,0.05
+"gWAT_KD_vs_CTL",1159,737,422,1,0.05
