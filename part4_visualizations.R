@@ -263,6 +263,20 @@ if (generate_volcano_plots) {
     label_genes <- dplyr::bind_rows(top_up, top_down, top_fc) %>%
       dplyr::distinct(gene_name, .keep_all = TRUE)
 
+    ## Genes to highlight (always show these with special styling)
+    highlight_genes <- c("Acsm3")
+    highlight_data <- tt_plot %>% dplyr::filter(gene_name %in% highlight_genes)
+
+    ## Add highlighted genes to label list if not already there
+    if (nrow(highlight_data) > 0) {
+      label_genes <- dplyr::bind_rows(label_genes, highlight_data) %>%
+        dplyr::distinct(gene_name, .keep_all = TRUE)
+    }
+
+    ## Mark highlighted genes for bold text
+    label_genes <- label_genes %>%
+      dplyr::mutate(is_highlight = gene_name %in% highlight_genes)
+
     p <- ggplot(tt_plot, aes(x = logFC, y = negLogFDR, color = sig_cat)) +
       geom_point(size = 2, alpha = 0.8) +
       scale_color_manual(
@@ -270,8 +284,18 @@ if (generate_volcano_plots) {
         name = "Significance"
       ) +
       geom_point(data = label_genes, size = 3) +
-      geom_text_repel(data = label_genes, aes(label = gene_name), color = "black",
+      ## Add special highlighting for Acsm3 (larger point with yellow fill)
+      geom_point(data = highlight_data, size = 5, shape = 21,
+                 fill = "yellow", color = "black", stroke = 1.5) +
+      ## Labels for non-highlighted genes
+      geom_text_repel(data = label_genes %>% dplyr::filter(!is_highlight),
+                      aes(label = gene_name), color = "black",
                       size = 3.5, box.padding = 0.25, max.overlaps = Inf) +
+      ## Bold labels for highlighted genes
+      geom_text_repel(data = label_genes %>% dplyr::filter(is_highlight),
+                      aes(label = gene_name), color = "black",
+                      size = 4, box.padding = 0.5, max.overlaps = Inf,
+                      fontface = "bold", min.segment.length = 0) +
       geom_hline(yintercept = -log10(cn_fdr_cut), linetype = "dashed", color = "grey40") +
       geom_vline(xintercept = c(cn_logFC_cut, -cn_logFC_cut), linetype = "dashed", color = "grey40") +
       theme_bw(base_size = 14) +
@@ -599,12 +623,25 @@ if (!is.null(vst_data)) {
 
       col_anno <- NULL
       if ("Genotype" %in% colnames(sample_info_tissue)) {
+        anno_list <- list(Genotype = sample_info_tissue$Genotype)
+        col_list <- list(Genotype = c("CTL" = "#1B9E77", "KAT8KD" = "#D95F02"))
+
+        ## Add Sex annotation if available
+        if ("Sex" %in% colnames(sample_info_tissue)) {
+          anno_list$Sex <- sample_info_tissue$Sex
+          col_list$Sex <- c("F" = "#E7298A", "M" = "#7570B3")
+        }
+
         col_anno <- HeatmapAnnotation(
-          Genotype = sample_info_tissue$Genotype,
-          col = list(Genotype = c("CTL" = "#1B9E77", "KAT8KD" = "#D95F02")),
+          df = as.data.frame(anno_list),
+          col = col_list,
           simple_anno_size = unit(4, "mm")
         )
       }
+
+      ## Simplify sample names (JS_01 -> 1, JS_20 -> 20)
+      simple_names <- gsub("^[A-Za-z]+_?0*", "", colnames(mat))
+      colnames(mat) <- simple_names
 
       ht <- Heatmap(
         mat, col = col_fun, name = "Z-score",
@@ -761,12 +798,25 @@ if (!is.null(vst_data)) {
 
       col_anno <- NULL
       if ("Genotype" %in% colnames(sample_info_tissue)) {
+        anno_list <- list(Genotype = sample_info_tissue$Genotype)
+        col_list <- list(Genotype = c("CTL" = "#1B9E77", "KAT8KD" = "#D95F02"))
+
+        ## Add Sex annotation if available
+        if ("Sex" %in% colnames(sample_info_tissue)) {
+          anno_list$Sex <- sample_info_tissue$Sex
+          col_list$Sex <- c("F" = "#E7298A", "M" = "#7570B3")
+        }
+
         col_anno <- HeatmapAnnotation(
-          Genotype = sample_info_tissue$Genotype,
-          col = list(Genotype = c("CTL" = "#1B9E77", "KAT8KD" = "#D95F02")),
+          df = as.data.frame(anno_list),
+          col = col_list,
           simple_anno_size = unit(4, "mm")
         )
       }
+
+      ## Simplify sample names (JS_01 -> 1, JS_20 -> 20)
+      simple_names <- gsub("^[A-Za-z]+_?0*", "", colnames(mat))
+      colnames(mat) <- simple_names
 
       ht <- Heatmap(
         mat, col = col_fun, name = "Z-score",
