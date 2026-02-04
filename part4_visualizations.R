@@ -115,7 +115,18 @@ if (generate_pca_plot || generate_mds_plot || generate_density_plot) {
 
     vst_mat <- qc_data$vst_mat_qc
     sample_info <- qc_data$sample_info
-    depot_sex_fill <- qc_data$depot_sex_fill
+    depot_sex_levels <- unique(sample_info$DepotSex)
+    if (!is.null(qc_plot_params$depot_sex_manual) &&
+        qc_plot_params$depot_sex_palette == "manual") {
+      depot_sex_fill <- qc_plot_params$depot_sex_manual[depot_sex_levels]
+    } else if (!is.null(qc_plot_params$depot_sex_palette)) {
+      depot_sex_fill <- setNames(
+        viridis(length(depot_sex_levels), option = qc_plot_params$depot_sex_palette),
+        depot_sex_levels
+      )
+    } else {
+      depot_sex_fill <- qc_data$depot_sex_fill
+    }
 
     ## A.1) PCA Plot
     if (generate_pca_plot && !is.null(vst_mat)) {
@@ -211,7 +222,6 @@ if (generate_pca_plot || generate_mds_plot || generate_density_plot) {
 
 if (generate_volcano_plots) {
   cat("\n=== SECTION B: VOLCANO PLOTS ===\n")
-
   de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
 
   for (de_file in de_files) {
@@ -247,7 +257,11 @@ if (generate_volcano_plots) {
       dplyr::arrange(padj) %>% dplyr::slice_head(n = 10)
     top_down <- tt_sig %>% dplyr::filter(sig_cat == "Down") %>%
       dplyr::arrange(padj) %>% dplyr::slice_head(n = 10)
-    label_genes <- dplyr::bind_rows(top_up, top_down)
+    top_fc <- tt_plot %>%
+      dplyr::arrange(dplyr::desc(abs(logFC))) %>%
+      dplyr::slice_head(n = 10)
+    label_genes <- dplyr::bind_rows(top_up, top_down, top_fc) %>%
+      dplyr::distinct(gene_name, .keep_all = TRUE)
 
     p <- ggplot(tt_plot, aes(x = logFC, y = negLogFDR, color = sig_cat)) +
       geom_point(size = 2, alpha = 0.8) +
@@ -285,6 +299,25 @@ if (generate_ora_barplots) {
     list.files(tables_dir, pattern = "^ORA_kegg_.*\\.csv$", full.names = TRUE)
   )
 
+  get_padded_limits <- function(values, pad_fraction = 0.02) {
+    vals <- values[is.finite(values)]
+    if (length(vals) == 0) return(NULL)
+    rng <- range(vals)
+    pad <- diff(rng) * pad_fraction
+    c(rng[1] - pad, rng[2] + pad)
+  }
+
+  ora_global_ratio_max <- 0
+  for (ora_file in ora_files) {
+    ora_data <- read.csv(ora_file, stringsAsFactors = FALSE)
+    if (nrow(ora_data) == 0) next
+    ratios <- sapply(strsplit(ora_data$GeneRatio, "/"), function(x) {
+      as.numeric(x[1]) / as.numeric(x[2])
+    })
+    ora_global_ratio_max <- max(ora_global_ratio_max, max(ratios, na.rm = TRUE))
+  }
+  ora_xlim <- get_padded_limits(c(0, ora_global_ratio_max), pad_fraction = 0.05)
+
   for (ora_file in ora_files) {
     filename <- basename(ora_file)
     parts <- str_match(filename, "ORA_(gobp|kegg)_(.+)_(Up|Down)_[0-9]+_[0-9]+\\.csv")
@@ -311,21 +344,25 @@ if (generate_ora_barplots) {
     })
     plot_data$neg_log10_padj <- -log10(plot_data$p.adjust)
     plot_data <- plot_data %>%
-      dplyr::mutate(pathway_name = factor(pathway_name, levels = rev(pathway_name)))
+      dplyr::mutate(pathway_name = str_wrap(pathway_name, width = barplot_params$label_wrap_width),
+                    pathway_name = factor(pathway_name, levels = rev(pathway_name)))
 
     direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
 
     p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = pathway_name, fill = neg_log10_padj)) +
       geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
       scale_fill_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
+      scale_x_continuous(limits = ora_xlim, expand = expansion(mult = c(0.02, 0.02))) +
       labs(title = paste0(db, " - ", direction_label, "\n", contrast), x = "Gene Ratio", y = NULL) +
       theme_classic(base_size = 12) +
       theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 12),
-            panel.border = element_rect(color = "black", fill = NA, linewidth = 1))
+            panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+            plot.margin = margin(4, 6, 4, 6))
 
     db_short <- gsub(":", "", db)
     ggsave(file.path(plots_dir, paste0("ORA_", db_short, "_", contrast, "_", direction, "_", run_tag, ".png")),
-           p, width = 10, height = max(5, nrow(plot_data) * 0.3), dpi = 300, bg = "white")
+           p, width = barplot_params$plot_width, height = barplot_params$plot_height,
+           dpi = 300, bg = "white")
     cat("[OK] Saved ORA bar plot: ", db, " ", contrast, " ", direction, "\n", sep = "")
   }
 }
@@ -338,6 +375,22 @@ if (generate_fgsea_barplots) {
     list.files(tables_dir, pattern = "^fgsea_gobp_.*\\.csv$", full.names = TRUE),
     list.files(tables_dir, pattern = "^fgsea_kegg_.*\\.csv$", full.names = TRUE)
   )
+
+  get_padded_limits <- function(values, pad_fraction = 0.05) {
+    vals <- values[is.finite(values)]
+    if (length(vals) == 0) return(NULL)
+    rng <- range(vals)
+    pad <- diff(rng) * pad_fraction
+    c(rng[1] - pad, rng[2] + pad)
+  }
+
+  fgsea_global_abs_nes <- 0
+  for (fgsea_file in fgsea_files) {
+    fgsea_data <- read.csv(fgsea_file, stringsAsFactors = FALSE)
+    if (nrow(fgsea_data) == 0) next
+    fgsea_global_abs_nes <- max(fgsea_global_abs_nes, max(abs(fgsea_data$NES), na.rm = TRUE))
+  }
+  fgsea_xlim <- get_padded_limits(c(-fgsea_global_abs_nes, fgsea_global_abs_nes), pad_fraction = 0.02)
 
   for (fgsea_file in fgsea_files) {
     filename <- basename(fgsea_file)
@@ -359,6 +412,7 @@ if (generate_fgsea_barplots) {
       dplyr::arrange(NES) %>%
       dplyr::mutate(
         pathway_label = ifelse(!is.na(pathway_name) & pathway_name != "", pathway_name, pathway_id),
+        pathway_label = str_wrap(pathway_label, width = gsea_plot_params$label_wrap_width),
         pathway_label = factor(pathway_label, levels = pathway_label),
         neg_log10_padj = -log10(pmax(padj, .Machine$double.eps))
       )
@@ -366,17 +420,22 @@ if (generate_fgsea_barplots) {
     if (nrow(plot_data) == 0) next
 
     p <- ggplot(plot_data, aes(x = NES, y = pathway_label, fill = neg_log10_padj)) +
-      geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
+      geom_bar(stat = "identity", color = "black", linewidth = 0.3, width = 0.75) +
       scale_fill_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
+      scale_x_continuous(limits = fgsea_xlim, expand = expansion(mult = c(0.01, 0.01))) +
       labs(title = paste0("GSEA ", db, "\n", contrast), x = "NES", y = NULL) +
       theme_classic(base_size = 12) +
       theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 12),
-            panel.border = element_rect(color = "black", fill = NA, linewidth = 1)) +
+            panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+            plot.margin = margin(4, 6, 4, 6)) +
       geom_vline(xintercept = 0, linetype = "dashed", color = "grey50")
 
     db_short <- tolower(gsub(":", "", db))
     ggsave(file.path(plots_dir, paste0("fGSEA_", db_short, "_", contrast, "_", run_tag, ".png")),
-           p, width = 11, height = max(5, nrow(plot_data) * 0.35), dpi = 300, bg = "white")
+           p,
+           width = gsea_plot_params$plot_width,
+           height = gsea_plot_params$plot_height,
+           dpi = 300, bg = "white")
     cat("[OK] Saved fGSEA plot: ", db, " ", contrast, "\n", sep = "")
   }
 }
@@ -389,6 +448,25 @@ if (generate_ora_dotplots) {
     list.files(tables_dir, pattern = "^ORA_gobp_.*\\.csv$", full.names = TRUE),
     list.files(tables_dir, pattern = "^ORA_kegg_.*\\.csv$", full.names = TRUE)
   )
+
+  get_padded_limits <- function(values, extra_steps = 1) {
+    vals <- values[is.finite(values)]
+    if (length(vals) == 0) return(NULL)
+    pretty_vals <- pretty(range(vals), n = 4)
+    step <- if (length(pretty_vals) > 1) diff(pretty_vals)[1] else 1
+    c(min(pretty_vals) - extra_steps * step, max(pretty_vals) + extra_steps * step)
+  }
+
+  dot_global_ratio_max <- 0
+  for (ora_file in ora_files) {
+    ora_data <- read.csv(ora_file, stringsAsFactors = FALSE)
+    if (nrow(ora_data) == 0) next
+    ratios <- sapply(strsplit(ora_data$GeneRatio, "/"), function(x) {
+      as.numeric(x[1]) / as.numeric(x[2])
+    })
+    dot_global_ratio_max <- max(dot_global_ratio_max, max(ratios, na.rm = TRUE))
+  }
+  dot_xlim <- get_padded_limits(c(0, dot_global_ratio_max), extra_steps = 1)
 
   for (ora_file in ora_files) {
     filename <- basename(ora_file)
@@ -418,7 +496,7 @@ if (generate_ora_dotplots) {
     if (nrow(plot_data) == 0) next
 
     plot_data <- plot_data %>%
-      dplyr::mutate(Description = str_wrap(Description, width = 45),
+      dplyr::mutate(Description = str_wrap(Description, width = 32),
                     Description = factor(Description, levels = rev(Description)))
 
     direction_label <- if (direction == "Up") "Upregulated" else "Downregulated"
@@ -427,14 +505,17 @@ if (generate_ora_dotplots) {
       geom_point(aes(size = Count, color = neg_log10_fdr)) +
       scale_color_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
       scale_size_continuous(name = "Count", range = c(2, 6)) +
+      scale_x_continuous(limits = dot_xlim, expand = expansion(mult = c(0.02, 0.02))) +
       labs(title = paste0(db, " - ", direction_label, "\n", contrast), x = "Gene Ratio", y = NULL) +
       theme_bw(base_size = 10) +
       theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 11),
-            panel.grid.minor = element_blank())
+            panel.grid.minor = element_blank(),
+            plot.margin = margin(6, 10, 6, 10))
 
     db_short <- gsub(":", "", db)
     ggsave(file.path(plots_dir, paste0("Dotplot_", db_short, "_", contrast, "_", direction, "_", run_tag, ".png")),
-           p, width = 6.5, height = max(4, nrow(plot_data) * 0.25 + 1.5), dpi = 300, bg = "white")
+           p, width = dotplot_params$plot_width, height = dotplot_params$plot_height,
+           dpi = 300, bg = "white")
     cat("[OK] Saved dot plot: ", db, " ", contrast, " ", direction, "\n", sep = "")
   }
 }
@@ -492,7 +573,7 @@ if (!is.null(vst_data)) {
       top_degs <- tt %>%
         dplyr::filter(padj < thresholds$fdr_cut, abs(logFC) >= thresholds$logFC_cut) %>%
         dplyr::arrange(padj) %>%
-        dplyr::slice_head(n = 50)
+        dplyr::slice_head(n = 100)
 
       if (nrow(top_degs) < 5) next
 
@@ -578,29 +659,42 @@ if (!is.null(vst_data)) {
     if (length(iwat_fgsea) > 0) {
       mito_genes <- extract_leading_edge(iwat_fgsea[1], c(
         "mitochondrial ATP synthesis", "mitochondrial translation",
-        "respiratory chain", "fatty acid beta-oxidation"
+        "respiratory chain complex", "fatty acid beta-oxidation"
       ), 10)
-      if (length(mito_genes) > 0) gene_categories[["Mitochondrial"]] <- head(mito_genes, 20)
+      if (length(mito_genes) > 0) {
+        gene_categories[["Mitochondrial /\nEnergy"]] <- head(mito_genes, 20)
+      }
     }
 
     gwat_fgsea <- fgsea_gobp_files[grep("gWAT", fgsea_gobp_files, ignore.case = TRUE)]
     if (length(gwat_fgsea) > 0) {
       immune_genes <- extract_leading_edge(gwat_fgsea[1], c(
-        "leukocyte degranulation", "myeloid cell activation", "cytokine"
+        "leukocyte degranulation", "myeloid cell activation", "positive regulation of cytokine"
       ), 10)
-      if (length(immune_genes) > 0) gene_categories[["Immune"]] <- head(immune_genes, 20)
+      if (length(immune_genes) > 0) {
+        gene_categories[["Immune /\nInflammatory"]] <- head(immune_genes, 20)
+      }
 
       lipid_genes <- extract_leading_edge(gwat_fgsea[1], c(
         "lipid localization", "lipid catabolic", "fatty acid"
       ), 10)
-      if (length(lipid_genes) > 0) gene_categories[["Lipid"]] <- head(lipid_genes, 15)
+      if (length(lipid_genes) > 0) {
+        gene_categories[["Lipid\nMetabolism"]] <- head(lipid_genes, 15)
+      }
+
+      ecm_genes <- extract_leading_edge(gwat_fgsea[1], c(
+        "tissue remodeling", "extracellular matrix", "cell adhesion"
+      ), 10)
+      if (length(ecm_genes) > 0) {
+        gene_categories[["ECM /\nRemodeling"]] <- head(ecm_genes, 15)
+      }
     }
 
     if (length(gene_categories) == 0) {
       gene_categories <- list(
-        "Inflammatory" = c("Il1b", "Il6", "Tnf", "Ccl2", "Cxcl12"),
-        "Collagen" = c("Col1a1", "Col1a2", "Col3a1", "Col4a1"),
-        "Adipocyte" = c("Lep", "Adipoq", "Pparg", "Fabp4", "Plin1")
+        "Inflammatory\nResponse" = c("Il1b", "Il6", "Tnf", "Il1a", "Ccl2", "Ccl7", "Cxcl12"),
+        "ECM /\nCollagens" = c("Col1a1", "Col1a2", "Col3a1", "Col4a1", "Col4a2", "Col5a1", "Col6a1"),
+        "Adipocyte\nMarkers" = c("Lep", "Adipoq", "Pparg", "Ppargc1a", "Fabp4", "Plin1")
       )
     }
 
