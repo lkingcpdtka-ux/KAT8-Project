@@ -821,8 +821,7 @@ if (!is.null(vst_data)) {
       ht <- Heatmap(
         mat, col = col_fun, name = "Z-score",
         cluster_rows = FALSE, cluster_columns = FALSE,
-        show_row_names = TRUE, show_column_names = TRUE,
-        column_names_rot = 45,
+        show_row_names = TRUE, show_column_names = FALSE,
         top_annotation = col_anno,
         row_split = factor(gene_to_cat, levels = names(gene_categories)),
         row_gap = unit(1.5, "mm"),
