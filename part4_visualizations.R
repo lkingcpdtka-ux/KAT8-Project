@@ -290,6 +290,11 @@ select_genes_one_direction <- function(de_dir, ora_counts_dir, top_n,
                                         min_pathway_count, fallback_to_de) {
   if (nrow(de_dir) == 0) return(de_dir[0, ])
 
+  ## Drop predicted/unannotated genes (Gm*, Rik, etc.) — not informative on plots
+  de_dir <- de_dir %>%
+    dplyr::filter(!grepl("^Gm\\d+$", gene_name),
+                  !grepl("Rik$", gene_name))
+
   ## Merge DE with ORA counts
   merged <- dplyr::left_join(de_dir, ora_counts_dir, by = "gene_name")
   merged$pathway_count[is.na(merged$pathway_count)] <- 0
