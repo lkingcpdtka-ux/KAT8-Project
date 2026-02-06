@@ -219,10 +219,141 @@ if (generate_pca_plot || generate_mds_plot || generate_density_plot) {
 ## ============================================================
 ## SECTION B: VOLCANO PLOTS
 ## ============================================================
+## Gene labeling strategy: ORA-informed selection
+## Genes are labeled if they are DEGs AND appear in significant ORA
+## pathways. Ranked by composite score:
+##   score = z(pathway_count) + z(|logFC|) + z(-log10(FDR))
+## When no ORA pathways exist for a direction, falls back to DE ranking.
+## See parameters.R  volcano_gene_selection for all tunables.
+## ============================================================
+
+## --- Helper: build per-gene pathway-count table from ORA files --------
+##
+## Returns a data.frame with columns: gene_name, pathway_count, direction
+## where pathway_count = number of significant ORA pathways (GO:BP + KEGG)
+## that contain the gene, counted separately per direction (Up / Down).
+
+build_ora_gene_counts <- function(tables_dir, tissue, ora_padj_cutoff) {
+  ora_gene_list <- list()
+
+  ## Collect GO:BP files for this tissue
+  gobp_files <- list.files(
+    tables_dir,
+    pattern = paste0("^ORA_gobp_", tissue, "_.*_(Up|Down)_[0-9]+_[0-9]+\\.csv$"),
+    full.names = TRUE
+  )
+
+  for (f in gobp_files) {
+    direction <- str_match(basename(f), "_(Up|Down)_[0-9]+")[2]
+    ora <- read.csv(f, stringsAsFactors = FALSE)
+    if (nrow(ora) == 0) next
+    ora <- ora[ora$p.adjust < ora_padj_cutoff, , drop = FALSE]
+    if (nrow(ora) == 0) next
+
+    for (i in seq_len(nrow(ora))) {
+      genes <- trimws(unlist(strsplit(ora$geneID[i], ",")))
+      genes <- genes[nzchar(genes)]
+      for (g in genes) {
+        ora_gene_list[[length(ora_gene_list) + 1]] <- data.frame(
+          gene_name = g, direction = direction, stringsAsFactors = FALSE
+        )
+      }
+    }
+  }
+
+  ## Collect KEGG files for this tissue (use geneID_symbols column)
+  kegg_files <- list.files(
+    tables_dir,
+    pattern = paste0("^ORA_kegg_", tissue, "_.*_(Up|Down)_[0-9]+_[0-9]+\\.csv$"),
+    full.names = TRUE
+  )
+
+  for (f in kegg_files) {
+    direction <- str_match(basename(f), "_(Up|Down)_[0-9]+")[2]
+    ora <- read.csv(f, stringsAsFactors = FALSE)
+    if (nrow(ora) == 0) next
+    ora <- ora[ora$p.adjust < ora_padj_cutoff, , drop = FALSE]
+    if (nrow(ora) == 0) next
+
+    ## KEGG stores Entrez IDs in geneID; symbols are in geneID_symbols
+    sym_col <- if ("geneID_symbols" %in% colnames(ora)) "geneID_symbols" else "geneID"
+    for (i in seq_len(nrow(ora))) {
+      genes <- trimws(unlist(strsplit(ora[[sym_col]][i], ",")))
+      genes <- genes[nzchar(genes)]
+      for (g in genes) {
+        ora_gene_list[[length(ora_gene_list) + 1]] <- data.frame(
+          gene_name = g, direction = direction, stringsAsFactors = FALSE
+        )
+      }
+    }
+  }
+
+  if (length(ora_gene_list) == 0) {
+    return(data.frame(gene_name = character(), pathway_count = integer(),
+                      direction = character(), stringsAsFactors = FALSE))
+  }
+
+  ora_long <- do.call(rbind, ora_gene_list)
+
+  ## Count pathway memberships per gene per direction
+  ## (a gene in 2 GO:BP + 1 KEGG pathway = count 3)
+  ora_counts <- ora_long %>%
+    dplyr::group_by(gene_name, direction) %>%
+    dplyr::summarise(pathway_count = dplyr::n(), .groups = "drop")
+
+  return(ora_counts)
+}
+
+## --- Helper: select ORA-informed genes for one direction ---------------
+##
+## de_dir: DE data already filtered to one direction (Up or Down)
+## ora_counts_dir: ora_counts filtered to that direction
+## top_n: how many genes to return
+## min_pathway_count: minimum ORA pathway membership
+## fallback_to_de: if no ORA genes found, fall back to DE ranking
+
+select_genes_one_direction <- function(de_dir, ora_counts_dir, top_n,
+                                        min_pathway_count, fallback_to_de) {
+  if (nrow(de_dir) == 0) return(de_dir[0, ])
+
+  ## Merge DE with ORA counts
+  merged <- dplyr::left_join(de_dir, ora_counts_dir, by = "gene_name")
+  merged$pathway_count[is.na(merged$pathway_count)] <- 0
+
+  ## Filter to ORA-supported genes
+  ora_supported <- merged %>%
+    dplyr::filter(pathway_count >= min_pathway_count)
+
+  if (nrow(ora_supported) < 3 && fallback_to_de) {
+    ## Fallback: rank by DE evidence alone
+    cat("    [INFO] <3 ORA-supported genes; using DE-only ranking\n")
+    return(
+      de_dir %>%
+        dplyr::arrange(padj, dplyr::desc(abs(logFC))) %>%
+        dplyr::slice_head(n = top_n)
+    )
+  }
+
+  ## Compute composite score (z-scored components)
+  scored <- ora_supported %>%
+    dplyr::mutate(
+      z_pw   = as.numeric(scale(pathway_count)),
+      z_fc   = as.numeric(scale(abs(logFC))),
+      z_sig  = as.numeric(scale(-log10(padj))),
+      composite_score = z_pw + z_fc + z_sig
+    ) %>%
+    dplyr::arrange(dplyr::desc(composite_score)) %>%
+    dplyr::slice_head(n = top_n)
+
+  return(scored)
+}
+
 
 if (generate_volcano_plots) {
-  cat("\n=== SECTION B: VOLCANO PLOTS ===\n")
+  cat("\n=== SECTION B: VOLCANO PLOTS (ORA-informed labeling) ===\n")
   de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
+
+  vs <- volcano_gene_selection  ## shorthand
 
   for (de_file in de_files) {
     filename <- basename(de_file)
@@ -230,6 +361,9 @@ if (generate_volcano_plots) {
     if (is.na(contrast)) next
 
     cat("--- Volcano: ", contrast, " ---\n", sep = "")
+
+    ## Extract tissue name (e.g., "gWAT_KD_vs_CTL" -> "gWAT")
+    tissue <- sub("_KD_vs_CTL$", "", contrast)
 
     tt <- read.csv(de_file, stringsAsFactors = FALSE)
 
@@ -250,32 +384,50 @@ if (generate_volcano_plots) {
         sig_cat = factor(sig_cat, levels = c("Up", "Down", "NS"))
       )
 
-    ## Get top genes to label
+    ## ----- ORA-informed gene selection -----
+    ora_counts <- build_ora_gene_counts(tables_dir, tissue, vs$ora_padj_cutoff)
+
     tt_sig <- tt_plot %>% dplyr::filter(sig_cat != "NS")
 
-    top_up <- tt_sig %>% dplyr::filter(sig_cat == "Up") %>%
-      dplyr::arrange(padj) %>% dplyr::slice_head(n = 10)
-    top_down <- tt_sig %>% dplyr::filter(sig_cat == "Down") %>%
-      dplyr::arrange(padj) %>% dplyr::slice_head(n = 10)
-    top_fc <- tt_plot %>%
-      dplyr::arrange(dplyr::desc(abs(logFC))) %>%
-      dplyr::slice_head(n = 10)
-    label_genes <- dplyr::bind_rows(top_up, top_down, top_fc) %>%
+    ## Select top genes per direction
+    top_up <- select_genes_one_direction(
+      de_dir           = tt_sig %>% dplyr::filter(sig_cat == "Up"),
+      ora_counts_dir   = ora_counts %>% dplyr::filter(direction == "Up"),
+      top_n            = vs$top_n_per_direction,
+      min_pathway_count = vs$min_pathway_count,
+      fallback_to_de   = vs$fallback_to_de
+    )
+    top_down <- select_genes_one_direction(
+      de_dir           = tt_sig %>% dplyr::filter(sig_cat == "Down"),
+      ora_counts_dir   = ora_counts %>% dplyr::filter(direction == "Down"),
+      top_n            = vs$top_n_per_direction,
+      min_pathway_count = vs$min_pathway_count,
+      fallback_to_de   = vs$fallback_to_de
+    )
+
+    label_genes <- dplyr::bind_rows(top_up, top_down) %>%
       dplyr::distinct(gene_name, .keep_all = TRUE)
 
-    ## Genes to highlight (always show these with special styling)
-    highlight_genes <- c("Acsm3")
-    highlight_data <- tt_plot %>% dplyr::filter(gene_name %in% highlight_genes)
+    ## Log selection summary
+    n_up_ora <- sum(top_up$pathway_count > 0, na.rm = TRUE)
+    n_dn_ora <- sum(top_down$pathway_count > 0, na.rm = TRUE)
+    cat("  Labels: ", nrow(top_up), " Up (", n_up_ora, " ORA-supported), ",
+        nrow(top_down), " Down (", n_dn_ora, " ORA-supported)\n", sep = "")
 
-    ## Add highlighted genes to label list if not already there
-    if (nrow(highlight_data) > 0) {
-      label_genes <- dplyr::bind_rows(label_genes, highlight_data) %>%
+    ## Mandatory genes (biological anchors) - add if they pass DE thresholds
+    mandatory <- vs$mandatory_genes
+    mandatory_data <- tt_plot %>%
+      dplyr::filter(gene_name %in% mandatory, sig_cat != "NS")
+    if (nrow(mandatory_data) > 0) {
+      label_genes <- dplyr::bind_rows(label_genes, mandatory_data) %>%
         dplyr::distinct(gene_name, .keep_all = TRUE)
     }
 
-    ## Mark highlighted genes for bold text
+    ## Mark mandatory genes for bold styling
     label_genes <- label_genes %>%
-      dplyr::mutate(is_highlight = gene_name %in% highlight_genes)
+      dplyr::mutate(is_highlight = gene_name %in% mandatory)
+
+    highlight_data <- label_genes %>% dplyr::filter(is_highlight)
 
     p <- ggplot(tt_plot, aes(x = logFC, y = negLogFDR, color = sig_cat)) +
       geom_point(size = 2, alpha = 0.8) +
@@ -284,14 +436,14 @@ if (generate_volcano_plots) {
         name = "Significance"
       ) +
       geom_point(data = label_genes, size = 3) +
-      ## Add special highlighting for Acsm3 (larger point with yellow fill)
+      ## Mandatory genes get special highlighting (larger point with yellow fill)
       geom_point(data = highlight_data, size = 5, shape = 21,
                  fill = "yellow", color = "black", stroke = 1.5) +
-      ## Labels for non-highlighted genes
+      ## Labels for standard ORA-selected genes
       geom_text_repel(data = label_genes %>% dplyr::filter(!is_highlight),
                       aes(label = gene_name), color = "black",
                       size = 3.5, box.padding = 0.25, max.overlaps = Inf) +
-      ## Bold labels for highlighted genes
+      ## Bold labels for mandatory/highlighted genes
       geom_text_repel(data = label_genes %>% dplyr::filter(is_highlight),
                       aes(label = gene_name), color = "black",
                       size = 4, box.padding = 0.5, max.overlaps = Inf,
