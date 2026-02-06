@@ -227,41 +227,16 @@ if (generate_pca_plot || generate_mds_plot || generate_density_plot) {
 ## See parameters.R  volcano_gene_selection for all tunables.
 ## ============================================================
 
-## --- Helper: build per-gene pathway-count table from ORA files --------
+## --- Helper: build per-gene pathway-count table from ORA KEGG files ----
 ##
 ## Returns a data.frame with columns: gene_name, pathway_count, direction
-## where pathway_count = number of significant ORA pathways (GO:BP + KEGG)
+## where pathway_count = number of significant ORA KEGG pathways
 ## that contain the gene, counted separately per direction (Up / Down).
 
 build_ora_gene_counts <- function(tables_dir, tissue, ora_padj_cutoff) {
   ora_gene_list <- list()
 
-  ## Collect GO:BP files for this tissue
-  gobp_files <- list.files(
-    tables_dir,
-    pattern = paste0("^ORA_gobp_", tissue, "_.*_(Up|Down)_[0-9]+_[0-9]+\\.csv$"),
-    full.names = TRUE
-  )
-
-  for (f in gobp_files) {
-    direction <- str_match(basename(f), "_(Up|Down)_[0-9]+")[2]
-    ora <- read.csv(f, stringsAsFactors = FALSE)
-    if (nrow(ora) == 0) next
-    ora <- ora[ora$p.adjust < ora_padj_cutoff, , drop = FALSE]
-    if (nrow(ora) == 0) next
-
-    for (i in seq_len(nrow(ora))) {
-      genes <- trimws(unlist(strsplit(ora$geneID[i], ",")))
-      genes <- genes[nzchar(genes)]
-      for (g in genes) {
-        ora_gene_list[[length(ora_gene_list) + 1]] <- data.frame(
-          gene_name = g, direction = direction, stringsAsFactors = FALSE
-        )
-      }
-    }
-  }
-
-  ## Collect KEGG files for this tissue (use geneID_symbols column)
+  ## Collect KEGG ORA files for this tissue (use geneID_symbols column)
   kegg_files <- list.files(
     tables_dir,
     pattern = paste0("^ORA_kegg_", tissue, "_.*_(Up|Down)_[0-9]+_[0-9]+\\.csv$"),
@@ -295,8 +270,7 @@ build_ora_gene_counts <- function(tables_dir, tissue, ora_padj_cutoff) {
 
   ora_long <- do.call(rbind, ora_gene_list)
 
-  ## Count pathway memberships per gene per direction
-  ## (a gene in 2 GO:BP + 1 KEGG pathway = count 3)
+  ## Count KEGG pathway memberships per gene per direction
   ora_counts <- ora_long %>%
     dplyr::group_by(gene_name, direction) %>%
     dplyr::summarise(pathway_count = dplyr::n(), .groups = "drop")
