@@ -9,9 +9,11 @@ The analysis has been split into modular standalone scripts:
 1. **Part 1: Main Gene-Level Analysis** (`part1_main_analysis.R`)
 2. **Part 2: ORA Pathway Analysis** (`part2_ora.R`)
 3. **Part 3: fGSEA Pathway Analysis** (`part3_fgsea.R`)
-4. **Part 4: Publication Plots** (`part4_publication_plots.R`)
+4. **Part 4: Publication Plots** (`part4_visualizations.R`)
 5. **Part 5: Barcode Plots** (`part5_barcode_plots.R`)
-6. **Part 6: Biological Interpretation** (`part6_biological_interpretation.R`) *NEW*
+7. **Part 7: In Vitro / In Vivo Concordance** (`part7_invitro_invivo_concordance.R`) *NEW*
+8. **Part 8: WGCNA Co-expression Analysis** (`part8_wgcna.R`) *NEW*
+9. **Part 9: Upstream Regulator / TF Analysis** (`part9_tf_analysis.R`) *NEW*
 
 ## Why Split Into Three Parts?
 
@@ -119,42 +121,73 @@ source("part2_ora.R")
 source("part3_fgsea.R")
 ```
 
-## Part 6: Biological Interpretation
+## Part 7: In Vitro / In Vivo Concordance
 
-**File**: `part6_biological_interpretation.R`
+**File**: `part7_invitro_invivo_concordance.R`
 
 **What it does**:
-- **Pathway Convergence Analysis**: Identifies pathways significant in BOTH ORA and fGSEA (highest confidence)
-- **Cell Type Marker Overlay**: Scores enrichment of adipose-specific cell type signatures (adipocytes, macrophages, T cells, endothelial, fibroblasts, etc.)
-- **Leading Edge × Cell Type Integration**: Identifies which cell types' markers appear in pathway leading edges
-- **Publication Figures**: Generates manuscript-ready visualizations
-
-**Key Features**:
-- ✅ **14 cell type signatures** curated for adipose tissue biology
-- ✅ **Pathway theme categorization**: Auto-categorizes pathways into Inflammation, Lipid Metabolism, ECM Remodeling, etc.
-- ✅ **Fisher's exact tests**: Statistical testing for marker enrichment in DEGs
-- ✅ **Interpretation guidelines**: Built-in guidance for manuscript language
-
-**Important Caveat**:
-Bulk RNA-seq CANNOT distinguish cell composition from cell state. The script explicitly guides appropriate language:
-- **GOOD**: "Macrophage marker genes were enriched among upregulated genes"
-- **BAD**: "Macrophage abundance was increased"
+- **DEG Overlap**: Venn diagrams and UpSet plots comparing cell culture vs tissue DEGs
+- **logFC Correlation**: Scatter plots of tissue vs cell fold changes with Pearson/Spearman correlation
+- **Concordance Classification**: Categorizes genes as concordant, discordant, cell-only, or tissue-only
+- **Cell-Autonomous Signature**: Identifies genes changed in BOTH cell culture and tissue (direct KAT8 targets)
+- **Microenvironment Genes**: Tissue-only DEGs likely driven by non-adipocyte cells or paracrine effects
 
 **Outputs** (added to SAME directory as Part 1):
-- `tables/convergent_pathways_*.csv` - High-confidence pathways (ORA ∩ fGSEA)
-- `tables/cell_type_signatures_*.csv` - Cell type marker enrichment scores
-- `tables/leading_edge_celltype_*.csv` - Pathway × cell type integration
-- `plots/interpretation/Fig_celltype_signatures_*.png` - Heatmap of cell type scores
-- `plots/interpretation/Fig_pathway_convergence_*.png` - ORA vs fGSEA agreement
-- `plots/interpretation/Fig_pathway_celltype_*.png` - Pathway × cell type tile plot
+- `tables/concordance_summary_*.csv` - Overall overlap statistics
+- `tables/concordance_genes_*.csv` - Per-gene concordance classification
+- `tables/cell_autonomous_genes_*.csv` - Genes DEG in both systems (same direction)
+- `tables/microenvironment_genes_*.csv` - Tissue-only DEGs
+- `plots/concordance/Concordance_scatter_*.png` - logFC scatter plots
+- `plots/concordance/Venn_DEGs_*.png` - Venn diagrams
+
+**Requires**: Part 1 tissue results AND cell culture results (`KAT8_bulk_cells_comprehensive.R`)
 
 **Runtime**: ~2-5 minutes
 
-**Usage**:
-```r
-# Run AFTER part1, part2, and part3
-source("part6_biological_interpretation.R")
-```
+## Part 8: WGCNA Co-expression Analysis
+
+**File**: `part8_wgcna.R`
+
+**What it does**:
+- **Network Construction**: Soft-thresholded signed co-expression network
+- **Module Detection**: Dynamic tree cutting to identify co-regulated gene modules
+- **Module-Trait Correlation**: Links modules to Tissue, Sex, and Genotype
+- **Hub Gene Identification**: Top connectivity genes (kME) per module
+- **Module Enrichment**: GO:BP enrichment for genotype-associated modules
+
+**Outputs**:
+- `tables/wgcna_module_assignments_*.csv` - Gene-to-module mapping
+- `tables/wgcna_module_trait_correlations_*.csv` - Module-trait associations
+- `tables/wgcna_hub_genes_*.csv` - Hub genes per module
+- `tables/wgcna_enrichment_*_*.csv` - GO enrichment per module
+- `plots/wgcna/SoftThreshold_*.png` - Scale-free topology fit
+- `plots/wgcna/ModuleDendrogram_*.png` - Gene dendrogram with module colors
+- `plots/wgcna/ModuleTraitHeatmap_*.png` - Module-trait correlation heatmap
+
+**Requires**: Part 1 tissue results and raw count data
+
+**Runtime**: ~10-30 minutes (depends on gene count)
+
+## Part 9: Upstream Regulator / TF Analysis
+
+**File**: `part9_tf_analysis.R`
+
+**What it does**:
+- **TF Target Enrichment (fGSEA)**: Ranked enrichment against MSigDB C3 TF target gene sets
+- **Direction-Specific ORA**: Fisher's exact tests for TF targets among up/down DEGs separately
+- **Chromatin Modifier Focus**: Highlights HATs, HDACs, and remodelers among enriched TFs
+- **Cross-Contrast Comparison**: Identifies TFs enriched in multiple tissue contrasts
+- **KAT8-Specific Context**: Checks for NSL/MSL complex member enrichment
+
+**Outputs**:
+- `tables/tf_enrichment_*.csv` - fGSEA-based TF enrichment per contrast
+- `tables/tf_ora_all_contrasts_*.csv` - ORA-based TF enrichment (up/down separate)
+- `tables/tf_cross_contrast_*.csv` - TFs shared across contrasts
+- `plots/tf_analysis/TF_enrichment_*.png` - TF enrichment bar plots (chromatin modifiers highlighted)
+
+**Requires**: Part 1 tissue results and msigdbr package
+
+**Runtime**: ~5-10 minutes
 
 ## Complete Workflow
 
@@ -181,12 +214,27 @@ This reads the most recent Part 1 results and performs fgsea enrichment.
 
 **Note**: Parts 2 and 3 can be run in any order or independently. They both read from Part 1 outputs.
 
-### Step 4: Run Part 6 (Optional - Biological Interpretation)
+### Step 4: Run Cell Culture Analysis (for Part 7)
 ```r
-source("part6_biological_interpretation.R")
+source("KAT8_bulk_cells_comprehensive.R")
 ```
 
-This integrates ORA and fGSEA results, scores cell type signatures, and generates interpretation-ready figures. **Requires Parts 1, 2, and 3 to be completed first.**
+### Step 5: Run Part 7 (Optional - Cell vs Tissue Concordance)
+```r
+source("part7_invitro_invivo_concordance.R")
+```
+
+**Requires** both Part 1 and cell culture analysis to be completed.
+
+### Step 6: Run Part 8 (Optional - WGCNA)
+```r
+source("part8_wgcna.R")
+```
+
+### Step 7: Run Part 9 (Optional - TF Analysis)
+```r
+source("part9_tf_analysis.R")
+```
 
 ## Contrasts Analyzed
 
@@ -265,9 +313,11 @@ KAT8-Project/
 ├── part1_main_analysis.R
 ├── part2_ora.R
 ├── part3_fgsea.R
-├── part4_publication_plots.R
+├── part4_visualizations.R
 ├── part5_barcode_plots.R
-├── part6_biological_interpretation.R
+├── part7_invitro_invivo_concordance.R
+├── part8_wgcna.R
+├── part9_tf_analysis.R
 └── savepoints/
     └── RUN_YYYYMMDD_HHMMSS/     # Single directory for all outputs
         ├── tables/
@@ -277,18 +327,25 @@ KAT8-Project/
         │   ├── ORA_sanity_check_*.csv           # Part 2: QC
         │   ├── fgsea_*.csv                      # Part 3: fgsea results
         │   ├── fgsea_sanity_check_*.csv         # Part 3: QC
-        │   ├── convergent_pathways_*.csv        # Part 6: ORA ∩ fGSEA
-        │   ├── cell_type_signatures_*.csv       # Part 6: Cell type scores
-        │   └── leading_edge_celltype_*.csv      # Part 6: LE × cell type
+        │   ├── concordance_*.csv                # Part 7: Cell vs tissue
+        │   ├── cell_autonomous_genes_*.csv      # Part 7: Shared DEGs
+        │   ├── wgcna_module_assignments_*.csv   # Part 8: Module genes
+        │   ├── wgcna_hub_genes_*.csv            # Part 8: Hub genes
+        │   ├── tf_enrichment_*.csv              # Part 9: TF targets
+        │   └── tf_cross_contrast_*.csv          # Part 9: Shared TFs
         ├── plots/
         │   ├── Volcano_*.png                    # Part 1: Volcano plots
         │   ├── Heatmap_*.png                    # Part 1: Heatmaps
         │   ├── ORA_barplot_*.png                # Part 2: ORA bar plots
         │   ├── fgsea_plot_*.png                 # Part 3: fgsea plots
-        │   └── interpretation/                  # Part 6: Interpretation figs
-        │       ├── Fig_celltype_signatures_*.png
-        │       ├── Fig_pathway_convergence_*.png
-        │       └── Fig_pathway_celltype_*.png
+        │   ├── concordance/                     # Part 7: Cell vs tissue
+        │   │   ├── Concordance_scatter_*.png
+        │   │   └── Venn_DEGs_*.png
+        │   ├── wgcna/                           # Part 8: WGCNA
+        │   │   ├── ModuleDendrogram_*.png
+        │   │   └── ModuleTraitHeatmap_*.png
+        │   └── tf_analysis/                     # Part 9: TF analysis
+        │       └── TF_enrichment_*.png
         └── logs/
             ├── outliers_*.txt                   # Part 1: Outlier rationale
             └── params_*.txt                     # Part 1: Parameters
@@ -296,7 +353,14 @@ KAT8-Project/
 
 ## Version History
 
-### v2.0 (Current - Split Version)
+### v3.0 (Current)
+- Removed Part 6 (biological interpretation) - replaced by more focused analyses
+- Added Part 7: In vitro / in vivo concordance (cell culture vs tissue comparison)
+- Added Part 8: WGCNA co-expression network analysis
+- Added Part 9: Upstream regulator / transcription factor analysis
+- Updated parameters.R with new analysis parameters
+
+### v2.0 (Split Version)
 - Split into three independent scripts
 - Fixed enrichGO error with proper universe
 - Fixed msigdbr KEGG subcategory issue

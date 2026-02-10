@@ -213,25 +213,79 @@ get_tissue_thresholds <- function(contrast_name) {
 }
 
 ## ============================================================
-## BIOLOGICAL INTERPRETATION PARAMETERS (Part 6)
+## IN VITRO / IN VIVO CONCORDANCE PARAMETERS (Part 7)
 ## ============================================================
-## Used by: part6_biological_interpretation.R
+## Used by: part7_invitro_invivo_concordance.R
 
-interpretation_params <- list(
-  ## Cell type signature scoring
-  min_markers_for_score = 3,    ## Minimum markers found to calculate score
-  signature_method = "mean_logfc",  ## Options: "mean_logfc", "median_logfc", "ssgsea"
+concordance_params <- list(
+  ## Correlation analysis
+  cor_method = "pearson",          ## Method for logFC correlation ("pearson" or "spearman")
 
-  ## Pathway convergence thresholds
-  convergence_fdr = 0.05,       ## FDR cutoff for convergent pathways
+  ## Venn / overlap thresholds
+  logFC_cut_tissue = 1.0,         ## Tissue DEG threshold (matches main analysis)
+  fdr_cut_tissue   = 0.05,
+  logFC_cut_cells  = 0.5,         ## Cell culture DEG threshold (smaller FCs expected)
+  fdr_cut_cells    = 0.05,
 
-  ## Leading edge analysis
-  min_le_overlap = 2,           ## Minimum overlap for pathway-cell type reporting
-  min_le_fraction = 0.05,       ## Minimum fraction of leading edge for visualization
+  ## Concordance classification
+  concordant_same_sign = TRUE,    ## Require same direction for "concordant" label
 
-  ## Publication figure parameters
-  top_pathways_for_heatmap = 15,
-  celltype_logfc_threshold = 0.3  ## Threshold for asterisk annotation
+  ## Plot parameters
+  top_n_label = 20,               ## Top genes to label on scatter plots
+  plot_width  = 8,
+  plot_height = 7
+)
+
+## ============================================================
+## WGCNA PARAMETERS (Part 8)
+## ============================================================
+## Used by: part8_wgcna.R
+
+wgcna_params <- list(
+  ## Network construction
+  soft_power       = NULL,        ## NULL = auto-detect via pickSoftThreshold
+  network_type     = "signed",    ## "signed" preserves direction (recommended)
+  min_module_size  = 30,          ## Minimum genes per module
+  merge_cut_height = 0.25,        ## Threshold for merging similar modules
+
+  ## Gene filtering for WGCNA
+  min_variance_quantile = 0.25,   ## Keep top 75% most variable genes
+  max_genes        = 10000,       ## Cap genes for computational feasibility
+
+  ## Module-trait correlation
+  trait_pvalue_cut = 0.05,        ## Significance threshold for trait correlations
+
+  ## Hub gene selection
+  hub_n            = 30,          ## Top N hub genes per module
+  hub_metric       = "kME",       ## Module membership metric
+
+  ## Plot parameters
+  plot_width  = 12,
+  plot_height = 8
+)
+
+## ============================================================
+## UPSTREAM REGULATOR / TF ANALYSIS PARAMETERS (Part 9)
+## ============================================================
+## Used by: part9_tf_analysis.R
+
+tf_params <- list(
+  ## Enrichment thresholds
+  pvalue_cutoff = 0.05,
+  qvalue_cutoff = 0.1,
+  min_targets   = 5,              ## Minimum TF targets in gene list
+
+  ## MSigDB TF collections
+  use_c3_tft    = TRUE,           ## C3: TF targets (motif-based)
+  use_c3_mirna  = FALSE,          ## C3: miRNA targets (optional)
+
+  ## Chromatin / epigenetic focus
+  highlight_chromatin_tfs = TRUE,  ## Flag known chromatin modifiers
+
+  ## Plot parameters
+  top_n_tfs   = 20,               ## Top TFs to display
+  plot_width  = 10,
+  plot_height = 8
 )
 
 ## ============================================================
@@ -245,4 +299,6 @@ cat("                       gWAT FDR<", gWAT_fdr_cut, " |logFC|>", gWAT_logFC_cu
 cat("       ORA: top_n=", ora_params$top_n, ", simplify=", ora_params$simplify_cutoff, "\n", sep = "")
 cat("       GSEA: top_n_per_direction=", gsea_params$top_n_per_direction, ", FDR<", gsea_params$fdr_cutoff, "\n", sep = "")
 cat("       Heatmap: display_mode=", heatmap_params$display_mode, ", clip=", heatmap_params$lfc_clip, "\n", sep = "")
-cat("       Interpretation: signature_method=", interpretation_params$signature_method, "\n", sep = "")
+cat("       Concordance: cor_method=", concordance_params$cor_method, "\n", sep = "")
+cat("       WGCNA: network_type=", wgcna_params$network_type, ", min_module=", wgcna_params$min_module_size, "\n", sep = "")
+cat("       TF analysis: top_n_tfs=", tf_params$top_n_tfs, "\n", sep = "")
