@@ -24,7 +24,8 @@ required_pkgs <- c("dplyr", "ggplot2", "scales", "tidyr", "tibble", "RColorBrewe
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
 if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
 
-required_bioc_pkgs <- c("DESeq2", "clusterProfiler", "org.Mm.eg.db", "AnnotationDbi")
+required_bioc_pkgs <- c("DESeq2", "clusterProfiler", "org.Mm.eg.db", "AnnotationDbi",
+                        "impute", "preprocessCore", "GO.db")
 if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
 to_install_bioc <- setdiff(required_bioc_pkgs, rownames(installed.packages()))
 if (length(to_install_bioc) > 0) BiocManager::install(to_install_bioc, ask = FALSE, update = FALSE)
