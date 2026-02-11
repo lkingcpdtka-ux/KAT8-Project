@@ -108,6 +108,18 @@ for (f in tissue_de_files) {
   }
 }
 
+## Remove OVERALL contrasts - these combine depots and shouldn't be compared to cell culture
+overall_idx <- grepl("OVERALL|Overall|overall", names(tissue_tables))
+if (any(overall_idx)) {
+  cat("[INFO] Skipping OVERALL contrasts (not meaningful for cell vs tissue comparison): ",
+      paste(names(tissue_tables)[overall_idx], collapse = ", "), "\n", sep = "")
+  tissue_tables <- tissue_tables[!overall_idx]
+}
+
+if (length(tissue_tables) == 0) {
+  stop("No tissue contrasts remaining after filtering. Check DE file naming.")
+}
+
 ## Set up output directory (use most recent tissue run)
 tissue_run_dir <- dirname(dirname(tissue_de_files[1]))
 outdir <- tissue_run_dir
@@ -292,6 +304,14 @@ for (contrast in names(tissue_tables)) {
     "NS"         = "grey85"
   )
 
+  ## Determine axis limits: use 99.5th percentile to avoid outlier squishing
+  axis_max <- max(
+    quantile(abs(cor_df$cell_lfc), 0.995, na.rm = TRUE),
+    quantile(abs(cor_df$tissue_lfc), 0.995, na.rm = TRUE)
+  ) * 1.05
+  n_clipped <- sum(abs(cor_df$cell_lfc) > axis_max | abs(cor_df$tissue_lfc) > axis_max, na.rm = TRUE)
+  if (n_clipped > 0) cat("  [INFO] Clipping ", n_clipped, " extreme points for readability\n", sep = "")
+
   p_scatter <- ggplot(cor_df, aes(x = cell_lfc, y = tissue_lfc, color = category)) +
     geom_point(data = cor_df %>% filter(category == "NS"), size = 0.5, alpha = 0.3) +
     geom_point(data = cor_df %>% filter(category != "NS"), size = 1.5, alpha = 0.7) +
@@ -318,7 +338,7 @@ for (contrast in names(tissue_tables)) {
       plot.subtitle = element_text(hjust = 0.5, color = "grey40"),
       legend.position = "right"
     ) +
-    coord_fixed(ratio = 1)
+    coord_cartesian(xlim = c(-axis_max, axis_max), ylim = c(-axis_max, axis_max))
 
   scatter_file <- paste0("Concordance_scatter_", contrast, "_", run_tag, ".png")
   ggsave(file.path(concordance_dir, scatter_file), plot = p_scatter,
@@ -328,7 +348,8 @@ for (contrast in names(tissue_tables)) {
 
   ## --- Venn diagram ---
   venn_file <- file.path(concordance_dir, paste0("Venn_DEGs_cells_vs_", contrast, "_", run_tag, ".png"))
-  png(venn_file, width = 8, height = 6, units = "in", res = 300)
+  png(venn_file, width = 7, height = 7, units = "in", res = 300)
+  grid.newpage()
   venn.plot <- draw.pairwise.venn(
     area1 = length(cell_deg_all),
     area2 = length(overlap_results[[contrast]]$tissue_deg_all),
@@ -339,7 +360,8 @@ for (contrast in names(tissue_tables)) {
     cat.cex = 1.2,
     cex = 1.5,
     fontfamily = "sans",
-    cat.fontfamily = "sans"
+    cat.fontfamily = "sans",
+    margin = 0.1
   )
   grid.draw(venn.plot)
   dev.off()
