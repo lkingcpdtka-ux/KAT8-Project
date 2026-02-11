@@ -89,8 +89,8 @@ gsea_params <- list(
 ## Used by: part4_visualizations.R
 
 gsea_plot_params <- list(
-  plot_width  = 4.9,
-  plot_height = 4.8,
+  plot_width  = 6.9,
+  plot_height = 6.8,
   label_wrap_width = 32
 )
 
@@ -122,8 +122,8 @@ dotplot_params <- list(
 ## Used by: part4_visualizations.R
 
 barplot_params <- list(
-  plot_width  = 4.9,
-  plot_height = 4.8,
+  plot_width  = 6.9,
+  plot_height = 6.8,
   label_wrap_width = 32
 )
 
@@ -135,10 +135,9 @@ barplot_params <- list(
 heatmap_params <- list(
   lfc_clip    = 2.0,         ## Clip z-scores at +/- this value
 
-  ## Custom gradient: Green (low) -> Orange (high)
-  ## For z-scores: negative = green, positive = orange
-  ## For -log10(FDR): low significance = green, high significance = orange
-  custom_gradient = c("#196B23", "#408F1C", "#8EB21E", "#D9B11C", "#E97132"),
+  ## Custom gradient: RdYlBu (ColorBrewer) diverging
+  ## Down (blue) -> neutral (yellow) -> up (red)
+  custom_gradient = c("#4575B4", "#91BFDB", "#FFFFBF", "#FC8D59", "#D73027"),
 
   ## Display mode: "zscore" is standard for heatmaps
   display_mode = "zscore",
@@ -154,9 +153,34 @@ heatmap_params <- list(
 ## Used by: part4_visualizations.R (ORA bar plots, dot plots, fGSEA)
 
 enrichment_colors <- list(
-  ## Gradient for significance: Green (low) -> Orange (high)
-  ## Higher -log10(FDR) = more significant = orange
-  gradient = c("#196B23", "#408F1C", "#8EB21E", "#D9B11C", "#E97132")
+  ## Gradient: RdYlBu diverging
+  gradient = c("#4575B4", "#91BFDB", "#FFFFBF", "#FC8D59", "#D73027")
+)
+
+## ============================================================
+## VOLCANO PLOT GENE SELECTION
+## ============================================================
+## Used by: part4_visualizations.R (ORA-informed labeling)
+## Genes are selected by intersecting significant ORA pathways
+## with DEGs, then ranked by a composite score:
+##   score = z(pathway_count) + z(|logFC|) + z(-log10(FDR))
+
+volcano_gene_selection <- list(
+  ## >>> CHANGE THIS to control how many genes are labeled per direction <<<
+  top_n_per_direction = 20,
+
+  ## ORA pathway significance threshold for counting gene membership
+  ora_padj_cutoff     = 0.05,
+
+  ## Minimum pathway count for a gene to be considered ORA-supported
+  min_pathway_count   = 1,
+
+  ## Genes always labeled if they pass DE thresholds (biological anchors)
+  mandatory_genes     = c("Kat8"),
+
+  ## Fallback: when no ORA pathways exist for a direction, use DE-only ranking
+  ## (top genes by padj, then by |logFC|)
+  fallback_to_de      = TRUE
 )
 
 ## ============================================================
@@ -165,8 +189,8 @@ enrichment_colors <- list(
 ## Used by: part1_main_analysis.R, part4_visualizations.R
 
 volcano_colors <- list(
-  up   = "#D95F02",   ## Orange for up-regulated
-  down = "#02C8D3",   ## Cyan for down-regulated
+  up   = "#D73027",   ## Red for up-regulated
+  down = "#4575B4",   ## Blue for down-regulated
   ns   = "grey70"     ## Grey for non-significant
 )
 
@@ -180,10 +204,10 @@ qc_plot_params <- list(
   depot_sex_palette = "manual",
   ## Manual colors (named vector by DepotSex). Used when palette = "manual".
   depot_sex_manual = c(
-    "iWAT_F" = "#5B8FF9",
-    "iWAT_M" = "#5AD8A6",
-    "gWAT_F" = "#5D7092",
-    "gWAT_M" = "#F6BD16"
+    "iWAT_F" = "#4575B4",  ## blue
+    "iWAT_M" = "#91BFDB",  ## light blue
+    "gWAT_F" = "#FC8D59",  ## orange
+    "gWAT_M" = "#D73027"   ## red
   )
 )
 
