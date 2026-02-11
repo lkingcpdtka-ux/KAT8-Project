@@ -103,13 +103,26 @@ for (f in tissue_de_files) {
   }
 }
 
-## Identify iWAT and gWAT contrasts
-iwat_name <- grep("iWAT", names(tissue_tables), value = TRUE)
-gwat_name <- grep("gWAT", names(tissue_tables), value = TRUE)
+## Identify iWAT and gWAT contrasts (combined, not sex-specific)
+## We want "iWAT_KD_vs_CTL" and "gWAT_KD_vs_CTL", NOT the _M_ or _F_ variants
+iwat_name <- grep("^iWAT_KD_vs_CTL$", names(tissue_tables), value = TRUE)
+gwat_name <- grep("^gWAT_KD_vs_CTL$", names(tissue_tables), value = TRUE)
+
+## Fallback: if exact match fails, match iWAT/gWAT but exclude sex-specific (_M_, _F_)
+if (length(iwat_name) == 0) {
+  iwat_name <- grep("iWAT", names(tissue_tables), value = TRUE)
+  iwat_name <- iwat_name[!grepl("_[MF]_", iwat_name)]
+}
+if (length(gwat_name) == 0) {
+  gwat_name <- grep("gWAT", names(tissue_tables), value = TRUE)
+  gwat_name <- gwat_name[!grepl("_[MF]_", gwat_name)]
+}
 
 if (length(iwat_name) != 1 || length(gwat_name) != 1) {
-  stop("Expected exactly 1 iWAT and 1 gWAT contrast. Found: ",
-       paste(names(tissue_tables), collapse = ", "))
+  stop("Expected exactly 1 iWAT and 1 gWAT combined contrast. Found: ",
+       paste(names(tissue_tables), collapse = ", "),
+       "\n  Matched iWAT: ", paste(iwat_name, collapse = ", "),
+       "\n  Matched gWAT: ", paste(gwat_name, collapse = ", "))
 }
 
 de_iwat <- tissue_tables[[iwat_name]]
