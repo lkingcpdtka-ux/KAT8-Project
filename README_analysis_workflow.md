@@ -11,6 +11,7 @@ The analysis has been split into modular standalone scripts:
 3. **Part 3: fGSEA Pathway Analysis** (`part3_fgsea.R`)
 4. **Part 4: Publication Plots** (`part4_visualizations.R`)
 5. **Part 5: Barcode Plots** (`part5_barcode_plots.R`)
+6. **Part 6: GSVA Cell-Type Scoring & Deconvolution** (`part6_gsva_deconvolution.R`) *NEW*
 7. **Part 7: In Vitro / In Vivo Concordance** (`part7_invitro_invivo_concordance.R`) *NEW*
 8. **Part 8: WGCNA Co-expression Analysis** (`part8_wgcna.R`) *NEW*
 9. **Part 9: Upstream Regulator / TF Analysis** (`part9_tf_analysis.R`) *NEW*
@@ -121,6 +122,32 @@ source("part2_ora.R")
 source("part3_fgsea.R")
 ```
 
+## Part 6: GSVA Cell-Type Scoring & Deconvolution
+
+**File**: `part6_gsva_deconvolution.R`
+
+**What it does**:
+- **GSVA Per-Sample Scoring**: Computes enrichment scores for 15+ curated cell-type and biological process signatures (adipocyte, macrophage M1/M2, lipogenesis, thermogenesis, insulin signaling, etc.) for every individual sample
+- **Statistical Testing**: Wilcoxon and t-tests comparing KD vs CTL scores per signature, with FDR correction
+- **Marker-Based Proportion Estimation**: Softmax-normalized mean z-scores to estimate relative cell-type proportions per sample (lightweight deconvolution fallback)
+- **MuSiC Deconvolution** (optional): Full computational deconvolution if you provide an scRNA-seq reference (e.g., Emont et al. 2022 *Nature*, GEO: GSE176171)
+- **Publication Figures**: Boxplots of GSVA scores per cell type, GSVA heatmap across all samples, stacked bar plots of estimated proportions
+
+**Outputs**:
+- `tables/gsva_scores_*.csv` - Raw GSVA enrichment scores (signatures x samples)
+- `tables/gsva_statistics_*.csv` - Wilcoxon/t-test results per signature per tissue
+- `tables/marker_proportions_*.csv` - Estimated cell-type proportions (or `deconvolution_proportions_*.csv` if MuSiC is used)
+- `tables/proportion_statistics_*.csv` - Statistical tests on proportions
+- `plots/gsva/GSVA_celltype_boxplots_*.png` - Boxplots of cell-type signature scores
+- `plots/gsva/GSVA_process_boxplots_*.png` - Boxplots of biological process scores
+- `plots/gsva/GSVA_heatmap_*.png` - Heatmap of all scores across samples
+- `plots/gsva/CellType_proportions_stacked_*.png` - Stacked bar plot of proportions
+- `plots/gsva/CellType_proportion_boxplots_*.png` - Proportion boxplots KD vs CTL
+
+**Requires**: Part 1 tissue results. Optional: scRNA-seq reference RDS for MuSiC.
+
+**Runtime**: ~5-10 minutes
+
 ## Part 7: In Vitro / In Vivo Concordance
 
 **File**: `part7_invitro_invivo_concordance.R`
@@ -214,24 +241,31 @@ This reads the most recent Part 1 results and performs fgsea enrichment.
 
 **Note**: Parts 2 and 3 can be run in any order or independently. They both read from Part 1 outputs.
 
-### Step 4: Run Cell Culture Analysis (for Part 7)
+### Step 4: Run Part 6 (Optional - GSVA & Deconvolution)
+```r
+source("part6_gsva_deconvolution.R")
+```
+
+Per-sample cell-type scoring and proportion estimation. Only requires Part 1.
+
+### Step 5: Run Cell Culture Analysis (for Part 7)
 ```r
 source("KAT8_bulk_cells_comprehensive.R")
 ```
 
-### Step 5: Run Part 7 (Optional - Cell vs Tissue Concordance)
+### Step 6: Run Part 7 (Optional - Cell vs Tissue Concordance)
 ```r
 source("part7_invitro_invivo_concordance.R")
 ```
 
 **Requires** both Part 1 and cell culture analysis to be completed.
 
-### Step 6: Run Part 8 (Optional - WGCNA)
+### Step 7: Run Part 8 (Optional - WGCNA)
 ```r
 source("part8_wgcna.R")
 ```
 
-### Step 7: Run Part 9 (Optional - TF Analysis)
+### Step 8: Run Part 9 (Optional - TF Analysis)
 ```r
 source("part9_tf_analysis.R")
 ```
@@ -315,6 +349,7 @@ KAT8-Project/
 ├── part3_fgsea.R
 ├── part4_visualizations.R
 ├── part5_barcode_plots.R
+├── part6_gsva_deconvolution.R
 ├── part7_invitro_invivo_concordance.R
 ├── part8_wgcna.R
 ├── part9_tf_analysis.R
@@ -327,6 +362,9 @@ KAT8-Project/
         │   ├── ORA_sanity_check_*.csv           # Part 2: QC
         │   ├── fgsea_*.csv                      # Part 3: fgsea results
         │   ├── fgsea_sanity_check_*.csv         # Part 3: QC
+        │   ├── gsva_scores_*.csv                # Part 6: GSVA scores
+        │   ├── gsva_statistics_*.csv            # Part 6: Score tests
+        │   ├── marker_proportions_*.csv         # Part 6: Proportions
         │   ├── concordance_*.csv                # Part 7: Cell vs tissue
         │   ├── cell_autonomous_genes_*.csv      # Part 7: Shared DEGs
         │   ├── wgcna_module_assignments_*.csv   # Part 8: Module genes
@@ -338,6 +376,10 @@ KAT8-Project/
         │   ├── Heatmap_*.png                    # Part 1: Heatmaps
         │   ├── ORA_barplot_*.png                # Part 2: ORA bar plots
         │   ├── fgsea_plot_*.png                 # Part 3: fgsea plots
+        │   ├── gsva/                            # Part 6: GSVA & deconv
+        │   │   ├── GSVA_celltype_boxplots_*.png
+        │   │   ├── GSVA_heatmap_*.png
+        │   │   └── CellType_proportions_*.png
         │   ├── concordance/                     # Part 7: Cell vs tissue
         │   │   ├── Concordance_scatter_*.png
         │   │   └── Venn_DEGs_*.png

@@ -188,6 +188,29 @@ qc_plot_params <- list(
 )
 
 ## ============================================================
+## GSVA & DECONVOLUTION PARAMETERS (Part 6)
+## ============================================================
+## Used by: part6_gsva_deconvolution.R
+
+gsva_params <- list(
+  ## GSVA method settings
+  kcdf = "Gaussian",              ## Kernel for VST data ("Gaussian"); use "Poisson" for counts
+  min_signature_genes = 5,        ## Minimum genes per signature after filtering
+
+  ## Deconvolution (MuSiC)
+  ## Set sc_reference_path to an RDS file containing a SingleCellExperiment
+  ## from e.g. Emont et al. 2022 (GEO: GSE176171) to enable full deconvolution.
+  ## Leave as NULL for marker-based fallback.
+  sc_reference_path  = NULL,      ## Path to scRNA-seq reference RDS (or NULL)
+  sc_celltype_col    = "cell_type",  ## Column in sc metadata with cell type labels
+  sc_subject_col     = "subject",    ## Column in sc metadata with subject IDs
+
+  ## Plot parameters
+  plot_width  = 10,
+  plot_height = 8
+)
+
+## ============================================================
 ## BARCODE PLOT PARAMETERS
 ## ============================================================
 ## Used by: part5_barcode_plots.R
@@ -299,6 +322,7 @@ cat("                       gWAT FDR<", gWAT_fdr_cut, " |logFC|>", gWAT_logFC_cu
 cat("       ORA: top_n=", ora_params$top_n, ", simplify=", ora_params$simplify_cutoff, "\n", sep = "")
 cat("       GSEA: top_n_per_direction=", gsea_params$top_n_per_direction, ", FDR<", gsea_params$fdr_cutoff, "\n", sep = "")
 cat("       Heatmap: display_mode=", heatmap_params$display_mode, ", clip=", heatmap_params$lfc_clip, "\n", sep = "")
+cat("       GSVA: kcdf=", gsva_params$kcdf, ", deconvolution=", ifelse(is.null(gsva_params$sc_reference_path), "marker-based", "MuSiC"), "\n", sep = "")
 cat("       Concordance: cor_method=", concordance_params$cor_method, "\n", sep = "")
 cat("       WGCNA: network_type=", wgcna_params$network_type, ", min_module=", wgcna_params$min_module_size, "\n", sep = "")
 cat("       TF analysis: top_n_tfs=", tf_params$top_n_tfs, "\n", sep = "")
