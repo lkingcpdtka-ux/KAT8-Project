@@ -460,7 +460,7 @@ if (!"Sample" %in% colnames(sample_meta)) {
 gsva_long <- as.data.frame(t(gsva_scores)) %>%
   rownames_to_column("Sample") %>%
   left_join(sample_meta %>%
-              select(Sample, any_of(c("Genotype", "Tissue", "Sex"))),
+              dplyr::select(Sample, any_of(c("Genotype", "Tissue", "Sex"))),
             by = "Sample") %>%
   pivot_longer(cols = -c(Sample, any_of(c("Genotype", "Tissue", "Sex"))),
                names_to = "Signature", values_to = "Score")
@@ -740,7 +740,7 @@ if (use_music) {
     prop_long <- proportions %>%
       pivot_longer(cols = -Sample, names_to = "CellType", values_to = "Proportion") %>%
       left_join(sample_meta %>%
-                  select(Sample, any_of(c("Genotype", "Tissue"))),
+                  dplyr::select(Sample, any_of(c("Genotype", "Tissue"))),
                 by = "Sample") %>%
       mutate(Group = ifelse(grepl("KD|KAT8", Genotype, ignore.case = TRUE), "KD", "CTL"))
 
