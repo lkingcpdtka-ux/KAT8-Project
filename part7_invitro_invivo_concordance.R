@@ -108,17 +108,40 @@ for (f in tissue_de_files) {
   }
 }
 
-## Remove OVERALL contrasts - these combine depots and shouldn't be compared to cell culture
-overall_idx <- grepl("OVERALL|Overall|overall", names(tissue_tables))
-if (any(overall_idx)) {
-  cat("[INFO] Skipping OVERALL contrasts (not meaningful for cell vs tissue comparison): ",
-      paste(names(tissue_tables)[overall_idx], collapse = ", "), "\n", sep = "")
-  tissue_tables <- tissue_tables[!overall_idx]
+## Filter out contrasts that shouldn't be compared to cell culture:
+##  - OVERALL contrasts (combined depots)
+##  - Raw DESeq2 coefficient names (e.g. "GenotypeKAT8KD") that lack proper contrast structure
+##  - Tables missing required columns (log2FoldChange, padj)
+keep_contrasts <- character(0)
+for (cname in names(tissue_tables)) {
+  tt <- tissue_tables[[cname]]
+
+  ## Skip OVERALL contrasts
+  if (grepl("OVERALL|Overall|overall", cname)) {
+    cat("[INFO] Skipping '", cname, "': OVERALL contrast not meaningful for cell comparison\n", sep = "")
+    next
+  }
+
+  ## Skip raw coefficient names (no "_vs_" pattern = not a proper contrast)
+  if (!grepl("_vs_|_VS_", cname)) {
+    cat("[INFO] Skipping '", cname, "': not a proper contrast (missing '_vs_')\n", sep = "")
+    next
+  }
+
+  ## Skip tables missing required columns
+  if (!all(c("log2FoldChange", "padj") %in% colnames(tt))) {
+    cat("[INFO] Skipping '", cname, "': missing log2FoldChange or padj columns\n", sep = "")
+    next
+  }
+
+  keep_contrasts <- c(keep_contrasts, cname)
 }
+tissue_tables <- tissue_tables[keep_contrasts]
 
 if (length(tissue_tables) == 0) {
   stop("No tissue contrasts remaining after filtering. Check DE file naming.")
 }
+cat("[OK] Using contrasts: ", paste(names(tissue_tables), collapse = ", "), "\n", sep = "")
 
 ## Set up output directory (use most recent tissue run)
 tissue_run_dir <- dirname(dirname(tissue_de_files[1]))
