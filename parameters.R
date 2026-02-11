@@ -259,6 +259,25 @@ interpretation_params <- list(
 )
 
 ## ============================================================
+## DEPOT CONCORDANCE PARAMETERS (Part 7)
+## ============================================================
+## Used by: part7_depot_concordance.R
+## Compares iWAT vs gWAT KAT8-KD responses to identify
+## shared (depot-general) vs depot-specific DEGs
+
+depot_concordance_params <- list(
+  ## Correlation method for logFC comparison
+  cor_method = "pearson",
+
+  ## Number of top genes to label on scatter plot
+  top_n_label = 20,
+
+  ## Plot dimensions
+  plot_width  = 10,
+  plot_height = 8
+)
+
+## ============================================================
 ## PRINT CONFIRMATION
 ## ============================================================
 
