@@ -266,6 +266,12 @@ if (length(rds_files) > 0) {
   cat("[OK] Built VST matrix: ", nrow(vst_mat), " genes x ", ncol(vst_mat), " samples\n", sep = "")
 }
 
+## Harmonize column names: Part 1 uses "Depot" but downstream code expects "Tissue"
+if ("Depot" %in% colnames(sample_meta) && !"Tissue" %in% colnames(sample_meta)) {
+  sample_meta$Tissue <- sample_meta$Depot
+  cat("[INFO] Mapped 'Depot' column to 'Tissue' for consistency\n")
+}
+
 ## ============================================================
 ## 5) ANALYSIS 1: GSVA PER-SAMPLE SCORING
 ## ============================================================
@@ -446,9 +452,14 @@ if (nrow(sig_results) > 0) {
 cat("\n=== GENERATING GSVA BOXPLOTS ===\n")
 
 ## Reshape for plotting
+## Ensure sample_meta has Sample as a column (not just rownames)
+if (!"Sample" %in% colnames(sample_meta)) {
+  sample_meta <- sample_meta %>% rownames_to_column("Sample")
+}
+
 gsva_long <- as.data.frame(t(gsva_scores)) %>%
   rownames_to_column("Sample") %>%
-  left_join(sample_meta %>% rownames_to_column("Sample") %>%
+  left_join(sample_meta %>%
               select(Sample, any_of(c("Genotype", "Tissue", "Sex"))),
             by = "Sample") %>%
   pivot_longer(cols = -c(Sample, any_of(c("Genotype", "Tissue", "Sex"))),
@@ -728,7 +739,7 @@ if (use_music) {
     ## Merge with metadata
     prop_long <- proportions %>%
       pivot_longer(cols = -Sample, names_to = "CellType", values_to = "Proportion") %>%
-      left_join(sample_meta %>% rownames_to_column("Sample") %>%
+      left_join(sample_meta %>%
                   select(Sample, any_of(c("Genotype", "Tissue"))),
                 by = "Sample") %>%
       mutate(Group = ifelse(grepl("KD|KAT8", Genotype, ignore.case = TRUE), "KD", "CTL"))

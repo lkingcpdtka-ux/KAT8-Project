@@ -120,6 +120,12 @@ if (file.exists(metadata_file)) {
   }
 }
 
+## Harmonize column names: Part 1 uses "Depot" but downstream code expects "Tissue"
+if ("Depot" %in% colnames(sample_meta) && !"Tissue" %in% colnames(sample_meta)) {
+  sample_meta$Tissue <- sample_meta$Depot
+  cat("[INFO] Mapped 'Depot' column to 'Tissue' for consistency\n")
+}
+
 ## Ensure required columns
 required_cols <- c("Tissue", "Genotype")
 if (!all(required_cols %in% colnames(sample_meta))) {
