@@ -396,8 +396,13 @@ category_colors <- c(
   "NS"         = "grey85"
 )
 
-## Determine axis limits: use actual data range so no genes are clipped
-axis_max <- max(abs(cor_df$iwat_lfc), abs(cor_df$gwat_lfc), na.rm = TRUE) * 1.10
+## Determine axis limits: 99th percentile but guarantee all labeled genes fit
+pct_max <- max(
+  quantile(abs(cor_df$iwat_lfc), 0.99, na.rm = TRUE),
+  quantile(abs(cor_df$gwat_lfc), 0.99, na.rm = TRUE)
+)
+label_max <- max(abs(label_df$iwat_lfc), abs(label_df$gwat_lfc), na.rm = TRUE)
+axis_max <- max(pct_max, label_max) * 1.10
 
 p_scatter <- ggplot(cor_df, aes(x = iwat_lfc, y = gwat_lfc, color = category)) +
   geom_point(data = cor_df %>% filter(category == "NS"), size = 0.5, alpha = 0.3) +
