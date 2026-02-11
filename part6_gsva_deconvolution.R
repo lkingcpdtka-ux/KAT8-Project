@@ -226,12 +226,26 @@ if (length(rds_files) > 0) {
   counts_raw <- read.delim("counts.txt", header = TRUE, stringsAsFactors = FALSE, check.names = FALSE)
   gene_col <- if ("gene" %in% colnames(counts_raw)) "gene" else "gene_id"
 
-  ## Load metadata
+  ## Build metadata (matches Part 1 hardcoded annotation)
   metadata_file <- file.path(getwd(), "data", "metadata.csv")
   if (file.exists(metadata_file)) {
     sample_meta <- read.csv(metadata_file, stringsAsFactors = FALSE)
   } else {
-    stop("Cannot find data/metadata.csv or saved DESeq2 RDS. Provide one of these.")
+    cat("[INFO] No metadata.csv found. Using Part 1 hardcoded sample annotation.\n")
+    sample_ids <- paste0("JS_", sprintf("%02d", 1:40))
+    sample_meta <- data.frame(
+      Sample   = sample_ids,
+      Tissue   = c(rep("iWAT", 10), rep("iWAT", 10), rep("gWAT", 10), rep("gWAT", 10)),
+      Depot    = c(rep("iWAT", 10), rep("iWAT", 10), rep("gWAT", 10), rep("gWAT", 10)),
+      Sex      = c(rep("F", 5), rep("F", 5), rep("M", 5), rep("M", 5),
+                   rep("F", 5), rep("F", 5), rep("M", 5), rep("M", 5)),
+      Genotype = c(rep("CTL", 5), rep("KAT8KD", 5), rep("CTL", 5), rep("KAT8KD", 5),
+                   rep("CTL", 5), rep("KAT8KD", 5), rep("CTL", 5), rep("KAT8KD", 5)),
+      stringsAsFactors = FALSE
+    )
+    ## Remove known outliers
+    outlier_samples <- c("JS_08", "JS_28")
+    sample_meta <- sample_meta[!sample_meta$Sample %in% outlier_samples, ]
   }
 
   tissue_samples <- intersect(sample_meta$Sample, colnames(counts_raw))

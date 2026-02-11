@@ -88,16 +88,13 @@ counts_raw <- read.delim("counts.txt", header = TRUE, stringsAsFactors = FALSE, 
 all_samples <- colnames(counts_raw)
 all_samples <- all_samples[!all_samples %in% c("gene_id", "gene")]
 
-## Load metadata if available, otherwise construct from sample names
+## Load metadata if available, otherwise use Part 1 hardcoded annotation
 metadata_file <- file.path(getwd(), "data", "metadata.csv")
 if (file.exists(metadata_file)) {
   sample_meta <- read.csv(metadata_file, stringsAsFactors = FALSE)
   cat("[OK] Loaded metadata from ", metadata_file, "\n", sep = "")
 } else {
-  cat("[WARN] No metadata.csv found. Attempting to construct from Part 1 outputs.\n")
-  cat("[INFO] You may need to provide a metadata file with columns: Sample, Tissue, Sex, Genotype\n")
-
-  ## Try to find the DESeq2 colData from an RDS file
+  ## Try saved DESeq2 RDS first
   savepoint_dir <- file.path(getwd(), "savepoints")
   rds_files <- list.files(savepoint_dir, pattern = "dds.*\\.rds$", recursive = TRUE, full.names = TRUE)
   if (length(rds_files) > 0) {
@@ -105,7 +102,21 @@ if (file.exists(metadata_file)) {
     sample_meta <- as.data.frame(colData(dds_obj))
     cat("[OK] Extracted metadata from saved DESeq2 object\n")
   } else {
-    stop("Cannot find metadata. Please provide data/metadata.csv or ensure DESeq2 RDS exists.")
+    cat("[INFO] No metadata.csv or DESeq2 RDS found. Using Part 1 hardcoded annotation.\n")
+    sample_ids <- paste0("JS_", sprintf("%02d", 1:40))
+    sample_meta <- data.frame(
+      Sample   = sample_ids,
+      Tissue   = c(rep("iWAT", 10), rep("iWAT", 10), rep("gWAT", 10), rep("gWAT", 10)),
+      Sex      = c(rep("F", 5), rep("F", 5), rep("M", 5), rep("M", 5),
+                   rep("F", 5), rep("F", 5), rep("M", 5), rep("M", 5)),
+      Genotype = c(rep("CTL", 5), rep("KAT8KD", 5), rep("CTL", 5), rep("KAT8KD", 5),
+                   rep("CTL", 5), rep("KAT8KD", 5), rep("CTL", 5), rep("KAT8KD", 5)),
+      stringsAsFactors = FALSE
+    )
+    ## Remove known outliers
+    outlier_samples <- c("JS_08", "JS_28")
+    sample_meta <- sample_meta[!sample_meta$Sample %in% outlier_samples, ]
+    cat("[OK] Built metadata for ", nrow(sample_meta), " samples (excluded outliers)\n", sep = "")
   }
 }
 
