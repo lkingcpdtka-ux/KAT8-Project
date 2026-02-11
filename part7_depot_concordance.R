@@ -396,14 +396,8 @@ category_colors <- c(
   "NS"         = "grey85"
 )
 
-## Determine axis limits: 99.5th percentile to avoid outlier squishing
-axis_max <- max(
-  quantile(abs(cor_df$iwat_lfc), 0.995, na.rm = TRUE),
-  quantile(abs(cor_df$gwat_lfc), 0.995, na.rm = TRUE)
-) * 1.05
-n_clipped <- sum(abs(cor_df$iwat_lfc) > axis_max | abs(cor_df$gwat_lfc) > axis_max,
-                 na.rm = TRUE)
-if (n_clipped > 0) cat("[INFO] Clipping ", n_clipped, " extreme points for readability\n", sep = "")
+## Determine axis limits: use actual data range so no genes are clipped
+axis_max <- max(abs(cor_df$iwat_lfc), abs(cor_df$gwat_lfc), na.rm = TRUE) * 1.10
 
 p_scatter <- ggplot(cor_df, aes(x = iwat_lfc, y = gwat_lfc, color = category)) +
   geom_point(data = cor_df %>% filter(category == "NS"), size = 0.5, alpha = 0.3) +
