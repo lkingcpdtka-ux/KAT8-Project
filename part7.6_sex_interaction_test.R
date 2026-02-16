@@ -7,16 +7,16 @@
 ## THE question: "Is the KAT8-KD transcriptional response
 ##   different between males and females?"
 ##
-## If no → justified collapsing sexes.
-## If yes → need sex-stratified analysis.
+## If no --> justified collapsing sexes.
+## If yes --> need sex-stratified analysis.
 ##
 ## APPROACH (per depot):
 ## 1. DESeq2 interaction model:  ~ Sex + Genotype + Sex:Genotype
 ##    - Wald test on interaction term (per-gene)
 ##    - LRT: full vs reduced (~ Sex + Genotype) for global test
 ## 2. P-value histogram of interaction term
-##    - Uniform → no systematic sex-dependent response
-##    - Left-skewed → some genes show sex-dependent KD effects
+##    - Uniform --> no systematic sex-dependent response
+##    - Left-skewed --> some genes show sex-dependent KD effects
 ## 3. Estimate pi0 (proportion of true nulls) via qvalue
 ## 4. PCA within depot, colored by Sex (visual check)
 ## 5. Sex-stratified concordance: run DESeq2 separately for M/F,
@@ -193,6 +193,16 @@ for (depot in c("iWAT", "gWAT")) {
   ## Re-prefilter within depot (some genes may not be expressed here)
   depot_keep <- rowSums(depot_counts >= min_count) >= min_samples
   depot_counts <- depot_counts[depot_keep, , drop = FALSE]
+
+  ## Capture gene names explicitly from the R matrix (robust against
+  ## rowname loss in S4/DESeq2 objects and as.data.frame conversions)
+  depot_gene_names <- rownames(depot_counts)
+  if (is.null(depot_gene_names)) {
+    depot_gene_names <- paste0("gene_", seq_len(nrow(depot_counts)))
+    rownames(depot_counts) <- depot_gene_names
+    cat("[WARN] Gene names missing from count matrix; using auto-generated names\n")
+  }
+
   cat("[INFO] ", depot, ": ", nrow(depot_counts), " genes, ",
       ncol(depot_counts), " samples\n", sep = "")
 
@@ -227,9 +237,9 @@ for (depot in c("iWAT", "gWAT")) {
   ## -------------------------------------------------------
   ## LRT result: tests ALL genes for interaction effect
   res_lrt <- results(dds_lrt)
-  res_lrt_df <- as.data.frame(res_lrt) %>%
-    mutate(gene = rownames(res_lrt)) %>%
-    filter(!is.na(pvalue))
+  res_lrt_df <- as.data.frame(res_lrt)
+  res_lrt_df$gene <- depot_gene_names
+  res_lrt_df <- res_lrt_df[!is.na(res_lrt_df$pvalue), ]
 
   ## Wald result for interaction coefficient specifically
   ## Coefficient name: "SexM.GenotypeKAT8KD"
@@ -246,9 +256,9 @@ for (depot in c("iWAT", "gWAT")) {
     cat("[WARN] Using last coefficient as interaction term\n")
   }
 
-  res_wald_df <- as.data.frame(res_wald) %>%
-    mutate(gene = rownames(res_wald)) %>%
-    filter(!is.na(pvalue))
+  res_wald_df <- as.data.frame(res_wald)
+  res_wald_df$gene <- depot_gene_names
+  res_wald_df <- res_wald_df[!is.na(res_wald_df$pvalue), ]
 
   ## -------------------------------------------------------
   ## 4d) Count significant interaction genes
@@ -293,7 +303,7 @@ for (depot in c("iWAT", "gWAT")) {
   geno_coef <- grep("^Genotype", coef_names, value = TRUE)
   if (length(geno_coef) == 1) {
     res_geno <- as.data.frame(results(dds_wald, name = geno_coef))
-    res_geno$gene <- rownames(res_geno)
+    res_geno$gene <- depot_gene_names
     n_geno_sig <- sum(res_geno$padj < fdr_cut & abs(res_geno$log2FoldChange) > thresh$logFC_cut,
                       na.rm = TRUE)
     cat("\n  Genotype main effect (KD vs CTL):\n")
@@ -418,7 +428,7 @@ for (depot in c("iWAT", "gWAT")) {
     scale_shape_manual(values = c("F" = 16, "M" = 17)) +
     labs(
       title = paste0(depot, ": PCA (colored by Genotype, shaped by Sex)"),
-      subtitle = "If sexes overlap within each genotype → safe to merge",
+      subtitle = "If sexes overlap within each genotype --> safe to merge",
       x = paste0("PC1 (", pct_var[1], "% variance)"),
       y = paste0("PC2 (", pct_var[2], "% variance)")
     ) +
@@ -454,7 +464,7 @@ for (depot in c("iWAT", "gWAT")) {
     )
     dds_f <- DESeq(dds_f, quiet = TRUE)
     res_f <- as.data.frame(results(dds_f))
-    res_f$gene <- rownames(res_f)
+    res_f$gene <- depot_gene_names
 
     ## Male-only DESeq2
     dds_m <- DESeqDataSetFromMatrix(
@@ -464,7 +474,7 @@ for (depot in c("iWAT", "gWAT")) {
     )
     dds_m <- DESeq(dds_m, quiet = TRUE)
     res_m <- as.data.frame(results(dds_m))
-    res_m$gene <- rownames(res_m)
+    res_m$gene <- depot_gene_names
 
     ## Merge
     concord_df <- merge(
@@ -552,11 +562,9 @@ for (depot in c("iWAT", "gWAT")) {
   ## Use VST-transformed data (already computed for PCA, statistically
   ## more appropriate for linear-model variance decomposition than log2+1)
   vst_mat <- assay(vsd)
-  gene_names <- rownames(vst_mat)
-  if (is.null(gene_names) || length(gene_names) == 0) {
-    ## Fallback: use gene names from the input count matrix
-    gene_names <- rownames(depot_counts)
-  }
+  ## Ensure VST matrix has gene names (may be lost in S4 conversion)
+  rownames(vst_mat) <- depot_gene_names
+  gene_names <- depot_gene_names
 
   ## Use a sample of genes to speed this up
   n_genes_for_var <- min(5000, length(gene_names))
