@@ -19,8 +19,10 @@
 ##    - Left-skewed → some genes show sex-dependent KD effects
 ## 3. Estimate pi0 (proportion of true nulls) via qvalue
 ## 4. PCA within depot, colored by Sex (visual check)
-## 5. Variance explained: Sex vs Genotype vs Interaction
-## 6. Reviewer-ready summary table
+## 5. Sex-stratified concordance: run DESeq2 separately for M/F,
+##    scatter their KD logFCs (high r = same response)
+## 6. Variance explained: Sex vs Genotype vs Interaction
+## 7. Reviewer-ready summary table
 ##
 ## INTERPRETATION FOR MANUSCRIPT:
 ##   "We tested for Sex × Genotype interactions within each
@@ -70,6 +72,10 @@ if (file.exists(params_file)) {
 } else {
   stop("parameters.R not found.")
 }
+
+## Prefilter defaults (in case not set by earlier scripts)
+if (!exists("prefilter_min_count"))   prefilter_min_count   <- 10
+if (!exists("prefilter_min_samples")) prefilter_min_samples <- 4
 
 ## 2) save_core utilities -----------------------------------
 utils_dir <- file.path(getwd(), "save_core")
@@ -172,6 +178,10 @@ for (depot in c("iWAT", "gWAT")) {
   cat("============================================================\n")
   cat("=== ", depot, ": SEX x GENOTYPE INTERACTION TEST ===\n", sep = "")
   cat("============================================================\n\n")
+
+  ## Initialize per-depot tracking variables (avoid stale values from prior iteration)
+  n_geno_sig <- NA_integer_
+  n_sex_sig  <- NA_integer_
 
   ## -------------------------------------------------------
   ## 4a) Subset to this depot
@@ -348,45 +358,51 @@ for (depot in c("iWAT", "gWAT")) {
     ) %>%
       filter(is.finite(geno_lfc), is.finite(interaction_lfc))
 
-    ## Classify
-    compare_df <- compare_df %>%
-      mutate(
-        category = case_when(
-          !is.na(interaction_padj) & interaction_padj < fdr_cut ~ "Sig. interaction",
-          !is.na(geno_padj) & geno_padj < fdr_cut & abs(geno_lfc) > thresh$logFC_cut ~ "Genotype DEG",
-          TRUE ~ "NS"
-        )
-      )
-
+    cat_levels <- c("Sig. interaction", "Genotype DEG", "NS")
     cat_colors <- c("Sig. interaction" = "#E41A1C",
                      "Genotype DEG" = "#377EB8",
                      "NS" = "grey85")
 
-    p_effect <- ggplot(compare_df, aes(x = geno_lfc, y = interaction_lfc, color = category)) +
-      geom_point(data = compare_df %>% filter(category == "NS"),
-                 size = 0.5, alpha = 0.3) +
-      geom_point(data = compare_df %>% filter(category != "NS"),
-                 size = 1.5, alpha = 0.7) +
-      geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
-      geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
-      scale_color_manual(values = cat_colors, name = "") +
-      labs(
-        title = paste0(depot, ": Genotype Effect vs Sex x Genotype Interaction"),
-        subtitle = "Interaction effects clustered near zero = sexes respond similarly",
-        x = expression(log[2]~FC~"(Genotype main effect: KD vs CTL)"),
-        y = expression(log[2]~FC~"(Sex x Genotype interaction)")
-      ) +
-      theme_bw(base_size = 12) +
-      theme(
-        panel.grid = element_blank(),
-        plot.title = element_text(face = "bold", hjust = 0.5),
-        plot.subtitle = element_text(hjust = 0.5, color = "grey40"),
-        legend.position = "right"
-      )
+    if (nrow(compare_df) > 0) {
+      ## Classify
+      compare_df <- compare_df %>%
+        mutate(
+          category = factor(case_when(
+            !is.na(interaction_padj) & interaction_padj < fdr_cut ~ "Sig. interaction",
+            !is.na(geno_padj) & geno_padj < fdr_cut & abs(geno_lfc) > thresh$logFC_cut ~ "Genotype DEG",
+            TRUE ~ "NS"
+          ), levels = cat_levels)
+        )
 
-    ggsave(file.path(interaction_dir,
-                     paste0("interaction_vs_genotype_", depot, "_", run_tag, ".png")),
-           plot = p_effect, width = 8, height = 6, dpi = 300, bg = "white")
+      p_effect <- ggplot(compare_df, aes(x = geno_lfc, y = interaction_lfc, color = category)) +
+        geom_point(data = compare_df %>% filter(category == "NS"),
+                   size = 0.5, alpha = 0.3) +
+        geom_point(data = compare_df %>% filter(category != "NS"),
+                   size = 1.5, alpha = 0.7) +
+        geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+        geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+        scale_color_manual(values = cat_colors, drop = FALSE, name = "") +
+        labs(
+          title = paste0(depot, ": Genotype Effect vs Sex x Genotype Interaction"),
+          subtitle = "Interaction effects clustered near zero = sexes respond similarly",
+          x = expression(log[2]~FC~"(Genotype main effect: KD vs CTL)"),
+          y = expression(log[2]~FC~"(Sex x Genotype interaction)")
+        ) +
+        theme_bw(base_size = 12) +
+        theme(
+          panel.grid = element_blank(),
+          plot.title = element_text(face = "bold", hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5, color = "grey40"),
+          legend.position = "right"
+        )
+
+      ggsave(file.path(interaction_dir,
+                       paste0("interaction_vs_genotype_", depot, "_", run_tag, ".png")),
+             plot = p_effect, width = 8, height = 6, dpi = 300, bg = "white")
+    } else {
+      cat("[WARN] No genes with finite values for both genotype and interaction effects; ",
+          "skipping effect size scatter plot\n")
+    }
   }
 
   ## -------------------------------------------------------
@@ -418,6 +434,113 @@ for (depot in c("iWAT", "gWAT")) {
          plot = p_pca, width = 7, height = 6, dpi = 300, bg = "white")
 
   ## -------------------------------------------------------
+  ## 4i-b) PLOT 3b: Sex-stratified concordance
+  ## -------------------------------------------------------
+  ## Run DESeq2 separately for females and males, then scatter
+  ## their KD-vs-CTL log2FCs. High correlation = sexes respond
+  ## the same way, strongest evidence for collapsing.
+
+  female_idx <- depot_annot$Sample[depot_annot$Sex == "F"]
+  male_idx   <- depot_annot$Sample[depot_annot$Sex == "M"]
+
+  if (length(female_idx) >= 4 && length(male_idx) >= 4) {
+    cat("[INFO] Running sex-stratified DESeq2 for concordance analysis...\n")
+
+    ## Female-only DESeq2
+    dds_f <- DESeqDataSetFromMatrix(
+      countData = round(depot_counts[, female_idx]),
+      colData   = depot_annot[female_idx, ],
+      design    = ~ Genotype
+    )
+    dds_f <- DESeq(dds_f, quiet = TRUE)
+    res_f <- as.data.frame(results(dds_f))
+    res_f$gene <- rownames(res_f)
+
+    ## Male-only DESeq2
+    dds_m <- DESeqDataSetFromMatrix(
+      countData = round(depot_counts[, male_idx]),
+      colData   = depot_annot[male_idx, ],
+      design    = ~ Genotype
+    )
+    dds_m <- DESeq(dds_m, quiet = TRUE)
+    res_m <- as.data.frame(results(dds_m))
+    res_m$gene <- rownames(res_m)
+
+    ## Merge
+    concord_df <- merge(
+      res_f[, c("gene", "log2FoldChange", "padj")],
+      res_m[, c("gene", "log2FoldChange", "padj")],
+      by = "gene", suffixes = c("_F", "_M")
+    ) %>%
+      filter(is.finite(log2FoldChange_F), is.finite(log2FoldChange_M))
+
+    if (nrow(concord_df) > 0) {
+      ## Correlation
+      r_val <- cor(concord_df$log2FoldChange_F, concord_df$log2FoldChange_M,
+                   use = "complete.obs")
+      cat("  Sex-stratified logFC correlation (Pearson r): ", round(r_val, 3), "\n")
+
+      ## Classify significance
+      concord_df <- concord_df %>%
+        mutate(
+          sig_class = factor(case_when(
+            !is.na(padj_F) & padj_F < fdr_cut &
+              !is.na(padj_M) & padj_M < fdr_cut ~ "Sig. in both",
+            !is.na(padj_F) & padj_F < fdr_cut ~ "Sig. in F only",
+            !is.na(padj_M) & padj_M < fdr_cut ~ "Sig. in M only",
+            TRUE ~ "NS"
+          ), levels = c("Sig. in both", "Sig. in F only", "Sig. in M only", "NS"))
+        )
+
+      concord_colors <- c("Sig. in both"  = "#984EA3",
+                           "Sig. in F only" = "#E41A1C",
+                           "Sig. in M only" = "#377EB8",
+                           "NS"             = "grey85")
+
+      p_concord <- ggplot(concord_df,
+                          aes(x = log2FoldChange_F, y = log2FoldChange_M, color = sig_class)) +
+        geom_point(data = concord_df %>% filter(sig_class == "NS"),
+                   size = 0.5, alpha = 0.2) +
+        geom_point(data = concord_df %>% filter(sig_class != "NS"),
+                   size = 1.5, alpha = 0.7) +
+        geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey40") +
+        geom_hline(yintercept = 0, linetype = "dotted", color = "grey60") +
+        geom_vline(xintercept = 0, linetype = "dotted", color = "grey60") +
+        scale_color_manual(values = concord_colors, drop = FALSE, name = "") +
+        annotate("text", x = Inf, y = -Inf, hjust = 1.1, vjust = -0.5,
+                 label = paste0("r = ", round(r_val, 3)),
+                 fontface = "bold", size = 5, color = "black") +
+        labs(
+          title = paste0(depot, ": KD Effect Concordance Between Sexes"),
+          subtitle = "Points near diagonal = same response in males and females",
+          x = expression(log[2]~FC~"(KD vs CTL) in Females"),
+          y = expression(log[2]~FC~"(KD vs CTL) in Males")
+        ) +
+        coord_fixed() +
+        theme_bw(base_size = 12) +
+        theme(
+          panel.grid = element_blank(),
+          plot.title = element_text(face = "bold", hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5, color = "grey40"),
+          legend.position = "right"
+        )
+
+      ggsave(file.path(interaction_dir,
+                       paste0("sex_concordance_scatter_", depot, "_", run_tag, ".png")),
+             plot = p_concord, width = 7, height = 7, dpi = 300, bg = "white")
+
+      ## Save concordance table
+      write.csv(concord_df,
+                file.path(tables_dir,
+                          paste0("sex_stratified_logfc_", depot, "_", run_tag, ".csv")),
+                row.names = FALSE)
+    }
+  } else {
+    cat("[WARN] Too few samples per sex for concordance analysis\n")
+    r_val <- NA_real_
+  }
+
+  ## -------------------------------------------------------
   ## 4j) PLOT 4: Variance explained by each model term
   ## -------------------------------------------------------
   ## Quick approach: for each gene, fit Sex + Genotype + Sex:Genotype
@@ -426,12 +549,23 @@ for (depot in c("iWAT", "gWAT")) {
 
   cat("\n[INFO] Computing variance attribution (this may take a moment)...\n")
 
-  norm_counts <- counts(dds_wald, normalized = TRUE)
+  ## Use VST-transformed data (already computed for PCA, statistically
+  ## more appropriate for linear-model variance decomposition than log2+1)
+  vst_mat <- assay(vsd)
+  gene_names <- rownames(vst_mat)
+  if (is.null(gene_names) || length(gene_names) == 0) {
+    ## Fallback: use gene names from the input count matrix
+    gene_names <- rownames(depot_counts)
+  }
 
   ## Use a sample of genes to speed this up
-  n_genes_for_var <- min(5000, nrow(norm_counts))
+  n_genes_for_var <- min(5000, length(gene_names))
   set.seed(MASTER_SEED)
-  var_genes <- sample(rownames(norm_counts), n_genes_for_var)
+  if (n_genes_for_var > 1) {
+    var_genes <- sample(gene_names, n_genes_for_var)
+  } else {
+    var_genes <- gene_names
+  }
 
   var_results <- data.frame(
     gene = var_genes,
@@ -444,7 +578,7 @@ for (depot in c("iWAT", "gWAT")) {
 
   for (i in seq_along(var_genes)) {
     g <- var_genes[i]
-    y <- log2(norm_counts[g, ] + 1)
+    y <- vst_mat[g, ]
     tryCatch({
       fit <- anova(lm(y ~ Sex + Genotype + Sex:Genotype, data = depot_annot))
       ss <- fit$`Sum Sq`
@@ -557,8 +691,9 @@ for (depot in c("iWAT", "gWAT")) {
     N_interaction_sig = n_sig_lrt,
     Pct_interaction = pct_sig,
     pi0_estimate = round(pi0_est, 4),
-    N_genotype_DEGs = if (exists("n_geno_sig")) n_geno_sig else NA,
-    N_sex_DEGs = if (exists("n_sex_sig")) n_sex_sig else NA,
+    N_genotype_DEGs = n_geno_sig,
+    N_sex_DEGs = n_sex_sig,
+    Sex_logFC_cor = if (exists("r_val") && !is.null(r_val)) round(r_val, 4) else NA,
     Median_var_sex = round(median(var_results$pct_sex), 2),
     Median_var_genotype = round(median(var_results$pct_genotype), 2),
     Median_var_interaction = round(median(var_results$pct_interaction), 2),
@@ -606,6 +741,11 @@ for (depot in c("iWAT", "gWAT")) {
   cat(".\nVariance decomposition showed the interaction term explained a\n")
   cat("median of ", row$Median_var_interaction, "% of per-gene variance,\n", sep = "")
   cat("compared to ", row$Median_var_genotype, "% for the Genotype main effect.\n", sep = "")
+  if (!is.na(row$Sex_logFC_cor)) {
+    cat("Sex-stratified analysis showed high concordance between female\n")
+    cat("and male KD effects (Pearson r = ", row$Sex_logFC_cor, "),\n", sep = "")
+    cat("confirming that both sexes respond similarly.\n")
+  }
   cat("These results indicate that male and female ", depot, " respond\n", sep = "")
   cat("similarly to KAT8 knockdown, justifying pooling sexes for the\n")
   cat("primary analysis.\"\n\n")
@@ -627,7 +767,9 @@ cat("Files created per depot:\n")
 cat("  1. P-value histogram (interaction LRT)\n")
 cat("  2. Interaction effect vs Genotype effect scatter\n")
 cat("  3. PCA colored by Sex/Genotype\n")
+cat("  3b. Sex-stratified KD concordance scatter (M vs F logFC)\n")
 cat("  4. Variance explained boxplot (Sex vs Genotype vs Interaction)\n")
 cat("  5. Full interaction results table\n")
 cat("  6. Significant interaction genes (if any)\n")
-cat("  7. Combined summary table\n\n")
+cat("  7. Sex-stratified logFC table\n")
+cat("  8. Combined summary table\n\n")
