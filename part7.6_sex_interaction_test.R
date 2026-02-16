@@ -35,7 +35,9 @@
 
 ## 1) Packages ----------------------------------------------
 required_pkgs <- c("DESeq2", "dplyr", "tidyr", "ggplot2", "ggrepel",
-                   "scales", "RColorBrewer", "pheatmap", "grid")
+                   "scales", "RColorBrewer", "pheatmap", "grid",
+                   "clusterProfiler", "org.Mm.eg.db", "enrichplot",
+                   "AnnotationDbi", "stringr")
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
 if (length(to_install) > 0) {
   if (!requireNamespace("BiocManager", quietly = TRUE))
@@ -53,6 +55,11 @@ suppressPackageStartupMessages({
   library(RColorBrewer)
   library(pheatmap)
   library(grid)
+  library(clusterProfiler)
+  library(org.Mm.eg.db)
+  library(enrichplot)
+  library(AnnotationDbi)
+  library(stringr)
 })
 
 ## Try to load qvalue for pi0 estimation (optional)
@@ -140,9 +147,27 @@ sample_annot$Depot    <- factor(sample_annot$Depot, levels = c("iWAT", "gWAT"))
 sample_annot$Sex      <- factor(sample_annot$Sex, levels = c("F", "M"))
 rownames(sample_annot) <- sample_annot$Sample
 
-## Build count matrix (gene names as rownames, same as part1)
-if ("gene_name" %in% colnames(counts_raw)) {
+## Build count matrix (gene names as rownames, same logic as part1)
+## counts.txt uses "gene" (not "gene_name"), so check both
+if ("gene_name" %in% colnames(counts_raw) || "gene" %in% colnames(counts_raw)) {
   counts_tissue <- counts_raw
+
+  ## Normalise column name: counts.txt has "gene"; part1 renames to "gene_name"
+  if (!"gene_name" %in% colnames(counts_tissue) && "gene" %in% colnames(counts_tissue)) {
+    counts_tissue$gene_name <- counts_tissue$gene
+  }
+  ## Capture Ensembl IDs for fallback (column may be "gene_id" or "ensembl_gene_id")
+  if (!"ensembl_gene_id" %in% colnames(counts_tissue) && "gene_id" %in% colnames(counts_tissue)) {
+    counts_tissue$ensembl_gene_id <- counts_tissue$gene_id
+  }
+
+  ## Replace NA / blank gene names with Ensembl ID (same as part1 lines 268-269)
+  na_or_blank <- is.na(counts_tissue$gene_name) | counts_tissue$gene_name == ""
+  if ("ensembl_gene_id" %in% colnames(counts_tissue)) {
+    counts_tissue$gene_name[na_or_blank] <- counts_tissue$ensembl_gene_id[na_or_blank]
+  }
+
+  ## De-duplicate gene names (same as part1 lines 272-277)
   if (any(duplicated(counts_tissue$gene_name))) {
     dup_flag <- duplicated(counts_tissue$gene_name) | duplicated(counts_tissue$gene_name, fromLast = TRUE)
     if ("ensembl_gene_id" %in% colnames(counts_tissue)) {
@@ -151,8 +176,11 @@ if ("gene_name" %in% colnames(counts_raw)) {
     }
     counts_tissue$gene_name <- make.unique(counts_tissue$gene_name)
   }
+
   rownames(counts_tissue) <- counts_tissue$gene_name
   count_matrix <- as.matrix(counts_tissue[, tissue_samples])
+  ## Re-assign rownames AFTER as.matrix() (critical — part1 line 283)
+  rownames(count_matrix) <- counts_tissue$gene_name
 } else {
   count_matrix <- as.matrix(counts_raw[, tissue_samples])
 }
@@ -706,6 +734,184 @@ for (depot in c("iWAT", "gWAT")) {
   }
 
   ## -------------------------------------------------------
+  ## 4m) PATHWAY ANALYSIS ON INTERACTION GENES
+  ## -------------------------------------------------------
+  ## Which biological pathways show sex-dependent KAT8-KD effects?
+
+  if (nrow(sig_interaction) >= 5) {
+    cat("\n[INFO] Running pathway analysis on ", nrow(sig_interaction),
+        " significant interaction genes (", depot, ")...\n", sep = "")
+
+    interaction_genes <- sig_interaction$gene
+    universe_genes    <- interaction_table$gene
+
+    ## Convert gene symbols to Entrez IDs
+    gene_entrez <- tryCatch(
+      clusterProfiler::bitr(unique(interaction_genes),
+                            fromType = "SYMBOL", toType = "ENTREZID",
+                            OrgDb = org.Mm.eg.db, drop = TRUE),
+      error = function(e) {
+        cat("[WARN] Gene ID conversion failed: ", e$message, "\n")
+        data.frame(SYMBOL = character(), ENTREZID = character())
+      })
+
+    universe_entrez <- tryCatch(
+      clusterProfiler::bitr(unique(universe_genes),
+                            fromType = "SYMBOL", toType = "ENTREZID",
+                            OrgDb = org.Mm.eg.db, drop = TRUE),
+      error = function(e) {
+        cat("[WARN] Universe ID conversion failed: ", e$message, "\n")
+        data.frame(SYMBOL = character(), ENTREZID = character())
+      })
+
+    cat("[INFO] Mapped ", nrow(gene_entrez), "/", length(interaction_genes),
+        " interaction genes to Entrez IDs\n", sep = "")
+
+    if (nrow(gene_entrez) >= 5) {
+
+      ## --- GO:BP ORA ---
+      tryCatch({
+        ego <- enrichGO(
+          gene          = gene_entrez$ENTREZID,
+          universe      = universe_entrez$ENTREZID,
+          OrgDb         = org.Mm.eg.db,
+          ont           = "BP",
+          pvalueCutoff  = ora_params$pvalue_cutoff,
+          qvalueCutoff  = ora_params$qvalue_cutoff,
+          readable      = TRUE,
+          minGSSize     = ora_params$min_gs_size,
+          maxGSSize     = ora_params$max_gs_size
+        )
+
+        if (!is.null(ego) && nrow(ego@result) > 0) {
+          ego_simp <- simplify(ego, cutoff = ora_params$simplify_cutoff,
+                               by = "p.adjust", select_fun = min)
+          sig_go <- ego_simp@result %>%
+            dplyr::filter(p.adjust < 0.05) %>%
+            dplyr::arrange(p.adjust)
+
+          if (nrow(sig_go) > 0) {
+            write.csv(sig_go,
+                      file.path(tables_dir,
+                                paste0("interaction_ORA_GOBP_", depot, "_", run_tag, ".csv")),
+                      row.names = FALSE)
+            cat("[OK] GO:BP: ", nrow(sig_go), " significant terms\n", sep = "")
+
+            ## Dotplot (top 15)
+            top_go <- sig_go %>% dplyr::slice_head(n = ora_params$top_n)
+            top_go$GeneRatio_num <- sapply(strsplit(top_go$GeneRatio, "/"), function(x)
+              as.numeric(x[1]) / as.numeric(x[2]))
+            top_go$Count <- sapply(strsplit(top_go$GeneRatio, "/"), function(x)
+              as.numeric(x[1]))
+            top_go$neg_log10_fdr <- -log10(top_go$p.adjust)
+            top_go$Description <- factor(
+              stringr::str_wrap(top_go$Description, width = 32),
+              levels = rev(stringr::str_wrap(top_go$Description, width = 32)))
+
+            p_go <- ggplot(top_go, aes(x = GeneRatio_num, y = Description)) +
+              geom_point(aes(size = Count, color = neg_log10_fdr)) +
+              scale_color_gradientn(
+                colors = c("#4575B4", "#91BFDB", "#FFFFBF", "#FC8D59", "#D73027"),
+                name = expression(-log[10]*"(FDR)")) +
+              scale_size_continuous(name = "Count", range = c(2, 6)) +
+              labs(title = paste0(depot, ": GO:BP - Interaction Genes"),
+                   subtitle = paste0(nrow(sig_interaction),
+                                     " genes with significant Sex x Genotype interaction"),
+                   x = "Gene Ratio", y = NULL) +
+              theme_bw(base_size = 10) +
+              theme(plot.title = element_text(face = "bold", hjust = 0.5),
+                    plot.subtitle = element_text(hjust = 0.5, color = "grey40"),
+                    panel.grid.minor = element_blank())
+
+            ggsave(file.path(interaction_dir,
+                             paste0("interaction_ORA_GOBP_dotplot_", depot, "_", run_tag, ".png")),
+                   p_go, width = 7, height = 6, dpi = 300, bg = "white")
+          } else {
+            cat("[INFO] No significant GO:BP terms for interaction genes\n")
+          }
+        }
+      }, error = function(e) {
+        cat("[WARN] GO:BP ORA failed: ", e$message, "\n")
+      })
+
+      ## --- KEGG ORA ---
+      tryCatch({
+        ekegg <- enrichKEGG(
+          gene         = gene_entrez$ENTREZID,
+          universe     = universe_entrez$ENTREZID,
+          organism     = "mmu",
+          pvalueCutoff = ora_params$pvalue_cutoff,
+          qvalueCutoff = ora_params$qvalue_cutoff,
+          minGSSize    = ora_params$min_gs_size,
+          maxGSSize    = ora_params$max_gs_size
+        )
+
+        if (!is.null(ekegg) && nrow(ekegg@result) > 0) {
+          sig_kegg <- ekegg@result %>%
+            dplyr::filter(p.adjust < 0.05) %>%
+            dplyr::arrange(p.adjust)
+
+          ## Translate Entrez IDs in geneID column to symbols
+          if (nrow(sig_kegg) > 0 && "geneID" %in% colnames(sig_kegg)) {
+            sig_kegg$geneID_symbols <- sapply(sig_kegg$geneID, function(g) {
+              ids <- unlist(strsplit(g, "/"))
+              syms <- gene_entrez$SYMBOL[match(ids, gene_entrez$ENTREZID)]
+              paste(syms[!is.na(syms)], collapse = "/")
+            })
+          }
+
+          if (nrow(sig_kegg) > 0) {
+            write.csv(sig_kegg,
+                      file.path(tables_dir,
+                                paste0("interaction_ORA_KEGG_", depot, "_", run_tag, ".csv")),
+                      row.names = FALSE)
+            cat("[OK] KEGG: ", nrow(sig_kegg), " significant pathways\n", sep = "")
+
+            top_kegg <- sig_kegg %>% dplyr::slice_head(n = ora_params$top_n)
+            top_kegg$GeneRatio_num <- sapply(strsplit(top_kegg$GeneRatio, "/"), function(x)
+              as.numeric(x[1]) / as.numeric(x[2]))
+            top_kegg$Count <- sapply(strsplit(top_kegg$GeneRatio, "/"), function(x)
+              as.numeric(x[1]))
+            top_kegg$neg_log10_fdr <- -log10(top_kegg$p.adjust)
+            top_kegg$Description <- factor(
+              stringr::str_wrap(top_kegg$Description, width = 32),
+              levels = rev(stringr::str_wrap(top_kegg$Description, width = 32)))
+
+            p_kegg <- ggplot(top_kegg, aes(x = GeneRatio_num, y = Description)) +
+              geom_point(aes(size = Count, color = neg_log10_fdr)) +
+              scale_color_gradientn(
+                colors = c("#4575B4", "#91BFDB", "#FFFFBF", "#FC8D59", "#D73027"),
+                name = expression(-log[10]*"(FDR)")) +
+              scale_size_continuous(name = "Count", range = c(2, 6)) +
+              labs(title = paste0(depot, ": KEGG - Interaction Genes"),
+                   subtitle = paste0(nrow(sig_interaction),
+                                     " genes with significant Sex x Genotype interaction"),
+                   x = "Gene Ratio", y = NULL) +
+              theme_bw(base_size = 10) +
+              theme(plot.title = element_text(face = "bold", hjust = 0.5),
+                    plot.subtitle = element_text(hjust = 0.5, color = "grey40"),
+                    panel.grid.minor = element_blank())
+
+            ggsave(file.path(interaction_dir,
+                             paste0("interaction_ORA_KEGG_dotplot_", depot, "_", run_tag, ".png")),
+                   p_kegg, width = 7, height = 6, dpi = 300, bg = "white")
+          } else {
+            cat("[INFO] No significant KEGG pathways for interaction genes\n")
+          }
+        }
+      }, error = function(e) {
+        cat("[WARN] KEGG ORA failed: ", e$message, "\n")
+      })
+
+    } else {
+      cat("[INFO] Too few genes mapped to Entrez IDs for pathway analysis\n")
+    }
+  } else {
+    cat("[INFO] Fewer than 5 significant interaction genes in ", depot,
+        "; skipping pathway analysis\n", sep = "")
+  }
+
+  ## -------------------------------------------------------
   ## 4l) Collect summary row
   ## -------------------------------------------------------
   summary_rows[[depot]] <- data.frame(
@@ -755,23 +961,50 @@ for (depot in c("iWAT", "gWAT")) {
   cat("between sexes in ", depot, ", we performed a DESeq2 likelihood\n", sep = "")
   cat("ratio test comparing a full model (~ Sex + Genotype + Sex:Genotype)\n")
   cat("against a reduced model (~ Sex + Genotype). Of ", row$N_genes_tested, "\n", sep = "")
-  cat("tested genes, only ", row$N_interaction_sig, " (", row$Pct_interaction, "%)\n", sep = "")
+  cat("tested genes, ", row$N_interaction_sig, " (", row$Pct_interaction, "%)\n", sep = "")
   cat("showed significant Sex x Genotype interactions (FDR < 0.05)")
   if (!is.na(row$pi0_estimate)) {
     cat(",\nwith an estimated true null proportion (pi0) of ",
-        row$pi0_estimate, sep = "")
+        row$pi0_estimate, ", indicating that approximately ",
+        round(row$pi0_estimate * 100, 0), "% of genes show\n",
+        "no evidence of sex-dependent KAT8-KD effects", sep = "")
   }
-  cat(".\nVariance decomposition showed the interaction term explained a\n")
-  cat("median of ", row$Median_var_interaction, "% of per-gene variance,\n", sep = "")
-  cat("compared to ", row$Median_var_genotype, "% for the Genotype main effect.\n", sep = "")
+  cat(".\nVariance decomposition across a random sample of genes showed\n")
+  cat("the interaction term explained a median of ", row$Median_var_interaction,
+      "% of per-gene variance,\n", sep = "")
+  cat("compared to ", row$Median_var_genotype,
+      "% for the Genotype main effect and ",
+      row$Median_var_sex, "% for Sex.\n", sep = "")
   if (!is.na(row$Sex_logFC_cor)) {
-    cat("Sex-stratified analysis showed high concordance between female\n")
-    cat("and male KD effects (Pearson r = ", row$Sex_logFC_cor, "),\n", sep = "")
-    cat("confirming that both sexes respond similarly.\n")
+    ## Nuanced concordance language based on r value
+    concordance_adj <- if (row$Sex_logFC_cor >= 0.8) {
+      "strong"
+    } else if (row$Sex_logFC_cor >= 0.6) {
+      "moderate-to-strong"
+    } else if (row$Sex_logFC_cor >= 0.4) {
+      "moderate"
+    } else {
+      "weak"
+    }
+    cat("Sex-stratified analysis revealed ", concordance_adj, " concordance\n", sep = "")
+    cat("between female and male KD log2 fold-changes\n")
+    cat("(Pearson r = ", row$Sex_logFC_cor, ").\n", sep = "")
   }
-  cat("These results indicate that male and female ", depot, " respond\n", sep = "")
-  cat("similarly to KAT8 knockdown, justifying pooling sexes for the\n")
-  cat("primary analysis.\"\n\n")
+  ## Power caveat with actual group sizes
+  depot_annot_sub <- sample_annot[sample_annot$Depot == depot, ]
+  group_sizes <- with(depot_annot_sub, table(Sex, Genotype))
+  min_n <- min(group_sizes)
+  max_n <- max(group_sizes)
+  if (min_n == max_n) {
+    cat("We note that with n = ", min_n, " per sex-genotype group, ", sep = "")
+  } else {
+    cat("We note that with n = ", min_n, "-", max_n, " per sex-genotype group, ", sep = "")
+  }
+  cat("the interaction test has limited statistical power\n")
+  cat("to detect subtle sex-dependent effects; however, the convergent\n")
+  cat("evidence from the LRT, pi0 estimation, variance decomposition,\n")
+  cat("and sex-stratified concordance analysis collectively supports\n")
+  cat("pooling sexes for the primary analysis of ", depot, ".\"\n\n", sep = "")
 }
 
 ## ============================================================
@@ -795,4 +1028,6 @@ cat("  4. Variance explained boxplot (Sex vs Genotype vs Interaction)\n")
 cat("  5. Full interaction results table\n")
 cat("  6. Significant interaction genes (if any)\n")
 cat("  7. Sex-stratified logFC table\n")
-cat("  8. Combined summary table\n\n")
+cat("  8. Combined summary table\n")
+cat("  9. Interaction gene ORA: GO:BP results + dotplot (if sig genes >= 5)\n")
+cat(" 10. Interaction gene ORA: KEGG results + dotplot (if sig genes >= 5)\n\n")
