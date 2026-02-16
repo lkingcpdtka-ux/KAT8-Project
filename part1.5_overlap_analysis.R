@@ -9,7 +9,7 @@
 ##   - logFC correlation between depots
 ## =========================================================
 
-## 1) Load packages -----------------------------------------
+## 1) Load packages & parameters ----------------------------
 required_pkgs <- c("dplyr", "ggplot2", "ggrepel", "RColorBrewer", "VennDiagram", "grid", "gridExtra")
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
 if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
@@ -23,6 +23,9 @@ suppressPackageStartupMessages({
   library(grid)
   library(gridExtra)
 })
+
+## Source central parameters for thresholds and colors
+source(file.path(getwd(), "parameters.R"))
 
 ## 2) Find most recent Part 1 run ---------------------------
 cat("\n=== FINDING PART 1 RESULTS ===\n")
@@ -44,9 +47,15 @@ run_tag <- gsub("^RUN_", "", basename(outdir))
 cat("[INFO] Using Part 1 results from: ", outdir, "\n", sep = "")
 cat("[INFO] Run tag: ", run_tag, "\n", sep = "")
 
-## 3) Parameters --------------------------------------------
-logFC_cut <- 1
-fdr_cut <- 0.05
+## 3) Parameters (from parameters.R) ------------------------
+logFC_cut <- default_logFC_cut
+fdr_cut   <- default_fdr_cut
+
+## RdYlBu palette colors for consistent styling
+col_iwat     <- "#4575B4"   ## blue (matches iWAT in QC plots)
+col_gwat     <- "#D73027"   ## red  (matches gWAT in QC plots)
+col_both     <- "#FC8D59"   ## orange (shared)
+col_neither  <- "gray80"
 
 ## 4) Load DE tables ----------------------------------------
 cat("\n=== LOADING DE TABLES ===\n")
@@ -87,18 +96,22 @@ cat("[OK] Loaded gWAT contrast: ", contrast_names[gwat_idx], "\n", sep = "")
 ## 5) Identify DEG sets -------------------------------------
 cat("\n=== IDENTIFYING DEG SETS ===\n")
 
+## Use depot-specific thresholds from parameters.R
+iwat_thresh <- get_tissue_thresholds("iWAT")
+gwat_thresh <- get_tissue_thresholds("gWAT")
+
 ## iWAT DEGs
 iwat_up <- rownames(de_iwat %>%
-  dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut, logFC > logFC_cut))
+  dplyr::filter(!is.na(padj), padj < iwat_thresh$fdr_cut, logFC > iwat_thresh$logFC_cut))
 iwat_down <- rownames(de_iwat %>%
-  dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut, logFC < -logFC_cut))
+  dplyr::filter(!is.na(padj), padj < iwat_thresh$fdr_cut, logFC < -iwat_thresh$logFC_cut))
 iwat_all_deg <- c(iwat_up, iwat_down)
 
 ## gWAT DEGs
 gwat_up <- rownames(de_gwat %>%
-  dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut, logFC > logFC_cut))
+  dplyr::filter(!is.na(padj), padj < gwat_thresh$fdr_cut, logFC > gwat_thresh$logFC_cut))
 gwat_down <- rownames(de_gwat %>%
-  dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut, logFC < -logFC_cut))
+  dplyr::filter(!is.na(padj), padj < gwat_thresh$fdr_cut, logFC < -gwat_thresh$logFC_cut))
 gwat_all_deg <- c(gwat_up, gwat_down)
 
 cat("[INFO] iWAT DEGs: ", length(iwat_all_deg), " (", length(iwat_up), " up, ", length(iwat_down), " down)\n", sep = "")
@@ -128,9 +141,12 @@ cat("\n--- Direction Concordance ---\n")
 cat("[INFO] Both UP: ", length(overlap_up_up), " genes\n", sep = "")
 cat("[INFO] Both DOWN: ", length(overlap_down_down), " genes\n", sep = "")
 cat("[INFO] Opposite directions: ", length(overlap_opposite), " genes\n", sep = "")
-cat("[INFO] Concordance rate: ",
-    round(100 * (length(overlap_up_up) + length(overlap_down_down)) / length(overlap_all), 1),
-    "%\n", sep = "")
+concordance_pct <- if (length(overlap_all) > 0) {
+  round(100 * (length(overlap_up_up) + length(overlap_down_down)) / length(overlap_all), 1)
+} else {
+  NA_real_
+}
+cat("[INFO] Concordance rate: ", concordance_pct, "%\n", sep = "")
 
 ## 7) Create overlap summary table --------------------------
 overlap_summary <- data.frame(
@@ -154,7 +170,7 @@ overlap_summary <- data.frame(
     length(overlap_up_up),
     length(overlap_down_down),
     length(overlap_opposite),
-    round(100 * (length(overlap_up_up) + length(overlap_down_down)) / length(overlap_all), 1)
+    concordance_pct
   ),
   stringsAsFactors = FALSE
 )
@@ -179,7 +195,7 @@ venn_all <- venn.diagram(
   category.names = c("iWAT", "gWAT"),
   filename = NULL,
   output = TRUE,
-  fill = c("#E69F00", "#56B4E9"),
+  fill = c(col_iwat, col_gwat),
   alpha = 0.5,
   cex = 1.5,
   cat.cex = 1.5,
@@ -208,7 +224,7 @@ venn_up <- venn.diagram(
   category.names = c("iWAT UP", "gWAT UP"),
   filename = NULL,
   output = TRUE,
-  fill = c("#E69F00", "#56B4E9"),
+  fill = c(col_iwat, col_gwat),
   alpha = 0.5,
   cex = 1.5,
   cat.cex = 1.5,
@@ -237,7 +253,7 @@ venn_down <- venn.diagram(
   category.names = c("iWAT DOWN", "gWAT DOWN"),
   filename = NULL,
   output = TRUE,
-  fill = c("#E69F00", "#56B4E9"),
+  fill = c(col_iwat, col_gwat),
   alpha = 0.5,
   cex = 1.5,
   cat.cex = 1.5,
@@ -258,22 +274,22 @@ cat("\n=== CREATING LOGFC CORRELATION PLOT ===\n")
 
 ## Merge DE tables on gene names
 de_merged <- merge(
-  de_iwat[, c("logFC", "adj.P.Val")],
-  de_gwat[, c("logFC", "adj.P.Val")],
+  de_iwat[, c("logFC", "padj")],
+  de_gwat[, c("logFC", "padj")],
   by = "row.names",
   suffixes = c("_iWAT", "_gWAT")
 )
 rownames(de_merged) <- de_merged$Row.names
 de_merged$Row.names <- NULL
 
-## Add significance categories
+## Add significance categories (using depot-specific thresholds)
 de_merged <- de_merged %>%
   mutate(
     sig_cat = case_when(
-      adj.P.Val_iWAT < fdr_cut & abs(logFC_iWAT) > logFC_cut &
-        adj.P.Val_gWAT < fdr_cut & abs(logFC_gWAT) > logFC_cut ~ "Both DEG",
-      adj.P.Val_iWAT < fdr_cut & abs(logFC_iWAT) > logFC_cut ~ "iWAT only",
-      adj.P.Val_gWAT < fdr_cut & abs(logFC_gWAT) > logFC_cut ~ "gWAT only",
+      padj_iWAT < iwat_thresh$fdr_cut & abs(logFC_iWAT) > iwat_thresh$logFC_cut &
+        padj_gWAT < gwat_thresh$fdr_cut & abs(logFC_gWAT) > gwat_thresh$logFC_cut ~ "Both DEG",
+      padj_iWAT < iwat_thresh$fdr_cut & abs(logFC_iWAT) > iwat_thresh$logFC_cut ~ "iWAT only",
+      padj_gWAT < gwat_thresh$fdr_cut & abs(logFC_gWAT) > gwat_thresh$logFC_cut ~ "gWAT only",
       TRUE ~ "Neither"
     ),
     gene_name = rownames(de_merged)
@@ -304,10 +320,10 @@ p_scatter <- ggplot(de_merged, aes(x = logFC_iWAT, y = logFC_gWAT, color = sig_c
   geom_vline(xintercept = c(-logFC_cut, logFC_cut), linetype = "dashed", color = "gray40", linewidth = 0.3) +
   scale_color_manual(
     values = c(
-      "Both DEG" = "#D55E00",
-      "iWAT only" = "#E69F00",
-      "gWAT only" = "#56B4E9",
-      "Neither" = "gray80"
+      "Both DEG" = col_both,
+      "iWAT only" = col_iwat,
+      "gWAT only" = col_gwat,
+      "Neither" = col_neither
     ),
     name = "DEG Status"
   ) +
@@ -325,13 +341,11 @@ p_scatter <- ggplot(de_merged, aes(x = logFC_iWAT, y = logFC_gWAT, color = sig_c
   annotate(
     "text",
     x = -Inf, y = Inf,
-    label = paste0("Pearson r = ", round(cor_pearson, 3), "\nSpearman ρ = ", round(cor_spearman, 3)),
+    label = paste0("Pearson r = ", round(cor_pearson, 3), "\nSpearman \u03c1 = ", round(cor_spearman, 3)),
     hjust = -0.1, vjust = 1.5,
     size = 4,
     fontface = "bold",
-    color = "black",
-    fill = "white",
-    alpha = 0.8
+    color = "black"
   ) +
   theme_bw(base_size = 14) +
   theme(
@@ -359,40 +373,40 @@ shared_up <- data.frame(
   gene = overlap_up_up,
   logFC_iWAT = de_iwat[overlap_up_up, "logFC"],
   logFC_gWAT = de_gwat[overlap_up_up, "logFC"],
-  adj.P.Val_iWAT = de_iwat[overlap_up_up, "adj.P.Val"],
-  adj.P.Val_gWAT = de_gwat[overlap_up_up, "adj.P.Val"],
+  padj_iWAT = de_iwat[overlap_up_up, "padj"],
+  padj_gWAT = de_gwat[overlap_up_up, "padj"],
   stringsAsFactors = FALSE
 )
-shared_up <- shared_up[order(shared_up$adj.P.Val_iWAT), ]
+shared_up <- shared_up[order(shared_up$padj_iWAT), ]
 
 shared_down <- data.frame(
   gene = overlap_down_down,
   logFC_iWAT = de_iwat[overlap_down_down, "logFC"],
   logFC_gWAT = de_gwat[overlap_down_down, "logFC"],
-  adj.P.Val_iWAT = de_iwat[overlap_down_down, "adj.P.Val"],
-  adj.P.Val_gWAT = de_gwat[overlap_down_down, "adj.P.Val"],
+  padj_iWAT = de_iwat[overlap_down_down, "padj"],
+  padj_gWAT = de_gwat[overlap_down_down, "padj"],
   stringsAsFactors = FALSE
 )
-shared_down <- shared_down[order(shared_down$adj.P.Val_iWAT), ]
+shared_down <- shared_down[order(shared_down$padj_iWAT), ]
 
 ## Depot-specific genes
 iwat_specific_df <- data.frame(
   gene = iwat_specific,
   logFC = de_iwat[iwat_specific, "logFC"],
-  adj.P.Val = de_iwat[iwat_specific, "adj.P.Val"],
+  padj = de_iwat[iwat_specific, "padj"],
   direction = ifelse(de_iwat[iwat_specific, "logFC"] > 0, "UP", "DOWN"),
   stringsAsFactors = FALSE
 )
-iwat_specific_df <- iwat_specific_df[order(iwat_specific_df$adj.P.Val), ]
+iwat_specific_df <- iwat_specific_df[order(iwat_specific_df$padj), ]
 
 gwat_specific_df <- data.frame(
   gene = gwat_specific,
   logFC = de_gwat[gwat_specific, "logFC"],
-  adj.P.Val = de_gwat[gwat_specific, "adj.P.Val"],
+  padj = de_gwat[gwat_specific, "padj"],
   direction = ifelse(de_gwat[gwat_specific, "logFC"] > 0, "UP", "DOWN"),
   stringsAsFactors = FALSE
 )
-gwat_specific_df <- gwat_specific_df[order(gwat_specific_df$adj.P.Val), ]
+gwat_specific_df <- gwat_specific_df[order(gwat_specific_df$padj), ]
 
 ## Save gene lists
 write.csv(shared_up, file.path(outdir, "tables", paste0("Shared_UP_genes_", run_tag, ".csv")), row.names = FALSE)
@@ -426,7 +440,7 @@ cat("  gWAT-only: ", length(gwat_specific), " (",
     round(100 * length(gwat_specific) / length(gwat_all_deg), 1), "% of gWAT DEGs)\n", sep = "")
 cat("\nCorrelation:\n")
 cat("  Pearson r: ", round(cor_pearson, 3), "\n", sep = "")
-cat("  Spearman ρ: ", round(cor_spearman, 3), "\n", sep = "")
+cat("  Spearman \u03c1: ", round(cor_spearman, 3), "\n", sep = "")
 cat("\n==========================================================\n\n")
 
 cat("======================================\n")
