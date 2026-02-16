@@ -88,6 +88,23 @@ if (file.exists(file.path(utils_dir, "save.R"))) {
 }
 
 ## ============================================================
+## 2b) Helper: safe DESeq2 results --> data.frame
+## ============================================================
+## as.data.frame() on S4 DESeqResults can drop column names in some
+## Bioconductor/S4Vectors versions.  This helper forces the standard
+## DESeq2 column names so downstream code is reliable.
+deseq_res_to_df <- function(res_obj) {
+  df <- as.data.frame(res_obj)
+  std_cols <- c("baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj")
+  if (ncol(df) == length(std_cols)) {
+    colnames(df) <- std_cols
+  } else if (ncol(df) > length(std_cols)) {
+    colnames(df)[seq_along(std_cols)] <- std_cols
+  }
+  df
+}
+
+## ============================================================
 ## 3) LOAD RAW COUNTS + SAMPLE ANNOTATION
 ## ============================================================
 cat("\n=== LOADING DATA ===\n")
@@ -237,7 +254,7 @@ for (depot in c("iWAT", "gWAT")) {
   ## -------------------------------------------------------
   ## LRT result: tests ALL genes for interaction effect
   res_lrt <- results(dds_lrt)
-  res_lrt_df <- as.data.frame(res_lrt)
+  res_lrt_df <- deseq_res_to_df(res_lrt)
   res_lrt_df$gene <- depot_gene_names
   res_lrt_df <- res_lrt_df[!is.na(res_lrt_df$pvalue), ]
 
@@ -256,7 +273,7 @@ for (depot in c("iWAT", "gWAT")) {
     cat("[WARN] Using last coefficient as interaction term\n")
   }
 
-  res_wald_df <- as.data.frame(res_wald)
+  res_wald_df <- deseq_res_to_df(res_wald)
   res_wald_df$gene <- depot_gene_names
   res_wald_df <- res_wald_df[!is.na(res_wald_df$pvalue), ]
 
@@ -302,7 +319,7 @@ for (depot in c("iWAT", "gWAT")) {
   ## Extract Genotype main effect from Wald
   geno_coef <- grep("^Genotype", coef_names, value = TRUE)
   if (length(geno_coef) == 1) {
-    res_geno <- as.data.frame(results(dds_wald, name = geno_coef))
+    res_geno <- deseq_res_to_df(results(dds_wald, name = geno_coef))
     res_geno$gene <- depot_gene_names
     n_geno_sig <- sum(res_geno$padj < fdr_cut & abs(res_geno$log2FoldChange) > thresh$logFC_cut,
                       na.rm = TRUE)
@@ -315,7 +332,7 @@ for (depot in c("iWAT", "gWAT")) {
   sex_coef <- grep("^Sex", coef_names, value = TRUE)
   sex_coef <- sex_coef[!grepl(":", sex_coef)]  # exclude interaction
   if (length(sex_coef) == 1) {
-    res_sex <- as.data.frame(results(dds_wald, name = sex_coef))
+    res_sex <- deseq_res_to_df(results(dds_wald, name = sex_coef))
     n_sex_sig <- sum(res_sex$padj < fdr_cut, na.rm = TRUE)
     cat("  Sex main effect:\n")
     cat("    Significant:                   ", n_sex_sig, "\n")
@@ -463,7 +480,7 @@ for (depot in c("iWAT", "gWAT")) {
       design    = ~ Genotype
     )
     dds_f <- DESeq(dds_f, quiet = TRUE)
-    res_f <- as.data.frame(results(dds_f))
+    res_f <- deseq_res_to_df(results(dds_f))
     res_f$gene <- depot_gene_names
 
     ## Male-only DESeq2
@@ -473,7 +490,7 @@ for (depot in c("iWAT", "gWAT")) {
       design    = ~ Genotype
     )
     dds_m <- DESeq(dds_m, quiet = TRUE)
-    res_m <- as.data.frame(results(dds_m))
+    res_m <- deseq_res_to_df(results(dds_m))
     res_m$gene <- depot_gene_names
 
     ## Merge
@@ -659,22 +676,20 @@ for (depot in c("iWAT", "gWAT")) {
   ## -------------------------------------------------------
   ## 4k) Save interaction results table
   ## -------------------------------------------------------
-  interaction_table <- res_lrt_df %>%
-    arrange(pvalue) %>%
-    mutate(
-      wald_lfc = res_wald_df$log2FoldChange[match(gene, res_wald_df$gene)],
-      wald_padj = res_wald_df$padj[match(gene, res_wald_df$gene)]
-    ) %>%
-    rename(
-      LRT_baseMean = baseMean,
-      LRT_stat = stat,
-      LRT_pvalue = pvalue,
-      LRT_padj = padj,
-      interaction_log2FC = wald_lfc,
-      interaction_padj = wald_padj
-    ) %>%
-    select(gene, LRT_baseMean, LRT_stat, LRT_pvalue, LRT_padj,
-           interaction_log2FC, interaction_padj)
+  ## Build table with explicit column access (avoids dplyr NSE column name issues)
+  interaction_table <- data.frame(
+    gene               = res_lrt_df[["gene"]],
+    LRT_baseMean       = res_lrt_df[["baseMean"]],
+    LRT_stat           = res_lrt_df[["stat"]],
+    LRT_pvalue         = res_lrt_df[["pvalue"]],
+    LRT_padj           = res_lrt_df[["padj"]],
+    interaction_log2FC = res_wald_df[["log2FoldChange"]][
+        match(res_lrt_df[["gene"]], res_wald_df[["gene"]])],
+    interaction_padj   = res_wald_df[["padj"]][
+        match(res_lrt_df[["gene"]], res_wald_df[["gene"]])],
+    stringsAsFactors = FALSE
+  )
+  interaction_table <- interaction_table[order(interaction_table$LRT_pvalue), ]
 
   write.csv(interaction_table,
             file.path(tables_dir, paste0("sex_interaction_results_", depot, "_", run_tag, ".csv")),
