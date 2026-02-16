@@ -411,7 +411,7 @@ for (depot in c("iWAT", "gWAT")) {
       interaction_padj = res_wald_df$padj[match(res_geno$gene, res_wald_df$gene)],
       stringsAsFactors = FALSE
     ) %>%
-      filter(is.finite(geno_lfc), is.finite(interaction_lfc))
+      dplyr::filter(is.finite(geno_lfc), is.finite(interaction_lfc))
 
     cat_levels <- c("Sig. interaction", "Genotype DEG", "NS")
     cat_colors <- c("Sig. interaction" = "#E41A1C",
@@ -430,9 +430,9 @@ for (depot in c("iWAT", "gWAT")) {
         )
 
       p_effect <- ggplot(compare_df, aes(x = geno_lfc, y = interaction_lfc, color = category)) +
-        geom_point(data = compare_df %>% filter(category == "NS"),
+        geom_point(data = compare_df %>% dplyr::filter(category == "NS"),
                    size = 0.5, alpha = 0.3) +
-        geom_point(data = compare_df %>% filter(category != "NS"),
+        geom_point(data = compare_df %>% dplyr::filter(category != "NS"),
                    size = 1.5, alpha = 0.7) +
         geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
         geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
@@ -527,7 +527,7 @@ for (depot in c("iWAT", "gWAT")) {
       res_m[, c("gene", "log2FoldChange", "padj")],
       by = "gene", suffixes = c("_F", "_M")
     ) %>%
-      filter(is.finite(log2FoldChange_F), is.finite(log2FoldChange_M))
+      dplyr::filter(is.finite(log2FoldChange_F), is.finite(log2FoldChange_M))
 
     if (nrow(concord_df) > 0) {
       ## Correlation
@@ -554,9 +554,9 @@ for (depot in c("iWAT", "gWAT")) {
 
       p_concord <- ggplot(concord_df,
                           aes(x = log2FoldChange_F, y = log2FoldChange_M, color = sig_class)) +
-        geom_point(data = concord_df %>% filter(sig_class == "NS"),
+        geom_point(data = concord_df %>% dplyr::filter(sig_class == "NS"),
                    size = 0.5, alpha = 0.2) +
-        geom_point(data = concord_df %>% filter(sig_class != "NS"),
+        geom_point(data = concord_df %>% dplyr::filter(sig_class != "NS"),
                    size = 1.5, alpha = 0.7) +
         geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey40") +
         geom_hline(yintercept = 0, linetype = "dotted", color = "grey60") +
@@ -645,7 +645,7 @@ for (depot in c("iWAT", "gWAT")) {
     }, error = function(e) { })
   }
 
-  var_results <- var_results %>% filter(!is.na(pct_sex))
+  var_results <- var_results %>% dplyr::filter(!is.na(pct_sex))
 
   ## Summary
   var_summary <- data.frame(
@@ -669,7 +669,7 @@ for (depot in c("iWAT", "gWAT")) {
 
   ## Bar plot of variance explained
   var_long <- var_results %>%
-    select(gene, pct_sex, pct_genotype, pct_interaction) %>%
+    dplyr::select(gene, pct_sex, pct_genotype, pct_interaction) %>%
     pivot_longer(cols = -gene, names_to = "Term", values_to = "Pct") %>%
     mutate(Term = recode(Term,
                          "pct_sex" = "Sex",
@@ -725,7 +725,7 @@ for (depot in c("iWAT", "gWAT")) {
   cat("\n[OK] Saved interaction results table for ", depot, "\n", sep = "")
 
   ## If there ARE significant interaction genes, list them
-  sig_interaction <- interaction_table %>% filter(LRT_padj < fdr_cut)
+  sig_interaction <- interaction_table %>% dplyr::filter(LRT_padj < fdr_cut)
   if (nrow(sig_interaction) > 0) {
     write.csv(sig_interaction,
               file.path(tables_dir, paste0("sex_interaction_sig_genes_", depot, "_", run_tag, ".csv")),
