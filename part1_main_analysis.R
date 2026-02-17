@@ -308,11 +308,13 @@ tryCatch({
   print(colSums(count_matrix_tissue))
   
   ## 4.6) DESeq2 object + typical prefilter ------------------
-  ## DESIGN NOTE (2026-01-23): Depot-focused analysis
-  ## - Analyzing by depot only (combining males and females within each depot)
-  ## - Design ~ 0 + GroupDepot creates separate coefficients for each depot/genotype combination
-  ## - Male and female pathways are simple enough; substantial differences are between depots
-  ## - This approach captures the primary depot-specific effects of KAT8 knockdown
+  ## DESIGN NOTE (2026-02-17): Per-depot analysis with Sex as covariate
+  ## - Part 7.7 sex-combining validation confirmed Sex x Genotype interaction is minimal:
+  ##     iWAT: 3.83% interaction genes, pi0=0.87, sex-stratified r=0.73, 99.0% concordance
+  ##     gWAT: 2.22% interaction genes, pi0=0.85, sex-stratified r=0.61, 99.5% concordance
+  ## - Adding Sex as covariate gains +14% DEGs (iWAT) and +5% DEGs (gWAT)
+  ## - Strategy: ~ Sex + Genotype per depot absorbs sex variance, increasing genotype power
+  ## - Combined model (~ 0 + GroupDepot) retained for VST/QC only
   min_count <- prefilter_min_count
   min_samples <- prefilter_min_samples
 
@@ -340,6 +342,7 @@ tryCatch({
   
   count_matrix_filt <- count_matrix_tissue[keep, , drop = FALSE]
   
+  ## Combined model -- used for VST / QC only (DE uses per-depot ~ Sex + Genotype below)
   dds_tissue <- DESeqDataSetFromMatrix(
     countData = round(count_matrix_filt),
     colData   = sample_annot,
@@ -437,11 +440,42 @@ tryCatch({
   
   ## 4.7) Run DESeq2 ----------------------------------------
   cat("\n=== RUNNING DESeq2 ===\n")
+
+  ## Step 1: Combined model for VST (blind=FALSE needs dispersion estimates)
+  cat("[INFO] Combined model (~ 0 + GroupDepot) for VST/QC...\n")
   dds_tissue <- DESeq(dds_tissue)
-  cat("[OK] DESeq2 complete.\n")
-  
-  cat("\nDESeq2 design matrix (first rows):\n")
-  print(head(model.matrix(design(dds_tissue), colData(dds_tissue))))
+  cat("[OK] Combined DESeq2 complete (VST/QC only).\n")
+
+  ## Step 2: Per-depot DESeq2 with Sex as covariate (for differential expression)
+  ## Justified by Part 7.7 sex-combining validation:
+  ##   - Only 2-4% of genes show Sex x Genotype interaction (LRT FDR < 0.05)
+  ##   - Pi0 = 0.85-0.87 (85-87% true nulls for interaction)
+  ##   - Sex-stratified logFC concordance: 99%+ directional agreement
+  ##   - Adding Sex gains +14% DEGs (iWAT), +5% DEGs (gWAT) with >99% concordance
+  cat("\n[INFO] Per-depot models (~ Sex + Genotype) for DE...\n")
+
+  dds_depot <- list()
+  for (depot_name in c("iWAT", "gWAT")) {
+    depot_idx <- sample_annot$Depot == depot_name
+    depot_sa  <- sample_annot[depot_idx, , drop = FALSE]
+    depot_cm  <- count_matrix_filt[, depot_sa$Sample, drop = FALSE]
+
+    dds_depot[[depot_name]] <- DESeqDataSetFromMatrix(
+      countData = round(depot_cm),
+      colData   = depot_sa,
+      design    = ~ Sex + Genotype
+    )
+    dds_depot[[depot_name]] <- DESeq(dds_depot[[depot_name]])
+    cat("[OK]", depot_name, ": DESeq2 complete (", nrow(depot_cm),
+        " genes, design: ~ Sex + Genotype)\n")
+  }
+
+  cat("\nDESeq2 design matrices (per-depot, ~ Sex + Genotype):\n")
+  for (depot_name in c("iWAT", "gWAT")) {
+    cat("\n", depot_name, ":\n", sep = "")
+    print(head(model.matrix(design(dds_depot[[depot_name]]),
+                            colData(dds_depot[[depot_name]]))))
+  }
   
   ## 4.8) VST transform for QC ------------------------------
   cat("\n=== VST FOR QC ===\n")
@@ -649,10 +683,10 @@ tryCatch({
   }
 
   ## 4.12) Contrasts ----------------------------------------
-  ## Depot-specific contrasts (combining sexes within each depot)
+  ## Per-depot contrasts: Genotype effect with Sex as covariate
   contrast_definitions <- list(
-    iWAT_KD_vs_CTL = c("GroupDepot", "iWAT_KAT8KD", "iWAT_CTL"),
-    gWAT_KD_vs_CTL = c("GroupDepot", "gWAT_KAT8KD", "gWAT_CTL")
+    iWAT_KD_vs_CTL = list(depot = "iWAT", contrast = c("Genotype", "KAT8KD", "CTL")),
+    gWAT_KD_vs_CTL = list(depot = "gWAT", contrast = c("Genotype", "KAT8KD", "CTL"))
   )
   contrast_names <- names(contrast_definitions)
   
@@ -693,7 +727,8 @@ tryCatch({
     cn_fdr_cut <- contrast_cutoffs$fdr
     cat("[INFO] Using cutoffs: FDR < ", cn_fdr_cut, ", |logFC| > ", cn_logFC_cut, "\n", sep = "")
 
-    res <- results(dds_tissue, contrast = contrast_definitions[[cn]])
+    cdef <- contrast_definitions[[cn]]
+    res <- results(dds_depot[[cdef$depot]], contrast = cdef$contrast)
     res <- res[order(res$pvalue), , drop = FALSE]
 
     tt <- as.data.frame(res)
