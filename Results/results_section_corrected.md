@@ -101,7 +101,9 @@ dysregulation in white adipose tissue**
 To characterize the transcriptomic consequences of KAT8 loss in adipocytes, we
 performed bulk RNA-seq on inguinal white adipose tissue (iWAT) and gonadal white
 adipose tissue (gWAT) from adipocyte-specific KAT8 knockout (AKO) and floxed
-control (FL) mice (n = 5 per group per depot per sex). Both male and female mice
+control (FL) mice (n = 4-5 per group per depot per sex; two outlier samples
+[JS_08, JS_28] were excluded, each a female AKO from one depot). Both male and
+female mice
 were included in each experimental group, and sex was modeled as a covariate in
 the DESeq2 analysis (design: ~ Sex + Genotype, run separately per depot) to
 account for sex-related variance while preserving statistical power to detect
@@ -170,8 +172,10 @@ metabolism genes, including electron transport chain components (Atp5pb, Ndufab1
 Ndufb10, Atp5f1d, Sdhd, Ndufb8, Atp5me), mitochondrial-encoded genes (mt-Nd2,
 mt-Nd5), mitochondrial ribosomal proteins (Mrps10, Mrpl15, Mrpl17), and
 additional mitochondrial factors (Stoml2, Nsun4, Uqcc2, Ptcd1, Mtg2, Dap3,
-Hars1, Gars1), were consistently downregulated in KAT8 AKO samples in iWAT, and
-this pattern was also evident in gWAT. Immune and inflammatory genes, including
+Hars1, Gars1), were consistently downregulated in KAT8 AKO samples in iWAT. A subset of these
+genes also trended downward in gWAT, although the gWAT transcriptional response
+was dominated by inflammatory and immune programs rather than metabolic
+suppression. Immune and inflammatory genes, including
 Nckap1l, Myo1f, Cd84, Lat2, Fcer1g, Hmox1, Cd300a, Itgb2, Syk, Spi1, Tyrobp,
 and Pycard, were upregulated in KAT8 AKO adipose tissue in both depots. Lipid
 metabolism genes (Soat1, Lipa, Scarb2, Nus1, Acsl3, P2rx7, Hilpda, Pltp, Abcg1)
@@ -197,7 +201,9 @@ is consistent with the known functional and developmental distinctions between
 subcutaneous and visceral adipose tissue. These findings identify KAT8 as a
 previously unrecognized regulator of adipocyte gene expression and suggest that
 its loss promotes a transcriptional environment favoring adipose tissue
-dysfunction.
+dysfunction. Formal interaction testing confirmed that these transcriptional
+consequences were largely sex-independent, although a small subset of genes
+(2-4%) exhibited sex-dependent responses that may warrant further investigation.
 
 ---
 
@@ -225,10 +231,10 @@ genotype effects) while keeping all samples in a single per-depot analysis.
 
 ### What this means (plain English)
 
-1. **LRT interaction test**: For each gene, we asked "does KAT8 knockdown affect
+1. **LRT interaction test**: For each gene, we asked "does KAT8 knockout affect
    this gene differently in males vs females?" Only 2-4% of genes said yes.
 2. **Pi0**: Of all genes tested, 85-87% genuinely have NO sex-dependent response
-   to KAT8 knockdown. The remaining 13-15% includes both true interactions and
+   to KAT8 knockout. The remaining 13-15% includes both true interactions and
    residual noise.
 3. **Concordance (99%+)**: When a gene goes up in the no-sex model, it also goes
    up in the sex-covariate model. The two models agree on direction almost
