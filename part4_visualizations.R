@@ -71,6 +71,7 @@ generate_ora_dotplots   <- TRUE
 ## Section D: Heatmaps
 generate_top_deg_heatmaps     <- TRUE   ## Simple top DEGs (no pathway sections)
 generate_individual_heatmaps  <- TRUE   ## Individual samples with pathway groups
+generate_grouped_heatmaps     <- TRUE   ## 2-column summary: CTL=0, KAT8KD=log2FC
 
 ## ============================================================
 
@@ -971,6 +972,214 @@ if (!is.null(vst_data)) {
           width = max(500, ncol(mat) * 40 + 200),
           height = max(400, nrow(mat) * 16 + 100), res = 150)
       draw(ht, padding = unit(c(5, 12, 10, 5), "mm"))
+      dev.off()
+      cat("[OK] Saved: ", plot_file, "\n", sep = "")
+    }
+  }
+
+  ## D.3) GROUPED HEATMAPS (2-column summary: CTL=0, KAT8KD=log2FC)
+  ## Shows the DESeq2 log2 fold change as a compact 2-column view:
+  ##   Left column  = CTL (fixed at 0, the reference)
+  ##   Right column = KAT8KD (= the log2 fold change from DESeq2)
+  ## Rows are split by biological pathway categories from fGSEA leading edge.
+  ## This is the "summary" view -- complements the individual-sample heatmap.
+  if (generate_grouped_heatmaps) {
+    cat("\n--- Creating Grouped Heatmaps (CTL=0 / KAT8KD=log2FC) ---\n")
+
+    ## Reuse gene_categories from section D.2 if available, otherwise rebuild
+    if (!exists("gene_categories") || length(gene_categories) == 0) {
+      fgsea_gobp_files <- list.files(tables_dir, pattern = "^fgsea_gobp_.*\\.csv$",
+                                     full.names = TRUE)
+
+      extract_leading_edge_grouped <- function(fgsea_file, pathway_patterns,
+                                               max_genes = 15) {
+        if (!file.exists(fgsea_file)) return(character(0))
+        fgsea_data <- read.csv(fgsea_file, stringsAsFactors = FALSE)
+        genes <- character(0)
+        for (pattern in pathway_patterns) {
+          matched <- grep(pattern, fgsea_data$pathway_name, ignore.case = TRUE)
+          if (length(matched) > 0) {
+            le <- fgsea_data$leadingEdge_symbols[matched[1]]
+            if (!is.na(le) && le != "") {
+              genes <- c(genes, head(unlist(strsplit(le, ",")), max_genes))
+            }
+          }
+        }
+        unique(genes)
+      }
+
+      gene_categories <- list()
+      iwat_fgsea <- fgsea_gobp_files[grep("iWAT", fgsea_gobp_files,
+                                           ignore.case = TRUE)]
+      if (length(iwat_fgsea) > 0) {
+        mito_genes <- extract_leading_edge_grouped(iwat_fgsea[1], c(
+          "mitochondrial ATP synthesis", "mitochondrial translation",
+          "respiratory chain complex", "fatty acid beta-oxidation"
+        ), 10)
+        if (length(mito_genes) > 0) {
+          gene_categories[["Mitochondrial /\nEnergy"]] <- head(mito_genes, 20)
+        }
+      }
+      gwat_fgsea <- fgsea_gobp_files[grep("gWAT", fgsea_gobp_files,
+                                           ignore.case = TRUE)]
+      if (length(gwat_fgsea) > 0) {
+        immune_genes <- extract_leading_edge_grouped(gwat_fgsea[1], c(
+          "leukocyte degranulation", "myeloid cell activation",
+          "positive regulation of cytokine"
+        ), 10)
+        if (length(immune_genes) > 0) {
+          gene_categories[["Immune /\nInflammatory"]] <- head(immune_genes, 20)
+        }
+        lipid_genes <- extract_leading_edge_grouped(gwat_fgsea[1], c(
+          "lipid localization", "lipid catabolic", "fatty acid"
+        ), 10)
+        if (length(lipid_genes) > 0) {
+          gene_categories[["Lipid\nMetabolism"]] <- head(lipid_genes, 15)
+        }
+        ecm_genes <- extract_leading_edge_grouped(gwat_fgsea[1], c(
+          "tissue remodeling", "extracellular matrix", "cell adhesion"
+        ), 10)
+        if (length(ecm_genes) > 0) {
+          gene_categories[["ECM /\nRemodeling"]] <- head(ecm_genes, 15)
+        }
+      }
+
+      if (length(gene_categories) == 0) {
+        gene_categories <- list(
+          "Inflammatory\nResponse" = c("Il1b", "Il6", "Tnf", "Il1a", "Ccl2",
+                                       "Ccl7", "Cxcl12"),
+          "ECM /\nCollagens" = c("Col1a1", "Col1a2", "Col3a1", "Col4a1",
+                                 "Col4a2", "Col5a1", "Col6a1"),
+          "Adipocyte\nMarkers" = c("Lep", "Adipoq", "Pparg", "Ppargc1a",
+                                   "Fabp4", "Plin1")
+        )
+      }
+    }
+
+    de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$",
+                           full.names = TRUE)
+
+    for (de_file in de_files) {
+      filename <- basename(de_file)
+      contrast <- str_match(filename, "DE_tissue_(.+)_[0-9]+_[0-9]+\\.csv")[2]
+      if (is.na(contrast)) next
+
+      cat("  Grouped heatmap: ", contrast, "\n", sep = "")
+
+      de_data <- read.csv(de_file, row.names = 1, stringsAsFactors = FALSE)
+
+      ## Find the log2FC column
+      lfc_col <- if ("log2FoldChange" %in% colnames(de_data)) {
+        "log2FoldChange"
+      } else if ("logFC" %in% colnames(de_data)) {
+        "logFC"
+      } else {
+        cat("[WARN] Cannot find log2FC column in ", filename, "\n")
+        next
+      }
+
+      ## Map genes to categories
+      all_category_genes <- unique(unlist(gene_categories))
+      genes_in_data <- intersect(all_category_genes, rownames(de_data))
+
+      cat("[INFO] Category genes found: ", length(genes_in_data), "/",
+          length(all_category_genes), "\n", sep = "")
+
+      if (length(genes_in_data) < 3) {
+        cat("[WARN] Too few genes found for grouped heatmap\n")
+        next
+      }
+
+      gene_to_category <- character(length(genes_in_data))
+      names(gene_to_category) <- genes_in_data
+      for (cat_name in names(gene_categories)) {
+        cat_genes <- intersect(gene_categories[[cat_name]], genes_in_data)
+        for (g in cat_genes) {
+          if (gene_to_category[g] == "") gene_to_category[g] <- cat_name
+        }
+      }
+      gene_to_category <- gene_to_category[gene_to_category != ""]
+      genes_to_plot <- names(gene_to_category)
+      if (length(genes_to_plot) < 3) next
+
+      ## Build 2-column matrix: CTL = 0 (reference), KAT8KD = log2FC
+      log2fc_values <- de_data[genes_to_plot, lfc_col]
+      mat <- cbind(
+        FL  = rep(0, length(genes_to_plot)),
+        AKO = log2fc_values
+      )
+      rownames(mat) <- genes_to_plot
+
+      ## Order by category
+      gene_order <- c()
+      for (cat_name in names(gene_categories)) {
+        gene_order <- c(gene_order,
+                        names(gene_to_category[gene_to_category == cat_name]))
+      }
+      mat <- mat[gene_order, , drop = FALSE]
+      gene_to_category <- gene_to_category[gene_order]
+
+      ## Clip at +/- lfc_clip
+      lfc_clip <- heatmap_params$lfc_clip
+      mat[mat > lfc_clip] <- lfc_clip
+      mat[mat < -lfc_clip] <- -lfc_clip
+
+      ## Diverging color scale (matches project RdYlBu gradient)
+      col_fun <- colorRamp2(
+        seq(-lfc_clip, lfc_clip, length.out = 5),
+        heatmap_params$custom_gradient
+      )
+
+      ht <- Heatmap(
+        mat,
+        col = col_fun,
+        name = "log2FC",
+        cluster_rows = FALSE,
+        cluster_columns = FALSE,
+        show_row_names = TRUE,
+        show_column_names = TRUE,
+        column_names_rot = 0,
+        column_names_centered = TRUE,
+        row_split = factor(gene_to_category, levels = names(gene_categories)),
+        row_gap = unit(1.5, "mm"),
+        row_title_rot = 0,
+        row_title_gp = gpar(fontsize = 9, fontface = "bold"),
+        row_names_gp = gpar(fontsize = 8, fontface = "italic"),
+        column_names_gp = gpar(fontsize = 10, fontface = "bold"),
+        column_title = contrast,
+        column_title_gp = gpar(fontsize = 11, fontface = "bold"),
+        border = TRUE,
+        border_gp = gpar(col = "black", lwd = 0.8),
+        rect_gp = gpar(col = "grey80", lwd = 0.3),
+        width = unit(2.5, "cm"),
+        heatmap_legend_param = list(
+          title = "log2FC\n(DESeq2)",
+          title_position = "topcenter",
+          title_gp = gpar(fontsize = 8, fontface = "bold"),
+          labels_gp = gpar(fontsize = 7),
+          legend_height = unit(2.5, "cm"),
+          at = c(-lfc_clip, 0, lfc_clip),
+          labels = c(paste0("\u2264", -lfc_clip), "0",
+                     paste0("\u2265", lfc_clip))
+        )
+      )
+
+      n_genes <- length(genes_to_plot)
+      n_categories <- length(unique(gene_to_category))
+      plot_file <- paste0("Heatmap_grouped_", contrast, "_", run_tag, ".png")
+
+      png(file.path(plots_dir, plot_file),
+          width = 600,
+          height = max(400, n_genes * 18 + n_categories * 30 + 50),
+          res = 150)
+      draw(ht, padding = unit(c(5, 12, 10, 5), "mm"))
+      grid.text(
+        paste0(heatmap_params$lfc_label, " | ", heatmap_params$reference,
+               " | Clipped at \u00b1", lfc_clip),
+        x = 0.5, y = unit(3, "mm"),
+        just = "center",
+        gp = gpar(fontsize = 7, col = "grey40")
+      )
       dev.off()
       cat("[OK] Saved: ", plot_file, "\n", sep = "")
     }
