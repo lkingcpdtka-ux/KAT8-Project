@@ -7,7 +7,8 @@
 ## THE question: "Is the KAT8-KD transcriptional response
 ##   different between males and females?"
 ##
-## If no --> justified collapsing sexes.
+## If no --> justified collapsing sexes (as done in the unified
+##   ~ Sex + GroupDepot model in Part 1).
 ## If yes --> need sex-stratified analysis.
 ##
 ## APPROACH (per depot):

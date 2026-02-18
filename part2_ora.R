@@ -6,10 +6,9 @@
 ## This script performs Over-Representation Analysis (ORA)
 ## for GO:BP and KEGG pathways using DEG lists from Part 1
 ##
-## FIXES APPLIED:
-## - Proper ORA universe/background from all tested genes
-## - Better error handling
-## - Direction-specific pathway bar plots
+## Part 1 uses a unified DESeq2 model: ~ 0 + GroupDepot
+## (all 38 tissue samples, per-depot KAT8 effects via contrasts)
+## Output DE tables have the same format as before.
 ## =========================================================
 
 ## 0) Working dir (optional) --------------------------------

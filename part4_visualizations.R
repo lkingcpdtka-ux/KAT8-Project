@@ -6,6 +6,9 @@
 ## This script generates ALL plots WITHOUT re-running analysis.
 ## NO PLOTS should be made in parts 1-3!
 ##
+## Part 1 uses a unified DESeq2 model: ~ 0 + GroupDepot
+## (all 38 tissue samples, per-depot KAT8 effects via contrasts)
+##
 ##   SECTION A: QC PLOTS
 ##     - PCA, MDS, Density
 ##
@@ -71,6 +74,7 @@ generate_ora_dotplots   <- TRUE
 ## Section D: Heatmaps
 generate_top_deg_heatmaps     <- TRUE   ## Simple top DEGs (no pathway sections)
 generate_individual_heatmaps  <- TRUE   ## Individual samples with pathway groups
+generate_avg4col_heatmaps     <- TRUE   ## Averaged per genotype x sex (4-column summary)
 
 ## ============================================================
 
@@ -489,7 +493,7 @@ if (generate_ora_barplots) {
 
     plot_data <- ora_data %>%
       dplyr::filter(p.adjust < ora_params$pvalue_cutoff) %>%
-      dplyr::arrange(p.adjust) %>%
+      dplyr::arrange(p.adjust, pvalue) %>%
       dplyr::slice_head(n = ora_params$top_n)
 
     if (nrow(plot_data) == 0) next
@@ -643,10 +647,11 @@ if (generate_ora_dotplots) {
     ora_data$Count <- sapply(strsplit(ora_data$GeneRatio, "/"), function(x) as.numeric(x[1]))
     ora_data$neg_log10_fdr <- -log10(ora_data$p.adjust)
 
+    top_n_dot <- if (db == "KEGG") dotplot_params$top_n_kegg else dotplot_params$top_n_gobp
     plot_data <- ora_data %>%
       dplyr::filter(p.adjust < dotplot_params$fdr_cutoff, Count >= dotplot_params$min_count) %>%
-      dplyr::arrange(p.adjust) %>%
-      dplyr::slice_head(n = dotplot_params$top_n_gobp)
+      dplyr::arrange(p.adjust, pvalue) %>%
+      dplyr::slice_head(n = top_n_dot)
 
     if (nrow(plot_data) == 0) next
 
@@ -973,6 +978,163 @@ if (!is.null(vst_data)) {
       draw(ht, padding = unit(c(5, 12, 10, 5), "mm"))
       dev.off()
       cat("[OK] Saved: ", plot_file, "\n", sep = "")
+    }
+  }
+
+  ## D.3) AVERAGED 4-COLUMN HEATMAPS (genotype x sex group means)
+  ## Shows z-scored VST expression averaged per group:
+  ##   CTL-F | CTL-M | KAT8KD-F | KAT8KD-M
+  ## Same pathway-grouped genes as the individual heatmap (D.2),
+  ## but collapsed to 4 columns for a cleaner summary view.
+  if (generate_avg4col_heatmaps) {
+    cat("\n--- Creating Averaged 4-Column Heatmaps (genotype x sex) ---\n")
+
+    ## Reuse gene_categories from D.2 (already built above)
+    if (!exists("gene_categories") || length(gene_categories) == 0) {
+      cat("[WARN] gene_categories not available, skipping avg4col heatmaps\n")
+    } else {
+
+      de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$",
+                             full.names = TRUE)
+
+      for (de_file in de_files) {
+        filename <- basename(de_file)
+        contrast <- str_match(filename,
+                              "DE_tissue_(.+)_[0-9]+_[0-9]+\\.csv")[2]
+        if (is.na(contrast)) next
+
+        cat("  Avg 4-col heatmap: ", contrast, "\n", sep = "")
+
+        tissue <- sub("_.*", "", contrast)
+        sample_info <- vst_data$sample_info
+        vst_mat <- vst_data$vst_mat
+
+        if ("Depot" %in% colnames(sample_info)) {
+          tissue_samples <- rownames(sample_info)[sample_info$Depot == tissue]
+        } else {
+          tissue_samples <- colnames(vst_mat)[
+            grepl(tissue, colnames(vst_mat), ignore.case = TRUE)]
+        }
+        if (length(tissue_samples) == 0) next
+
+        vst_tissue <- vst_mat[, colnames(vst_mat) %in% tissue_samples,
+                              drop = FALSE]
+        sample_info_tissue <- sample_info[colnames(vst_tissue), , drop = FALSE]
+
+        ## Need both Genotype and Sex columns
+        if (!all(c("Genotype", "Sex") %in% colnames(sample_info_tissue))) {
+          cat("[WARN] Need Genotype and Sex columns, skipping\n")
+          next
+        }
+
+        ## Get pathway genes
+        all_genes <- unique(unlist(gene_categories))
+        genes_in_data <- intersect(all_genes, rownames(vst_tissue))
+        if (length(genes_in_data) < 3) next
+
+        gene_to_cat <- character(length(genes_in_data))
+        names(gene_to_cat) <- genes_in_data
+        for (cat_name in names(gene_categories)) {
+          for (g in intersect(gene_categories[[cat_name]], genes_in_data)) {
+            if (gene_to_cat[g] == "") gene_to_cat[g] <- cat_name
+          }
+        }
+        gene_to_cat <- gene_to_cat[gene_to_cat != ""]
+        genes_to_plot <- names(gene_to_cat)
+        if (length(genes_to_plot) < 3) next
+
+        ## Order genes by category
+        gene_order <- c()
+        for (cat_name in names(gene_categories)) {
+          gene_order <- c(gene_order,
+                          names(gene_to_cat[gene_to_cat == cat_name]))
+        }
+        gene_to_cat <- gene_to_cat[gene_order]
+
+        ## Build group labels: CTL-F, CTL-M, KAT8KD-F, KAT8KD-M
+        group_labels <- paste0(sample_info_tissue$Genotype, "-",
+                               sample_info_tissue$Sex)
+        group_levels <- c("CTL-F", "CTL-M", "KAT8KD-F", "KAT8KD-M")
+        group_labels <- factor(group_labels, levels = group_levels)
+
+        ## Average VST expression per group
+        vst_sub <- vst_tissue[gene_order, , drop = FALSE]
+        avg_mat <- sapply(group_levels, function(grp) {
+          cols <- which(group_labels == grp)
+          if (length(cols) == 0) return(rep(NA, nrow(vst_sub)))
+          if (length(cols) == 1) return(vst_sub[, cols])
+          rowMeans(vst_sub[, cols, drop = FALSE])
+        })
+        rownames(avg_mat) <- gene_order
+        colnames(avg_mat) <- group_levels
+
+        ## Drop any group with no samples
+        keep <- !apply(avg_mat, 2, function(x) all(is.na(x)))
+        avg_mat <- avg_mat[, keep, drop = FALSE]
+        if (ncol(avg_mat) < 2) next
+
+        ## Z-score across the 4 group means (per gene)
+        avg_mat <- t(scale(t(avg_mat)))
+        z_clip <- heatmap_params$lfc_clip
+        avg_mat[avg_mat > z_clip] <- z_clip
+        avg_mat[avg_mat < -z_clip] <- -z_clip
+
+        col_fun <- colorRamp2(seq(-z_clip, z_clip, length.out = 5),
+                              heatmap_params$custom_gradient)
+
+        ## Column annotations matching original: Genotype + Sex bars
+        col_geno <- sub("-.*", "", colnames(avg_mat))
+        col_sex  <- sub(".*-", "", colnames(avg_mat))
+
+        col_anno <- HeatmapAnnotation(
+          Genotype = col_geno,
+          Sex = col_sex,
+          col = list(
+            Genotype = c("CTL" = "#1B9E77", "KAT8KD" = "#D95F02"),
+            Sex = c("F" = "#E7298A", "M" = "#7570B3")
+          ),
+          simple_anno_size = unit(4, "mm"),
+          show_annotation_name = TRUE,
+          annotation_name_gp = gpar(fontsize = 8)
+        )
+
+        ht <- Heatmap(
+          avg_mat,
+          col = col_fun,
+          name = "Z-score",
+          cluster_rows = FALSE,
+          cluster_columns = FALSE,
+          show_row_names = TRUE,
+          show_column_names = FALSE,
+          top_annotation = col_anno,
+          row_split = factor(gene_to_cat, levels = names(gene_categories)),
+          row_gap = unit(1.5, "mm"),
+          row_title_rot = 0,
+          row_title_gp = gpar(fontsize = 9, fontface = "bold"),
+          row_names_gp = gpar(fontsize = 8, fontface = "italic"),
+          column_title = paste0(contrast, "\n(averaged per genotype x sex)"),
+          column_title_gp = gpar(fontsize = 11, fontface = "bold"),
+          border = TRUE,
+          border_gp = gpar(col = "black", lwd = 0.8),
+          rect_gp = gpar(col = "grey80", lwd = 0.3),
+          width = unit(3.5, "cm"),
+          heatmap_legend_param = list(
+            title = "Z-score",
+            title_gp = gpar(fontsize = 9)
+          )
+        )
+
+        n_genes <- length(genes_to_plot)
+        plot_file <- paste0("Heatmap_avg4col_", contrast, "_",
+                            run_tag, ".png")
+        png(file.path(plots_dir, plot_file),
+            width = 600,
+            height = max(400, n_genes * 18 + 100),
+            res = 150)
+        draw(ht, padding = unit(c(5, 12, 10, 5), "mm"))
+        dev.off()
+        cat("[OK] Saved: ", plot_file, "\n", sep = "")
+      }
     }
   }
 }

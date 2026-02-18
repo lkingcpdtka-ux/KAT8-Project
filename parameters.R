@@ -15,6 +15,34 @@ MASTER_SEED <- 12345
 set.seed(MASTER_SEED)
 
 ## ============================================================
+## MODEL DESIGN (Unified DESeq2 Model)
+## ============================================================
+## Used by: part1_main_analysis.R
+##
+## DESIGN: ~ 0 + GroupDepot  (cell-means parameterization)
+##   - GroupDepot is a 4-level factor: iWAT_CTL, iWAT_KAT8KD, gWAT_CTL, gWAT_KAT8KD
+##   - ALL 38 tissue samples in ONE model (shared dispersion estimates, more power)
+##   - Per-depot KAT8 effects extracted via contrasts:
+##       iWAT: contrast = c("GroupDepot", "iWAT_KAT8KD", "iWAT_CTL")
+##       gWAT: contrast = c("GroupDepot", "gWAT_KAT8KD", "gWAT_CTL")
+##
+## WHY NOT ~ Sex + GroupDepot?
+##   - Design is balanced (equal M/F per group), so Sex cannot confound Genotype
+##   - Part 7.7 TEST 3c: adding Sex REDUCES DEGs (~8% iWAT, ~6% gWAT) due to DF cost
+##   - logFC estimates nearly identical between models (r > 0.94)
+##   - The extra degree of freedom spent on Sex costs more than it saves at n=38
+##
+## SEX VALIDATION (Part 7.7):
+##   - Sex x Genotype interaction is minimal (<4% of genes, pi0 > 0.85)
+##   - Sex-stratified logFC concordance >99% directional agreement
+##   - Balanced design ensures Sex does not confound KAT8 effects
+##
+## WHY NOT ~ Sex * Depot * Genotype?
+##   - Too many parameters (7+ coefficients from 38 samples)
+##   - Underpowered for three-way interaction
+##   - Cell-means (GroupDepot) approach is simpler and equally flexible
+
+## ============================================================
 ## DEG THRESHOLDS (Differential Expression)
 ## ============================================================
 ## Used by: part1_main_analysis.R, part2_ora.R, part3_fgsea.R
@@ -106,7 +134,7 @@ dotplot_params <- list(
 
   ## Top pathways to show
   top_n_gobp      = 15,
-  top_n_kegg      = 15,
+  top_n_kegg      = 16,
 
   ## Plot sizing (fixed to keep dot plots consistent)
   plot_width      = 4.6,

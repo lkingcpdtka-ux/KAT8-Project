@@ -308,11 +308,15 @@ tryCatch({
   print(colSums(count_matrix_tissue))
   
   ## 4.6) DESeq2 object + typical prefilter ------------------
-  ## DESIGN NOTE (2026-01-23): Depot-focused analysis
-  ## - Analyzing by depot only (combining males and females within each depot)
-  ## - Design ~ 0 + GroupDepot creates separate coefficients for each depot/genotype combination
-  ## - Male and female pathways are simple enough; substantial differences are between depots
-  ## - This approach captures the primary depot-specific effects of KAT8 knockdown
+  ## DESIGN NOTE (2026-02-18): UNIFIED MODEL with all 38 tissue samples
+  ## - Design: ~ 0 + GroupDepot  (cell-means parameterization)
+  ## - GroupDepot: 4-level factor (iWAT_CTL, iWAT_KAT8KD, gWAT_CTL, gWAT_KAT8KD)
+  ## - No Sex covariate: balanced design (equal M/F), Sex cannot confound Genotype
+  ## - All samples share dispersion estimates = more statistical power
+  ## - Per-depot KAT8 effects extracted via DESeq2 contrasts:
+  ##     iWAT: contrast = c("GroupDepot", "iWAT_KAT8KD", "iWAT_CTL")
+  ##     gWAT: contrast = c("GroupDepot", "gWAT_KAT8KD", "gWAT_CTL")
+  ## - Justified by Part 7.7: <4% interaction, 99%+ concordance, balanced design
   min_count <- prefilter_min_count
   min_samples <- prefilter_min_samples
 
@@ -340,6 +344,7 @@ tryCatch({
   
   count_matrix_filt <- count_matrix_tissue[keep, , drop = FALSE]
   
+  ## Unified model: ~ 0 + GroupDepot (all 38 samples, cell-means parameterization)
   dds_tissue <- DESeqDataSetFromMatrix(
     countData = round(count_matrix_filt),
     colData   = sample_annot,
@@ -399,6 +404,13 @@ tryCatch({
     "--- Outlier Samples ---",
     paste0("  IDs: ", paste(params$outlier_samples, collapse = ", ")),
     "",
+    "--- DESeq2 Model Design ---",
+    "  Design: ~ 0 + GroupDepot (unified cell-means model, all tissue samples)",
+    "  GroupDepot levels: iWAT_CTL, iWAT_KAT8KD, gWAT_CTL, gWAT_KAT8KD",
+    "  Sex: not in model (balanced design, validated by Part 7.7)",
+    "  iWAT contrast: c('GroupDepot', 'iWAT_KAT8KD', 'iWAT_CTL')",
+    "  gWAT contrast: c('GroupDepot', 'gWAT_KAT8KD', 'gWAT_CTL')",
+    "",
     "--- Prefilter Rule (count-based) ---",
     paste0("  min_count: ", params$prefilter_rule$min_count),
     paste0("  min_samples: ", params$prefilter_rule$min_samples),
@@ -437,10 +449,17 @@ tryCatch({
   
   ## 4.7) Run DESeq2 ----------------------------------------
   cat("\n=== RUNNING DESeq2 ===\n")
+
+  ## Unified model: ~ 0 + GroupDepot (all 38 samples, cell-means)
+  ## Balanced design (equal M/F per group); GroupDepot contrasts extract per-depot KAT8 effects
+  cat("[INFO] Unified model (~ 0 + GroupDepot, all ", ncol(count_matrix_filt), " samples)...\n", sep = "")
   dds_tissue <- DESeq(dds_tissue)
-  cat("[OK] DESeq2 complete.\n")
-  
-  cat("\nDESeq2 design matrix (first rows):\n")
+  cat("[OK] Unified DESeq2 complete (", nrow(count_matrix_filt), " genes, ",
+      ncol(count_matrix_filt), " samples).\n", sep = "")
+
+  cat("\nDESeq2 model coefficients:\n")
+  cat("  ", paste(resultsNames(dds_tissue), collapse = ", "), "\n")
+  cat("\nDesign matrix (first 6 rows):\n")
   print(head(model.matrix(design(dds_tissue), colData(dds_tissue))))
   
   ## 4.8) VST transform for QC ------------------------------
@@ -649,10 +668,10 @@ tryCatch({
   }
 
   ## 4.12) Contrasts ----------------------------------------
-  ## Depot-specific contrasts (combining sexes within each depot)
+  ## Unified model contrasts: per-depot KAT8 effects via GroupDepot factor
   contrast_definitions <- list(
-    iWAT_KD_vs_CTL = c("GroupDepot", "iWAT_KAT8KD", "iWAT_CTL"),
-    gWAT_KD_vs_CTL = c("GroupDepot", "gWAT_KAT8KD", "gWAT_CTL")
+    iWAT_KD_vs_CTL = list(contrast = c("GroupDepot", "iWAT_KAT8KD", "iWAT_CTL")),
+    gWAT_KD_vs_CTL = list(contrast = c("GroupDepot", "gWAT_KAT8KD", "gWAT_CTL"))
   )
   contrast_names <- names(contrast_definitions)
   
@@ -693,7 +712,8 @@ tryCatch({
     cn_fdr_cut <- contrast_cutoffs$fdr
     cat("[INFO] Using cutoffs: FDR < ", cn_fdr_cut, ", |logFC| > ", cn_logFC_cut, "\n", sep = "")
 
-    res <- results(dds_tissue, contrast = contrast_definitions[[cn]])
+    cdef <- contrast_definitions[[cn]]
+    res <- results(dds_tissue, contrast = cdef$contrast)
     res <- res[order(res$pvalue), , drop = FALSE]
 
     tt <- as.data.frame(res)
