@@ -15,6 +15,29 @@ MASTER_SEED <- 12345
 set.seed(MASTER_SEED)
 
 ## ============================================================
+## MODEL DESIGN (Unified DESeq2 Model)
+## ============================================================
+## Used by: part1_main_analysis.R
+##
+## DESIGN: ~ Sex + GroupDepot
+##   - GroupDepot is a 4-level factor: iWAT_CTL, iWAT_KAT8KD, gWAT_CTL, gWAT_KAT8KD
+##   - Sex as covariate absorbs sex-driven variance (not the focus)
+##   - ALL 38 tissue samples in ONE model (shared dispersion estimates, more power)
+##   - Per-depot KAT8 effects extracted via contrasts:
+##       iWAT: contrast = c("GroupDepot", "iWAT_KAT8KD", "iWAT_CTL")
+##       gWAT: contrast = c("GroupDepot", "gWAT_KAT8KD", "gWAT_CTL")
+##
+## JUSTIFICATION (Part 7.7 validation):
+##   - Sex x Genotype interaction is minimal (<4% of genes, pi0 > 0.85)
+##   - Sex-stratified logFC concordance >99% directional agreement
+##   - Adding Sex as covariate gains +5-14% DEGs with >99% concordance
+##
+## WHY NOT ~ Sex * Depot * Genotype?
+##   - Too many parameters (7+ coefficients from 38 samples)
+##   - Underpowered for three-way interaction
+##   - Cell-means (GroupDepot) approach is simpler and equally flexible
+
+## ============================================================
 ## DEG THRESHOLDS (Differential Expression)
 ## ============================================================
 ## Used by: part1_main_analysis.R, part2_ora.R, part3_fgsea.R

@@ -6,8 +6,9 @@
 ## =========================================================
 ##
 ## PURPOSE: Rigorous, self-contained validation that combining
-## sexes is justified, with every number needed for the results
-## section saved to a single output file.
+## sexes is justified for the unified ~ Sex + GroupDepot model
+## (Part 1), with every number needed for the results section
+## saved to a single output file.
 ##
 ## PRODUCES (per depot):
 ##   1. Formal LRT interaction test (Sex x Genotype)

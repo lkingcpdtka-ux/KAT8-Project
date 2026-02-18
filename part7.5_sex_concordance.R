@@ -16,12 +16,8 @@
 ## 3. Concordance Classification: Same-direction, opposite, sex-specific
 ## 4. Summary table with stats across both depots
 ##
-## REQUIRES:
-##   - Part 1 sex-specific DE tables:
-##       DE_tissue_iWAT_M_KD_vs_CTL_*.csv
-##       DE_tissue_iWAT_F_KD_vs_CTL_*.csv
-##       DE_tissue_gWAT_M_KD_vs_CTL_*.csv
-##       DE_tissue_gWAT_F_KD_vs_CTL_*.csv
+## SELF-CONTAINED: Computes per-sex DESeq2 from counts.txt
+## (no dependency on Part 1 sex-specific DE tables)
 ## =========================================================
 
 ## 1) Packages ----------------------------------------------
@@ -30,7 +26,13 @@ required_pkgs <- c("dplyr", "tidyr", "ggplot2", "ggrepel", "scales",
 to_install <- setdiff(required_pkgs, rownames(installed.packages()))
 if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
 
+required_bioc_pkgs <- c("DESeq2")
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+to_install_bioc <- setdiff(required_bioc_pkgs, rownames(installed.packages()))
+if (length(to_install_bioc) > 0) BiocManager::install(to_install_bioc, ask = FALSE, update = FALSE)
+
 suppressPackageStartupMessages({
+  library(DESeq2)
   library(dplyr)
   library(tidyr)
   library(ggplot2)
@@ -49,6 +51,18 @@ if (file.exists(params_file)) {
   stop("parameters.R not found. Please ensure it exists in the project root.")
 }
 
+## Prefilter defaults
+if (!exists("prefilter_min_count"))   prefilter_min_count   <- 10
+if (!exists("prefilter_min_samples")) prefilter_min_samples <- 4
+
+## Helper: safe DESeq2 results to data.frame
+deseq_res_to_df <- function(res_obj) {
+  df <- as.data.frame(res_obj)
+  std_cols <- c("baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj")
+  if (ncol(df) == length(std_cols)) colnames(df) <- std_cols
+  df
+}
+
 ## 2) save_core utilities -----------------------------------
 utils_dir <- file.path(getwd(), "save_core")
 if (file.exists(file.path(utils_dir, "save.R"))) {
@@ -61,77 +75,90 @@ if (file.exists(file.path(utils_dir, "save.R"))) {
 }
 
 ## ============================================================
-## 3) FIND SEX-SPECIFIC DE TABLES
+## 3) LOAD RAW COUNTS + SAMPLE ANNOTATION
 ## ============================================================
-cat("\n=== FINDING SEX-SPECIFIC TISSUE RESULTS ===\n")
+cat("\n=== LOADING DATA FOR SEX CONCORDANCE ===\n")
 
-savepoint_dir <- file.path(getwd(), "savepoints")
-if (!dir.exists(savepoint_dir)) {
-  stop("savepoints directory not found. Please run part1_main_analysis.R first.")
-}
+counts_file <- file.path(getwd(), "counts.txt")
+if (!file.exists(counts_file)) stop("counts.txt not found")
+counts_raw <- read.delim(counts_file, header = TRUE,
+                         stringsAsFactors = FALSE, check.names = FALSE)
 
-run_dirs <- list.dirs(savepoint_dir, recursive = FALSE, full.names = TRUE)
-run_dirs <- run_dirs[grepl("^RUN_", basename(run_dirs))]
-if (length(run_dirs) == 0) stop("No run directories found in savepoints/")
-
-## Find all tissue DE files
-tissue_de_files <- unlist(lapply(run_dirs, function(d) {
-  list.files(file.path(d, "tables"), pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
-}))
-tissue_de_files <- tissue_de_files[!grepl("OVERALL", tissue_de_files)]
-if (length(tissue_de_files) == 0) stop("No tissue DE tables found. Run Part 1 first.")
-
-## Use most recent files
-tissue_de_files <- tissue_de_files[order(file.info(tissue_de_files)$mtime, decreasing = TRUE)]
-
-## Load all tables, deduplicate by contrast name
-tissue_tables <- list()
-for (f in tissue_de_files) {
-  contrast <- gsub("^DE_tissue_(.+)_[0-9]{8}_[0-9]{6}\\.csv$", "\\1", basename(f))
-  if (!(contrast %in% names(tissue_tables))) {
-    tt <- read.csv(f, row.names = 1, stringsAsFactors = FALSE)
-    if (!all(c("log2FoldChange", "padj") %in% colnames(tt)) &&
-        !all(c("logFC", "padj") %in% colnames(tt))) {
-      next
-    }
-    tissue_tables[[contrast]] <- tt
-    cat("[OK] Loaded: ", contrast, " (", nrow(tt), " genes)\n", sep = "")
-  }
-}
-
-## Find sex-specific contrast pairs within each depot
-## Expected: iWAT_M_KD_vs_CTL, iWAT_F_KD_vs_CTL, gWAT_M_KD_vs_CTL, gWAT_F_KD_vs_CTL
-sex_pairs <- list(
-  iWAT = list(
-    M = grep("^iWAT_M_KD_vs_CTL$", names(tissue_tables), value = TRUE),
-    F = grep("^iWAT_F_KD_vs_CTL$", names(tissue_tables), value = TRUE)
-  ),
-  gWAT = list(
-    M = grep("^gWAT_M_KD_vs_CTL$", names(tissue_tables), value = TRUE),
-    F = grep("^gWAT_F_KD_vs_CTL$", names(tissue_tables), value = TRUE)
-  )
+## Sample annotation (same as part1)
+sample_ids <- paste0("JS_", sprintf("%02d", 1:40))
+sample_annot <- data.frame(
+  Sample   = sample_ids,
+  Depot    = c(rep("iWAT", 10), rep("iWAT", 10),
+               rep("gWAT", 10), rep("gWAT", 10)),
+  Sex      = c(rep("F", 5), rep("F", 5), rep("M", 5), rep("M", 5),
+               rep("F", 5), rep("F", 5), rep("M", 5), rep("M", 5)),
+  Genotype = c(rep("CTL", 5), rep("KAT8KD", 5),
+               rep("CTL", 5), rep("KAT8KD", 5),
+               rep("CTL", 5), rep("KAT8KD", 5),
+               rep("CTL", 5), rep("KAT8KD", 5)),
+  stringsAsFactors = FALSE
 )
 
-## Validate we found all 4
-for (depot in names(sex_pairs)) {
-  for (sex in names(sex_pairs[[depot]])) {
-    if (length(sex_pairs[[depot]][[sex]]) != 1) {
-      stop("Could not find ", depot, "_", sex, "_KD_vs_CTL contrast. ",
-           "Available: ", paste(names(tissue_tables), collapse = ", "))
-    }
+## Remove outliers
+outlier_samples <- c("JS_08", "JS_28")
+sample_annot <- sample_annot[!sample_annot$Sample %in% outlier_samples, ]
+tissue_samples <- intersect(sample_annot$Sample, colnames(counts_raw))
+sample_annot <- sample_annot[sample_annot$Sample %in% tissue_samples, ]
+
+## Factorize
+sample_annot$Genotype <- factor(sample_annot$Genotype, levels = c("CTL", "KAT8KD"))
+sample_annot$Depot    <- factor(sample_annot$Depot, levels = c("iWAT", "gWAT"))
+sample_annot$Sex      <- factor(sample_annot$Sex, levels = c("F", "M"))
+rownames(sample_annot) <- sample_annot$Sample
+
+## Build count matrix
+if ("gene" %in% colnames(counts_raw) || "gene_name" %in% colnames(counts_raw)) {
+  counts_tissue <- counts_raw
+  if (!"gene_name" %in% colnames(counts_tissue) && "gene" %in% colnames(counts_tissue))
+    counts_tissue$gene_name <- counts_tissue$gene
+  if (!"ensembl_gene_id" %in% colnames(counts_tissue) && "gene_id" %in% colnames(counts_tissue))
+    counts_tissue$ensembl_gene_id <- counts_tissue$gene_id
+  na_or_blank <- is.na(counts_tissue$gene_name) | counts_tissue$gene_name == ""
+  if ("ensembl_gene_id" %in% colnames(counts_tissue))
+    counts_tissue$gene_name[na_or_blank] <- counts_tissue$ensembl_gene_id[na_or_blank]
+  if (any(duplicated(counts_tissue$gene_name))) {
+    dup_flag <- duplicated(counts_tissue$gene_name) | duplicated(counts_tissue$gene_name, fromLast = TRUE)
+    if ("ensembl_gene_id" %in% colnames(counts_tissue))
+      counts_tissue$gene_name[dup_flag] <- paste0(counts_tissue$ensembl_gene_id[dup_flag], "_",
+                                                   counts_tissue$gene_name[dup_flag])
+    counts_tissue$gene_name <- make.unique(counts_tissue$gene_name)
   }
+  rownames(counts_tissue) <- counts_tissue$gene_name
+  count_matrix <- as.matrix(counts_tissue[, tissue_samples])
+  rownames(count_matrix) <- counts_tissue$gene_name
+} else {
+  count_matrix <- as.matrix(counts_raw[, tissue_samples])
 }
 
-cat("\n[OK] Found all sex-specific contrasts\n")
+## Prefilter
+keep <- rowSums(count_matrix >= prefilter_min_count) >= prefilter_min_samples
+count_matrix <- count_matrix[keep, , drop = FALSE]
+cat("[INFO] Genes after prefiltering: ", nrow(count_matrix), "\n")
 
-## Set up output directory
-tissue_run_dir <- dirname(dirname(tissue_de_files[1]))
-outdir <- tissue_run_dir
+## ============================================================
+## 3b) OUTPUT SETUP
+## ============================================================
+savepoint_dir <- file.path(getwd(), "savepoints")
+run_dirs <- list.dirs(savepoint_dir, recursive = FALSE, full.names = TRUE)
+run_dirs <- run_dirs[grepl("^RUN_", basename(run_dirs))]
+if (length(run_dirs) > 0) {
+  outdir <- run_dirs[which.max(file.info(run_dirs)$mtime)]
+} else {
+  outdir <- file.path(savepoint_dir,
+                      paste0("RUN_", format(Sys.time(), "%Y%m%d_%H%M%S")))
+}
 run_tag <- gsub("^RUN_", "", basename(outdir))
+
 tables_dir <- file.path(outdir, "tables")
 plots_dir  <- file.path(outdir, "plots")
 sex_conc_dir <- file.path(plots_dir, "sex_concordance")
 if (!dir.exists(sex_conc_dir)) dir.create(sex_conc_dir, recursive = TRUE)
+if (!dir.exists(tables_dir)) dir.create(tables_dir, recursive = TRUE)
 
 ## Colors
 col_male   <- "#2166AC"   ## dark blue
@@ -159,12 +186,50 @@ for (depot in c("iWAT", "gWAT")) {
   cat("=== SEX CONCORDANCE: ", depot, " (Male vs Female) ===\n", sep = "")
   cat("============================================================\n\n")
 
-  de_m <- tissue_tables[[ sex_pairs[[depot]]$M ]]
-  de_f <- tissue_tables[[ sex_pairs[[depot]]$F ]]
+  ## ---------------------------------------------------------
+  ## 4.0) Subset to depot and run per-sex DESeq2
+  ## ---------------------------------------------------------
+  depot_samples <- sample_annot$Sample[sample_annot$Depot == depot]
+  depot_annot   <- sample_annot[depot_samples, ]
+  depot_counts  <- count_matrix[, depot_samples]
+
+  ## Re-prefilter within depot
+  depot_keep <- rowSums(depot_counts >= prefilter_min_count) >= prefilter_min_samples
+  depot_counts <- depot_counts[depot_keep, , drop = FALSE]
+  depot_gene_names <- rownames(depot_counts)
+
+  cat("[INFO] ", depot, ": ", nrow(depot_counts), " genes, ",
+      ncol(depot_counts), " samples\n", sep = "")
+
+  ## Female-only DESeq2
+  female_idx <- depot_annot$Sample[depot_annot$Sex == "F"]
+  cat("[INFO] Running female-only DESeq2 (n = ", length(female_idx), ")...\n", sep = "")
+  dds_f <- DESeqDataSetFromMatrix(
+    countData = round(depot_counts[, female_idx]),
+    colData   = depot_annot[female_idx, ],
+    design    = ~ Genotype
+  )
+  dds_f <- DESeq(dds_f, quiet = TRUE)
+  de_f <- deseq_res_to_df(results(dds_f))
+  de_f$gene <- depot_gene_names
+  rownames(de_f) <- depot_gene_names
+
+  ## Male-only DESeq2
+  male_idx <- depot_annot$Sample[depot_annot$Sex == "M"]
+  cat("[INFO] Running male-only DESeq2 (n = ", length(male_idx), ")...\n", sep = "")
+  dds_m <- DESeqDataSetFromMatrix(
+    countData = round(depot_counts[, male_idx]),
+    colData   = depot_annot[male_idx, ],
+    design    = ~ Genotype
+  )
+  dds_m <- DESeq(dds_m, quiet = TRUE)
+  de_m <- deseq_res_to_df(results(dds_m))
+  de_m$gene <- depot_gene_names
+  rownames(de_m) <- depot_gene_names
 
   ## Detect logFC column
-  lfc_col_m <- if ("log2FoldChange" %in% colnames(de_m)) "log2FoldChange" else "logFC"
-  lfc_col_f <- if ("log2FoldChange" %in% colnames(de_f)) "log2FoldChange" else "logFC"
+  lfc_col_m <- "log2FoldChange"
+  lfc_col_f <- "log2FoldChange"
 
   ## Get thresholds (same for M and F within a depot)
   thresh <- get_tissue_thresholds(depot)
