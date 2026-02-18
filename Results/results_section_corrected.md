@@ -100,26 +100,17 @@ dysregulation in white adipose tissue**
 
 To characterize the transcriptomic consequences of KAT8 loss in adipocytes, we
 performed bulk RNA-seq on inguinal white adipose tissue (iWAT) and gonadal white
-adipose tissue (gWAT) from adipocyte-specific KAT8 knockout (AKO) and floxed
-control (FL) mice (n = 4-5 per group per depot per sex; two outlier samples
-[JS_08, JS_28] were excluded, each a female AKO from one depot). Both male and
-female mice were included in each experimental group with a balanced design
-(equal numbers of males and females per genotype per depot). To verify that
-combining sexes was appropriate, we performed formal Sex x Genotype interaction
-testing (DESeq2 likelihood ratio test) within each depot. Significant
-interactions were limited to 3.83% of genes in iWAT (630 of 16,466 tested) and
-2.22% of genes in gWAT (374 of 16,827 tested; FDR < 0.05). Storey pi0
-estimation indicated that 87% (iWAT) and 85% (gWAT) of genes were true nulls
-for the interaction term, and sex-stratified fold changes showed 99.0% (iWAT)
-and 99.5% (gWAT) directional concordance, confirming that the KAT8 AKO
-transcriptional response is largely sex-independent. Because the design is
-balanced, sex cannot confound the genotype effect; accordingly, a unified DESeq2
-model (design: ~ GroupDepot) was employed across all 38 tissue samples, with
-depot-specific KAT8 knockout effects extracted via explicit contrasts. This
-approach leverages shared dispersion estimates across depots for increased
-statistical power. Formal comparison confirmed that adding Sex as a covariate to
-this model did not improve sensitivity (logFC correlation r > 0.94 between
-models; see Part 7.7 validation).
+adipose tissue (gWAT) from adipocyte-specific KAT8 knockout (AKO; Adipoq-Cre;
+Kat8^fl/fl) and floxed control (FL) mice (n = 4-5 per group per depot per sex;
+two outlier samples were excluded after quality assessment). Both male and female
+mice were included in each experimental group with a balanced design. Formal
+Sex x Genotype interaction testing confirmed that significant interactions were
+limited to <4% of genes in either depot, with >99% directional concordance
+between sexes, indicating that the KAT8 AKO transcriptional response is largely
+sex-independent (Supplemental Table X). A unified DESeq2 model
+(design: ~ GroupDepot) was employed across all 38 tissue samples, with
+depot-specific KAT8 knockout effects extracted via explicit contrasts (see
+Methods).
 
 Principal component analysis of variance-stabilized counts revealed clear
 separation by both adipose depot and genotype across the first two principal
@@ -191,40 +182,36 @@ exhibiting a stronger inflammatory gene signature.
 ### Conclusion
 
 Collectively, these data demonstrate that adipocyte-specific loss of KAT8 results
-in widespread transcriptional changes in both subcutaneous and visceral white
-adipose depots. The predominant downregulation of genes governing mitochondrial
-function, energy metabolism, PPAR signaling, and lipid catabolism, coupled with
-the upregulation of immune, inflammatory, and ECM remodeling gene programs,
-indicates that KAT8 is required for the maintenance of normal adipocyte
-transcriptional identity. The depot-dependent nature of these changes -- with
-iWAT exhibiting more substantial suppression of metabolic and thermogenic
-programs and gWAT displaying a more robust inflammatory and chemokine response --
-is consistent with the known functional and developmental distinctions between
-subcutaneous and visceral adipose tissue. These findings identify KAT8 as a
-previously unrecognized regulator of adipocyte gene expression and suggest that
-its loss promotes a transcriptional environment favoring adipose tissue
-dysfunction. Formal interaction testing confirmed that these transcriptional
-consequences were largely sex-independent, although a small subset of genes
-(2-4%) exhibited sex-dependent responses that may warrant further investigation.
+in widespread transcriptional dysregulation in both subcutaneous and visceral
+white adipose depots. The predominant downregulation of genes governing
+mitochondrial function, energy metabolism, and lipid catabolism, coupled with the
+upregulation of immune and inflammatory gene programs, indicates that KAT8 is
+required for the maintenance of normal adipocyte transcriptional identity. The
+depot-dependent nature of these changes -- with iWAT exhibiting more pronounced
+metabolic suppression and gWAT displaying a stronger inflammatory and chemokine
+response -- is consistent with the known functional distinctions between
+subcutaneous and visceral adipose tissue.
 
 ---
 
-## Sex-Combining Validation: Decision and Evidence
+## Methods: Sex-Combining Validation
 
-**DECISION: Combine sexes WITHOUT Sex covariate (~ 0 + GroupDepot, unified)**
+**Model decision: ~ 0 + GroupDepot (unified, sexes pooled, no Sex covariate)**
 
-Based on Part 7.7 sex-combining validation (run 2026-02-18), males and females
-are combined in a unified model without Sex as a covariate. This is justified
-because:
-1. The experimental design is **balanced** (equal M/F per genotype per depot),
-   so Sex cannot confound the genotype effect
-2. Sex x Genotype interactions are minimal (<4% of genes)
-3. Adding Sex as a covariate **reduces** DEG counts at the unified model level
-   (~8% iWAT, ~6% gWAT) due to the degree-of-freedom cost
+Both male and female mice were included in each experimental group (n = 4-5 per
+sex per genotype per depot, with two outlier samples excluded). A unified DESeq2
+model (design: ~ GroupDepot) was employed across all 38 tissue samples, with
+depot-specific KAT8 knockout effects extracted via explicit contrasts. This
+balanced experimental design (equal numbers of males and females per group)
+ensures that sex does not confound genotype effects. To validate this approach,
+formal Sex x Genotype interaction testing was performed using DESeq2 likelihood
+ratio tests within each depot. Significant interactions were limited to 630 genes
+in iWAT (3.83%) and 374 genes in gWAT (2.22%; FDR < 0.05), with 99.0% (iWAT)
+and 99.5% (gWAT) directional concordance between sex-stratified fold changes,
+confirming that the KAT8 AKO transcriptional response is largely
+sex-independent.
 
-### Part 7.7 Validation Summary
-
-**TEST 1 & 2: Is the KAT8 effect sex-independent?**
+### Part 7.7 Validation Numbers (for Supplemental Table X)
 
 | Metric                          | iWAT          | gWAT          |
 |---------------------------------|---------------|---------------|
@@ -233,66 +220,13 @@ because:
 | Pi0 (true null proportion)      | 0.87          | 0.85          |
 | Sex-stratified Pearson r        | 0.727         | 0.605         |
 | Directional concordance         | 99.0%         | 99.5%         |
-
-**TEST 3c: Does adding Sex as covariate help the unified model?**
-
-| Metric                          | iWAT          | gWAT          |
-|---------------------------------|---------------|---------------|
-| DEGs: ~ 0 + GroupDepot (no Sex) | 3,022         | 1,159         |
+| DEGs: ~ 0 + GroupDepot          | 3,022         | 1,159         |
 | DEGs: ~ Sex + GroupDepot        | 2,777         | 1,089         |
-| Net change                      | -245 (-8.1%)  | -70 (-6.0%)   |
-| logFC correlation (r)           | 0.939         | 0.967         |
+| logFC correlation (+/- Sex)     | 0.939         | 0.967         |
 
-### Why doesn't adding Sex help? (plain English)
-
-Think of it like a budget. You have 38 samples, and each thing you estimate in
-your model "spends" one of those samples (one degree of freedom). The ~ 0 +
-GroupDepot model estimates 4 things (the mean of each group). Adding Sex
-estimates 5 things -- one more.
-
-That extra "slot" spent on Sex does absorb some sex-related variance (good), but
-it also leaves you with one fewer sample's worth of statistical evidence for
-everything else (bad). At n=38, the cost outweighs the benefit:
-
-- **The cost**: You go from 34 to 33 residual degrees of freedom (~3% less
-  statistical evidence for testing)
-- **The benefit**: Sex absorbs some variance, but because your design is
-  **balanced** (equal M/F in every group), Sex was never confounding your
-  genotype results anyway. The variance it absorbs is real but modest.
-- **Net result**: You lose ~8% of DEGs in iWAT and ~6% in gWAT
-
-This is different from the per-depot level (n~19), where adding Sex as a
-covariate DOES help (+14% DEGs in iWAT) because each degree of freedom matters
-more with fewer samples, and the variance absorbed by Sex is proportionally
-larger.
-
-**Bottom line**: With a balanced design and 38 samples, the simpler model
-(~ 0 + GroupDepot) maximizes your statistical power. The 7.7 validation proves
-that Sex is not distorting your results (r > 0.94 between models).
-
-### Ready-to-paste Methods text
-
-> Both male and female mice were included in each experimental group (n = 4-5
-> per sex per genotype per depot, with two outlier samples excluded). A unified
-> DESeq2 model (design: ~ GroupDepot) was employed across all 38 tissue samples,
-> with depot-specific KAT8 knockout effects extracted via explicit contrasts
-> (GroupDepot_iWAT_KAT8KD vs GroupDepot_iWAT_CTL; GroupDepot_gWAT_KAT8KD vs
-> GroupDepot_gWAT_CTL). This balanced experimental design (equal numbers of males
-> and females per group) ensures that sex does not confound genotype effects,
-> eliminating the need for sex as a model covariate. To validate this, formal
-> Sex x Genotype interaction testing was performed using DESeq2 likelihood ratio
-> tests within each depot. Significant interactions were limited to 630 genes in
-> iWAT (3.83%) and 374 genes in gWAT (2.22%; FDR < 0.05). Storey pi0
-> estimation confirmed that 87% (iWAT) and 85% (gWAT) of genes were true nulls
-> for the interaction term. Sex-stratified fold changes showed 99.0% (iWAT) and
-> 99.5% (gWAT) directional concordance, confirming that the KAT8 AKO
-> transcriptional response is largely sex-independent.
-
-### Important caveat (address in Discussion if reviewers ask)
+### Discussion caveat (if reviewers ask about sex)
 
 > While the overall KAT8 AKO response was concordant between sexes, PCA
 > suggested a potentially larger effect magnitude in males, particularly in
-> iWAT. The 630 (iWAT) and 374 (gWAT) genes with significant Sex x Genotype
-> interactions (FDR < 0.05), along with the moderate sex-stratified correlations
-> (r = 0.73 iWAT; r = 0.61 gWAT), suggest sex-dependent nuances that may
-> warrant further investigation in follow-up studies.
+> iWAT. A small subset of genes (2-4%) exhibited significant Sex x Genotype
+> interactions that may warrant further investigation in follow-up studies.

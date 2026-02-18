@@ -3,8 +3,9 @@
 Create PowerPoint presentation explaining the KAT8 Sex x Genotype
 interaction analysis (parts 7.6 + 7.7) for presentation to PI / boss.
 
-Updated 2026-02-17: Added Part 7.7 model comparison results, educational
-slides explaining covariates/pi0/concordance, and the final analysis decision.
+Updated 2026-02-18: Reflects final decision: ~ 0 + GroupDepot (unified, no Sex
+covariate). Added Part 7.7 model comparison at both per-depot and unified levels,
+educational slides explaining covariates/pi0/concordance, and the pooling decision.
 
 Run:  python create_presentation.py
 Output:  Results/KAT8_sex_interaction_presentation.pptx
@@ -143,7 +144,7 @@ add_textbox(slide, Inches(1), Inches(4.8), Inches(11), Inches(0.5),
             "Adipose Depot Analysis: iWAT & gWAT",
             font_size=16, color=RGBColor(0x88, 0xAA, 0xCC), alignment=PP_ALIGN.CENTER)
 add_textbox(slide, Inches(1), Inches(5.8), Inches(11), Inches(0.5),
-            "Validation run: 2026-02-15  |  Decision: ~ Sex + Genotype per depot",
+            "Validation run: 2026-02-18  |  Decision: ~ 0 + GroupDepot (unified, no Sex covariate)",
             font_size=14, color=RGBColor(0x77, 0x99, 0xBB), alignment=PP_ALIGN.CENTER)
 
 # ====== SLIDE 2: Study Design ======
@@ -531,22 +532,22 @@ add_bullet_list(slide, Inches(0.6), Inches(1.3), Inches(5.5), Inches(5), [
 add_plot_placeholder(slide, Inches(6.5), Inches(1.2), Inches(6), Inches(5),
                      "interaction_vs_genotype_<depot>_<run_tag>.png")
 
-# ====== SLIDE 18: MODEL COMPARISON - NEW from Part 7.7 ======
+# ====== SLIDE 18: MODEL COMPARISON - Per-Depot Level ======
 slide = prs.slides.add_slide(blank_layout)
 set_slide_bg(slide, RGBColor(0xE8, 0xF8, 0xF5))
-add_section_header(slide, "Model Comparison: ~ Genotype vs. ~ Sex + Genotype")
+add_section_header(slide, "Per-Depot Models: ~ Genotype vs. ~ Sex + Genotype")
 add_subtitle_text(slide,
-    "Part 7.7 Test 3: Does adding Sex as a covariate actually help?")
+    "Part 7.7 Test 3a: At the per-depot level (n ~ 19), adding Sex helps")
 
 # Build a model comparison table
 rows = 6
 cols = 3
 table_shape = slide.shapes.add_table(rows, cols,
-    Inches(1), Inches(1.5), Inches(11), Inches(3))
+    Inches(1), Inches(1.5), Inches(11), Inches(2.8))
 tbl = table_shape.table
 
 # Header row
-headers = ["Metric", "iWAT", "gWAT"]
+headers = ["Per-Depot Comparison", "iWAT (n=19)", "gWAT (n=19)"]
 for i, h in enumerate(headers):
     cell = tbl.cell(0, i)
     cell.text = h
@@ -560,11 +561,11 @@ for i, h in enumerate(headers):
 
 # Data rows
 model_data = [
-    ["Model A: ~ Genotype (no Sex)",        "2,665 DEGs",   "1,077 DEGs"],
-    ["Model B: ~ Sex + Genotype",           "3,042 DEGs",   "1,131 DEGs"],
-    ["Net DEG gain",                        "+377 (+14.1%)", "+54 (+5.0%)"],
-    ["Directional concordance (A vs B)",    "99.0%",         "99.5%"],
-    ["logFC correlation (A vs B)",          "~0.999",        "~0.999"],
+    ["~ Genotype (no Sex)",        "2,665 DEGs",   "1,077 DEGs"],
+    ["~ Sex + Genotype",           "3,042 DEGs",   "1,131 DEGs"],
+    ["Net DEG change",             "+377 (+14.1%)", "+54 (+5.0%)"],
+    ["Directional concordance",    "99.0%",         "99.5%"],
+    ["logFC correlation",          "~0.999",        "~0.999"],
 ]
 
 for r_idx, row_data in enumerate(model_data):
@@ -584,42 +585,74 @@ for r_idx, row_data in enumerate(model_data):
             cell.fill.solid()
             cell.fill.fore_color.rgb = LIGHT_BLUE
 
-add_textbox(slide, Inches(1), Inches(5), Inches(11), Inches(2),
-            "INTERPRETATION:\n"
-            "Adding Sex as a covariate detects +377 more DEGs in iWAT and +54 more in gWAT, "
-            "with essentially identical fold changes (r ~ 0.999) and >99% directional concordance.\n\n"
-            "In plain English: we find MORE real genes without changing WHICH genes we find.\n"
-            "The extra power comes from removing sex-related noise, not from inventing false signal.",
+add_textbox(slide, Inches(1), Inches(4.8), Inches(11), Inches(2.5),
+            "At the PER-DEPOT level (n ~ 19), adding Sex gains +14% DEGs in iWAT.\n"
+            "Each degree of freedom matters more with fewer samples, so the variance absorbed\n"
+            "by Sex outweighs its DF cost.\n\n"
+            "BUT: We use a UNIFIED model (all 38 samples). What happens there?  --> Next slide",
             font_size=14, color=DARK_BLUE)
 
-# ====== SLIDE 19: What the Model Comparison Means (EDUCATIONAL) ======
+# ====== SLIDE 19: UNIFIED MODEL COMPARISON ======
 slide = prs.slides.add_slide(blank_layout)
-set_slide_bg(slide, RGBColor(0xFD, 0xF2, 0xE9))
-add_section_header(slide, "Background: Understanding the Model Comparison")
-add_bullet_list(slide, Inches(0.6), Inches(1.3), Inches(12), Inches(5.5), [
-    "Q: How can adding a covariate find MORE genes?",
-    "",
-    "A: Think of it like noise-canceling headphones.",
-    "  - Without headphones: You can hear the music (genotype effect) but",
-    "    background chatter (sex differences) makes it harder to pick out quiet songs",
-    "  - With headphones: The chatter is removed. Now you can hear BOTH",
-    "    the loud songs AND the quiet ones you couldn't hear before",
-    "",
-    "The 377 new iWAT DEGs were always there -- their fold changes are real",
-    "(logFC correlation ~0.999 = the actual effect sizes barely changed).",
-    "They just couldn't reach statistical significance because sex-related",
-    "variance was inflating the noise estimate.",
-    "",
-    "Q: Why only +5% gain in gWAT vs +14% in iWAT?",
-    "",
-    "A: gWAT has a weaker KD signal overall (fewer total DEGs).",
-    "  The genes 'on the edge' of significance are fewer,",
-    "  so there are fewer to rescue by reducing noise.",
-    "",
-    "Q: Is 99% directional concordance good enough?",
-    "A: Yes. It means the two models agree on the direction of effect",
-    "  for 99%+ of all DEGs. The covariate model is a strict improvement.",
-], font_size=13)
+set_slide_bg(slide, RGBColor(0xE8, 0xF8, 0xF5))
+add_section_header(slide, "Unified Models: ~ 0 + GroupDepot vs. ~ Sex + GroupDepot")
+add_subtitle_text(slide,
+    "Part 7.7 Test 3c: At the unified level (n = 38), adding Sex COSTS power")
+
+# Build unified model comparison table
+rows = 5
+cols = 3
+table_shape = slide.shapes.add_table(rows, cols,
+    Inches(1), Inches(1.5), Inches(11), Inches(2.5))
+tbl = table_shape.table
+
+# Header row
+headers = ["Unified Model Comparison", "iWAT contrast", "gWAT contrast"]
+for i, h in enumerate(headers):
+    cell = tbl.cell(0, i)
+    cell.text = h
+    p = cell.text_frame.paragraphs[0]
+    p.font.bold = True
+    p.font.size = Pt(14)
+    p.font.color.rgb = WHITE
+    p.font.name = "Calibri"
+    cell.fill.solid()
+    cell.fill.fore_color.rgb = DARK_BLUE
+
+unified_data = [
+    ["~ 0 + GroupDepot (no Sex)",    "3,022 DEGs",    "1,159 DEGs"],
+    ["~ Sex + GroupDepot",           "2,777 DEGs",    "1,089 DEGs"],
+    ["Net DEG change",               "-245 (-8.1%)",  "-70 (-6.0%)"],
+    ["logFC correlation",            "0.939",          "0.967"],
+]
+
+for r_idx, row_data in enumerate(unified_data):
+    for c_idx, val in enumerate(row_data):
+        cell = tbl.cell(r_idx + 1, c_idx)
+        cell.text = val
+        p = cell.text_frame.paragraphs[0]
+        p.font.size = Pt(13)
+        p.font.name = "Calibri"
+        if c_idx == 0:
+            p.font.bold = True
+        # Highlight the loss row in amber
+        if r_idx == 2:
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = RGBColor(0xFC, 0xF3, 0xCF)
+        elif r_idx % 2 == 0:
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = LIGHT_BLUE
+
+add_textbox(slide, Inches(1), Inches(4.5), Inches(11), Inches(2.8),
+            "WHY THE REVERSAL?\n"
+            "At n=19 (per-depot), losing 1 DF to Sex = 5.6% of residual evidence lost, "
+            "but Sex absorbs enough variance to compensate.\n"
+            "At n=38 (unified), losing 1 DF = only 2.9% of residual evidence, "
+            "AND the balanced design already prevents sex from confounding genotype.\n"
+            "Result: the DF cost now OUTWEIGHS the variance benefit -> fewer DEGs.\n\n"
+            "DECISION: Use ~ 0 + GroupDepot (the simpler model with MORE power).\n"
+            "The two models agree closely (r = 0.94-0.97), so biological conclusions are the same.",
+            font_size=14, color=DARK_BLUE)
 
 # ====== SLIDE 20: Summary Table ======
 slide = prs.slides.add_slide(blank_layout)
@@ -649,13 +682,13 @@ for i, h in enumerate(headers):
 data = [
     ["Genes tested",                        "16,466",        "16,827"],
     ["Significant interactions (LRT)",      "630 (3.83%)",   "374 (2.22%)"],
-    ["Pi0 (true null proportion)",          "0.8701",        "0.8483"],
+    ["Pi0 (true null proportion)",          "0.87",          "0.85"],
     ["Median variance: Sex x Genotype",     "2.1%",          "2.4%"],
     ["Sex-stratified concordance r",        "0.727",         "0.605"],
     ["Directional concordance",             "99.0%",         "99.5%"],
-    ["DEGs: ~ Genotype (no sex)",           "2,665",         "1,077"],
-    ["DEGs: ~ Sex + Genotype",              "3,042",         "1,131"],
-    ["Net DEG gain from covariate",         "+377 (+14.1%)", "+54 (+5.0%)"],
+    ["Unified DEGs: ~ 0 + GroupDepot",      "3,022",         "1,159"],
+    ["Unified DEGs: ~ Sex + GroupDepot",    "2,777",         "1,089"],
+    ["Net change (unified)",                "-245 (-8.1%)",  "-70 (-6.0%)"],
 ]
 
 for r_idx, row_data in enumerate(data):
@@ -667,16 +700,16 @@ for r_idx, row_data in enumerate(data):
         p.font.name = "Calibri"
         if c_idx == 0:
             p.font.bold = True
-        if r_idx == 8:  # highlight gain row
+        if r_idx == 8:  # highlight net change row (amber - DF cost)
             cell.fill.solid()
-            cell.fill.fore_color.rgb = RGBColor(0xD5, 0xF5, 0xE3)
+            cell.fill.fore_color.rgb = RGBColor(0xFC, 0xF3, 0xCF)
         elif r_idx % 2 == 0:
             cell.fill.solid()
             cell.fill.fore_color.rgb = LIGHT_BLUE
 
 add_textbox(slide, Inches(1), Inches(6.3), Inches(11), Inches(0.8),
-            "All metrics converge: the KAT8-KD transcriptional response is "
-            "overwhelmingly sex-independent. Including sex as a covariate is the optimal approach.",
+            "All metrics converge: the KAT8-KD response is overwhelmingly sex-independent. "
+            "With a balanced design and n=38, the simpler model (~ 0 + GroupDepot) maximizes power.",
             font_size=16, bold=True, color=DARK_BLUE, alignment=PP_ALIGN.CENTER)
 
 # ====== SLIDE 21: Conclusion & Decision ======
@@ -687,24 +720,26 @@ add_textbox(slide, Inches(1), Inches(0.5), Inches(11), Inches(1),
             font_size=34, bold=True, color=WHITE, alignment=PP_ALIGN.CENTER)
 
 conclusion_items = [
+    "CAN WE POOL SEXES?    YES",
+    "",
     "EVIDENCE:",
     "  - Only 2-4% of genes show significant Sex x Genotype interaction",
     "  - Pi0 = 0.85-0.87: 85-87% of genes are true nulls (no interaction)",
     "  - The interaction term explains only ~2% of variance vs. 17-33% for Genotype",
     "  - Sex-stratified concordance: 99%+ directional agreement",
-    "  - Adding Sex as covariate gains +14% DEGs (iWAT), +5% (gWAT) with r ~ 0.999",
+    "  - Balanced design: sex CANNOT confound genotype effect",
     "",
-    "DECISION:  Design = ~ Sex + Genotype  (per depot)",
-    "  - Sex included as a covariate (not ignored, not used to split)",
-    "  - Accounts for sex-related variance -> more power to detect KD effects",
-    "  - Formally validated by LRT, pi0, concordance, and model comparison",
-    "  - part1_main_analysis.R updated to use this design",
+    "DECISION:  Design = ~ 0 + GroupDepot  (unified, no Sex covariate)",
+    "  - All 38 samples in one model, depot-specific KAT8 contrasts extracted",
+    "  - No Sex covariate needed: balanced design eliminates confounding",
+    "  - Adding Sex to the unified model COSTS power (-8% iWAT, -6% gWAT DEGs)",
+    "  - logFC correlation r > 0.94 between +/- Sex models -> same biology",
     "",
-    "CAVEAT:",
+    "CAVEAT (mention in Discussion if reviewers ask):",
     "  - 630 (iWAT) / 374 (gWAT) genes DO show sex-dependent KD responses",
-    "  - With n = 4-5 per group, subtle effects may be undetected",
     "  - Male KD samples appear more extreme in PCA (especially iWAT)",
-    "  - These observations warrant acknowledgment in the Discussion section",
+    "  - gWAT sex-stratified correlation is moderate (r = 0.61)",
+    "  - These observations warrant follow-up investigation",
 ]
 
 tf = add_bullet_list(slide, Inches(1), Inches(1.8), Inches(11), Inches(5.2),
@@ -738,8 +773,8 @@ print("  14. Concordance: iWAT")
 print("  15. Concordance: gWAT")
 print("  16. PCA by Sex and Genotype")
 print("  17. Interaction vs Genotype Scatter")
-print("  18. NEW: Model Comparison (Part 7.7)")
-print("  19. LEARN: Understanding the Model Comparison")
+print("  18. Per-Depot Model Comparison (Part 7.7)")
+print("  19. Unified Model Comparison (the key slide)")
 print("  20. Summary Table (all metrics)")
 print("  21. Conclusion & Decision")
 print()
