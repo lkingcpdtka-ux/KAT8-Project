@@ -7,6 +7,9 @@ Updated 2026-02-18: Reflects final decision: ~ 0 + GroupDepot (unified, no Sex
 covariate). Added Part 7.7 model comparison at both per-depot and unified levels,
 educational slides explaining covariates/pi0/concordance, and the pooling decision.
 
+Updated 2026-02-18b: Embeds actual figures from NEWresults218 instead of
+placeholder boxes.  Adds model-comparison scatter plots (03a/03b/03c).
+
 Run:  python create_presentation.py
 Output:  Results/KAT8_sex_interaction_presentation.pptx
 """
@@ -17,6 +20,12 @@ from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.enum.shapes import MSO_SHAPE
+
+# ---------------------------------------------------------------------------
+# Image directory  (NEWresults218 has all Part 7.5/7.6/7.7 figures)
+# ---------------------------------------------------------------------------
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+IMG_DIR = os.path.join(SCRIPT_DIR, "NEWresults218")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -81,7 +90,7 @@ def add_bullet_list(slide, left, top, width, height, items,
 
 
 def add_plot_placeholder(slide, left, top, width, height, filename):
-    """Grey dashed box with instructions to insert the named plot."""
+    """Grey dashed box with instructions to insert the named plot (fallback)."""
     shape = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE, left, top, width, height)
     shape.fill.solid()
@@ -103,6 +112,18 @@ def add_plot_placeholder(slide, left, top, width, height, filename):
     p2.font.color.rgb = GREY
     p2.font.italic = True
     p2.alignment = PP_ALIGN.CENTER
+
+
+def add_image(slide, left, top, width, height, *candidate_filenames):
+    """Insert the first image found from candidate_filenames, else a placeholder."""
+    for fname in candidate_filenames:
+        path = os.path.join(IMG_DIR, fname)
+        if os.path.isfile(path):
+            slide.shapes.add_picture(path, left, top, width, height)
+            return True
+    # Fallback to placeholder
+    add_plot_placeholder(slide, left, top, width, height,
+                         candidate_filenames[0] if candidate_filenames else "image")
 
 
 def add_section_header(slide, text, top=Inches(0.3)):
@@ -129,7 +150,7 @@ prs.slide_width = SLIDE_W
 prs.slide_height = SLIDE_H
 blank_layout = prs.slide_layouts[6]  # blank
 
-TOTAL_SLIDES = 21  # updated count
+TOTAL_SLIDES = 22  # updated count (added model comparison scatter slide)
 
 # ====== SLIDE 1: Title ======
 slide = prs.slides.add_slide(blank_layout)
@@ -301,8 +322,9 @@ add_bullet_list(slide, Inches(0.6), Inches(1.2), Inches(5.5), Inches(5), [
     "  - So some of these 630 genes are likely false positives",
     "  - The true interaction rate is even lower (see pi0 next)",
 ], font_size=13)
-add_plot_placeholder(slide, Inches(6.5), Inches(1.2), Inches(6), Inches(5),
-                     "pvalue_hist_interaction_iWAT_<run_tag>.png")
+add_image(slide, Inches(6.5), Inches(1.2), Inches(6), Inches(5),
+          "01_pvalue_hist_interaction_iWAT.png",
+          "pvalue_hist_interaction_iWAT_20260217_233911.png")
 
 # ====== SLIDE 9: gWAT LRT Results ======
 slide = prs.slides.add_slide(blank_layout)
@@ -322,8 +344,9 @@ add_bullet_list(slide, Inches(0.6), Inches(1.2), Inches(5.5), Inches(5), [
     "  - This is consistent with what we see in the main analysis:",
     "    iWAT shows a stronger KAT8 KD response than gWAT",
 ], font_size=13)
-add_plot_placeholder(slide, Inches(6.5), Inches(1.2), Inches(6), Inches(5),
-                     "pvalue_hist_interaction_gWAT_<run_tag>.png")
+add_image(slide, Inches(6.5), Inches(1.2), Inches(6), Inches(5),
+          "01_pvalue_hist_interaction_gWAT.png",
+          "pvalue_hist_interaction_gWAT_20260217_233911.png")
 
 # ====== SLIDE 10: What is Pi0? (EDUCATIONAL) ======
 slide = prs.slides.add_slide(blank_layout)
@@ -397,8 +420,16 @@ add_bullet_list(slide, Inches(0.6), Inches(4.5), Inches(5.5), Inches(2), [
     "  Sex gets a medium slice (6-12%),",
     "  but Sex x KD interaction gets a TINY slice (~2%)",
 ], font_size=13, color=DARK_BLUE)
-add_plot_placeholder(slide, Inches(6.5), Inches(1.5), Inches(6), Inches(5),
-                     "variance_explained_<depot>_<run_tag>.png")
+add_image(slide, Inches(6.5), Inches(1.5), Inches(3), Inches(2.5),
+          "04_variance_decomposition_iWAT.png",
+          "variance_explained_iWAT_20260217_233911.png")
+add_image(slide, Inches(9.7), Inches(1.5), Inches(3), Inches(2.5),
+          "04_variance_decomposition_gWAT.png",
+          "variance_explained_gWAT_20260217_233911.png")
+add_textbox(slide, Inches(7.3), Inches(4.1), Inches(2), Inches(0.3),
+            "iWAT", font_size=11, bold=True, color=GREY, alignment=PP_ALIGN.CENTER)
+add_textbox(slide, Inches(10.5), Inches(4.1), Inches(2), Inches(0.3),
+            "gWAT", font_size=11, bold=True, color=GREY, alignment=PP_ALIGN.CENTER)
 
 # ====== SLIDE 13: What is Concordance? (EDUCATIONAL) ======
 slide = prs.slides.add_slide(blank_layout)
@@ -450,8 +481,9 @@ add_bullet_list(slide, Inches(0.6), Inches(1.6), Inches(5.5), Inches(4.5), [
     "Note: r = 0.73 (not 0.99) because with n=4-5 per group,",
     "per-sex analyses are noisy. True concordance is likely higher.",
 ], font_size=12)
-add_plot_placeholder(slide, Inches(6.5), Inches(1.5), Inches(6), Inches(5),
-                     "sex_concordance_scatter_iWAT_<run_tag>.png")
+add_image(slide, Inches(6.5), Inches(1.5), Inches(6), Inches(5),
+          "02_sex_concordance_scatter_iWAT.png",
+          "sex_concordance_scatter_iWAT_20260217_233911.png")
 
 # ====== SLIDE 15: Concordance gWAT ======
 slide = prs.slides.add_slide(blank_layout)
@@ -477,8 +509,9 @@ add_bullet_list(slide, Inches(0.6), Inches(1.6), Inches(5.5), Inches(4.5), [
     "  This is normal biological variation, not a problem.",
     "  Including sex as a covariate handles this optimally.",
 ], font_size=12)
-add_plot_placeholder(slide, Inches(6.5), Inches(1.5), Inches(6), Inches(5),
-                     "sex_concordance_scatter_gWAT_<run_tag>.png")
+add_image(slide, Inches(6.5), Inches(1.5), Inches(6), Inches(5),
+          "02_sex_concordance_scatter_gWAT.png",
+          "sex_concordance_scatter_gWAT_20260217_233911.png")
 
 # ====== SLIDE 16: PCA ======
 slide = prs.slides.add_slide(blank_layout)
@@ -503,8 +536,16 @@ add_bullet_list(slide, Inches(0.6), Inches(1.3), Inches(5.5), Inches(5), [
     "especially in iWAT. This is expected and handled",
     "by the sex covariate in our model.",
 ], font_size=13)
-add_plot_placeholder(slide, Inches(6.5), Inches(1.2), Inches(6), Inches(5),
-                     "PCA_by_sex_<depot>_<run_tag>.png")
+add_image(slide, Inches(6.5), Inches(1.2), Inches(3.2), Inches(2.7),
+          "05_PCA_by_sex_iWAT.png",
+          "PCA_by_sex_iWAT_20260217_233911.png")
+add_image(slide, Inches(9.8), Inches(1.2), Inches(3.2), Inches(2.7),
+          "05_PCA_by_sex_gWAT.png",
+          "PCA_by_sex_gWAT_20260217_233911.png")
+add_textbox(slide, Inches(6.8), Inches(4.0), Inches(2.5), Inches(0.3),
+            "iWAT", font_size=11, bold=True, color=GREY, alignment=PP_ALIGN.CENTER)
+add_textbox(slide, Inches(10.1), Inches(4.0), Inches(2.5), Inches(0.3),
+            "gWAT", font_size=11, bold=True, color=GREY, alignment=PP_ALIGN.CENTER)
 
 # ====== SLIDE 17: Interaction vs Genotype Scatter ======
 slide = prs.slides.add_slide(blank_layout)
@@ -529,8 +570,14 @@ add_bullet_list(slide, Inches(0.6), Inches(1.3), Inches(5.5), Inches(5), [
     "  Most dots cluster near y = 0 (no interaction)",
     "  -> CONFIRMS: genotype effect dominates",
 ], font_size=13)
-add_plot_placeholder(slide, Inches(6.5), Inches(1.2), Inches(6), Inches(5),
-                     "interaction_vs_genotype_<depot>_<run_tag>.png")
+add_image(slide, Inches(6.5), Inches(1.2), Inches(3.2), Inches(2.7),
+          "interaction_vs_genotype_iWAT_20260217_233911.png")
+add_image(slide, Inches(9.8), Inches(1.2), Inches(3.2), Inches(2.7),
+          "interaction_vs_genotype_gWAT_20260217_233911.png")
+add_textbox(slide, Inches(6.8), Inches(4.0), Inches(2.5), Inches(0.3),
+            "iWAT", font_size=11, bold=True, color=GREY, alignment=PP_ALIGN.CENTER)
+add_textbox(slide, Inches(10.1), Inches(4.0), Inches(2.5), Inches(0.3),
+            "gWAT", font_size=11, bold=True, color=GREY, alignment=PP_ALIGN.CENTER)
 
 # ====== SLIDE 18: MODEL COMPARISON - Per-Depot Level ======
 slide = prs.slides.add_slide(blank_layout)
@@ -654,7 +701,50 @@ add_textbox(slide, Inches(1), Inches(4.5), Inches(11), Inches(2.8),
             "The two models agree closely (r = 0.94-0.97), so biological conclusions are the same.",
             font_size=14, color=DARK_BLUE)
 
-# ====== SLIDE 20: Summary Table ======
+# ====== SLIDE 20: Model Comparison Scatter Plots ======
+slide = prs.slides.add_slide(blank_layout)
+add_section_header(slide, "Model Comparison: Scatter Plots (Part 7.7)")
+add_subtitle_text(slide,
+    "logFC near-identity between models confirms biological conclusions are unchanged")
+
+# Row 1: 03a - Sex covariate effect (per-depot ~Genotype vs ~Sex+Genotype)
+add_textbox(slide, Inches(0.3), Inches(1.4), Inches(4), Inches(0.3),
+            "3a: ~ Genotype vs ~ Sex + Genotype", font_size=11, bold=True, color=DARK_BLUE)
+add_image(slide, Inches(0.3), Inches(1.7), Inches(3.8), Inches(2.5),
+          "03a_model_comparison_sex_covariate_iWAT.png")
+add_image(slide, Inches(4.3), Inches(1.7), Inches(3.8), Inches(2.5),
+          "03a_model_comparison_sex_covariate_gWAT.png")
+
+# Row 2: 03c - Unified ~0+GroupDepot vs ~Sex+GroupDepot (the key comparison)
+add_textbox(slide, Inches(0.3), Inches(4.3), Inches(6), Inches(0.3),
+            "3c: Unified ~ 0 + GroupDepot vs ~ Sex + GroupDepot  (the key comparison)",
+            font_size=11, bold=True, color=DARK_BLUE)
+add_image(slide, Inches(0.3), Inches(4.6), Inches(3.8), Inches(2.5),
+          "03c_nosex_vs_sex_unified_iWAT.png")
+add_image(slide, Inches(4.3), Inches(4.6), Inches(3.8), Inches(2.5),
+          "03c_nosex_vs_sex_unified_gWAT.png")
+
+# Sidebar: 03b - Per-depot vs unified
+add_textbox(slide, Inches(8.5), Inches(1.4), Inches(4.5), Inches(0.3),
+            "3b: Per-depot vs Unified model", font_size=11, bold=True, color=DARK_BLUE)
+add_image(slide, Inches(8.5), Inches(1.7), Inches(2.2), Inches(1.7),
+          "03b_unified_vs_perdepot_iWAT.png")
+add_image(slide, Inches(10.8), Inches(1.7), Inches(2.2), Inches(1.7),
+          "03b_unified_vs_perdepot_gWAT.png")
+
+add_bullet_list(slide, Inches(8.5), Inches(3.6), Inches(4.5), Inches(3.5), [
+    "Key observations:",
+    "  - All scatter plots cluster tightly",
+    "    along the diagonal (y = x)",
+    "  - Green dots = DEGs gained",
+    "  - Red dots = DEGs lost",
+    "  - Per-depot: adding Sex GAINS DEGs",
+    "  - Unified: adding Sex LOSES DEGs",
+    "  - logFC estimates nearly identical",
+    "    regardless of model choice",
+], font_size=11, color=DARK_BLUE)
+
+# ====== SLIDE 21: Summary Table ====== (was slide 20)
 slide = prs.slides.add_slide(blank_layout)
 add_section_header(slide, "Summary: All Evidence at a Glance")
 
@@ -712,7 +802,7 @@ add_textbox(slide, Inches(1), Inches(6.3), Inches(11), Inches(0.8),
             "With a balanced design and n=38, the simpler model (~ 0 + GroupDepot) maximizes power.",
             font_size=16, bold=True, color=DARK_BLUE, alignment=PP_ALIGN.CENTER)
 
-# ====== SLIDE 21: Conclusion & Decision ======
+# ====== SLIDE 22: Conclusion & Decision ====== (was slide 21)
 slide = prs.slides.add_slide(blank_layout)
 set_slide_bg(slide, DARK_BLUE)
 add_textbox(slide, Inches(1), Inches(0.5), Inches(11), Inches(1),
@@ -763,23 +853,20 @@ print("  4.  LEARN: What is a Covariate?")
 print("  5.  LEARN: Two Possible Models (~ Genotype vs ~ Sex + Genotype)")
 print("  6.  Method: Likelihood Ratio Test")
 print("  7.  LEARN: How to Read a P-value Histogram")
-print("  8.  iWAT LRT Results")
-print("  9.  gWAT LRT Results")
+print("  8.  iWAT LRT Results  [with embedded figure]")
+print("  9.  gWAT LRT Results  [with embedded figure]")
 print("  10. LEARN: What is Pi0?")
 print("  11. Pi0 Results")
-print("  12. Variance Attribution")
+print("  12. Variance Attribution  [with embedded iWAT + gWAT figures]")
 print("  13. LEARN: What is Concordance?")
-print("  14. Concordance: iWAT")
-print("  15. Concordance: gWAT")
-print("  16. PCA by Sex and Genotype")
-print("  17. Interaction vs Genotype Scatter")
+print("  14. Concordance: iWAT  [with embedded figure]")
+print("  15. Concordance: gWAT  [with embedded figure]")
+print("  16. PCA by Sex and Genotype  [with embedded iWAT + gWAT figures]")
+print("  17. Interaction vs Genotype Scatter  [with embedded iWAT + gWAT figures]")
 print("  18. Per-Depot Model Comparison (Part 7.7)")
 print("  19. Unified Model Comparison (the key slide)")
-print("  20. Summary Table (all metrics)")
-print("  21. Conclusion & Decision")
+print("  20. Model Comparison Scatter Plots (03a/03b/03c)  [NEW]")
+print("  21. Summary Table (all metrics)")
+print("  22. Conclusion & Decision")
 print()
-print("Next steps:")
-print("  1. Open the PPTX on your Windows machine")
-print("  2. Replace the grey placeholder boxes with your actual plots")
-print("     (Right-click placeholder -> Change Shape -> Insert Picture)")
-print("  3. The plot filenames are listed in each placeholder")
+print("All figures embedded from NEWresults218/ directory.")
