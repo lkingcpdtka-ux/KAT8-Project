@@ -134,7 +134,7 @@ dotplot_params <- list(
 
   ## Top pathways to show
   top_n_gobp      = 15,
-  top_n_kegg      = 15,
+  top_n_kegg      = 16,
 
   ## Plot sizing (fixed to keep dot plots consistent)
   plot_width      = 4.6,

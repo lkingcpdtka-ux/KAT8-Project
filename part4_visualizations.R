@@ -647,10 +647,11 @@ if (generate_ora_dotplots) {
     ora_data$Count <- sapply(strsplit(ora_data$GeneRatio, "/"), function(x) as.numeric(x[1]))
     ora_data$neg_log10_fdr <- -log10(ora_data$p.adjust)
 
+    top_n_dot <- if (db == "KEGG") dotplot_params$top_n_kegg else dotplot_params$top_n_gobp
     plot_data <- ora_data %>%
       dplyr::filter(p.adjust < dotplot_params$fdr_cutoff, Count >= dotplot_params$min_count) %>%
       dplyr::arrange(p.adjust, pvalue) %>%
-      dplyr::slice_head(n = dotplot_params$top_n_gobp)
+      dplyr::slice_head(n = top_n_dot)
 
     if (nrow(plot_data) == 0) next
 
