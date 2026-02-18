@@ -493,7 +493,7 @@ if (generate_ora_barplots) {
 
     plot_data <- ora_data %>%
       dplyr::filter(p.adjust < ora_params$pvalue_cutoff) %>%
-      dplyr::arrange(p.adjust) %>%
+      dplyr::arrange(p.adjust, pvalue) %>%
       dplyr::slice_head(n = ora_params$top_n)
 
     if (nrow(plot_data) == 0) next
@@ -649,7 +649,7 @@ if (generate_ora_dotplots) {
 
     plot_data <- ora_data %>%
       dplyr::filter(p.adjust < dotplot_params$fdr_cutoff, Count >= dotplot_params$min_count) %>%
-      dplyr::arrange(p.adjust) %>%
+      dplyr::arrange(p.adjust, pvalue) %>%
       dplyr::slice_head(n = dotplot_params$top_n_gobp)
 
     if (nrow(plot_data) == 0) next
