@@ -663,7 +663,7 @@ if (generate_ora_dotplots) {
     p <- ggplot(plot_data, aes(x = GeneRatio_numeric, y = Description)) +
       geom_point(aes(size = Count, color = neg_log10_fdr)) +
       scale_color_gradientn(colors = enrichment_colors$gradient, name = expression(-log[10]*"(FDR)")) +
-      scale_size_continuous(name = "Count", range = c(2, 6), breaks = c(10, 20, 30, 40)) +
+      scale_size_continuous(name = "Count", range = c(2, 6), breaks = c(10, 20, 30, 40), limits = c(1, NA)) +
       scale_x_continuous(limits = dot_xlim, expand = expansion(mult = c(0.02, 0.02))) +
       labs(title = paste0(db, " - ", direction_label, "\n", contrast), x = "Gene Ratio", y = NULL) +
       theme_bw(base_size = 10) +
