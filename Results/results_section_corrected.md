@@ -98,86 +98,62 @@ GO:BP CSV files, generated PNG figures, and analysis code (parts 1-7.6).
 **Adipocyte-specific loss of KAT8 produces depot-dependent transcriptional
 dysregulation in white adipose tissue**
 
-To characterize the transcriptomic consequences of KAT8 loss in adipocytes, we
-performed bulk RNA-seq on inguinal white adipose tissue (iWAT) and gonadal white
-adipose tissue (gWAT) from adipocyte-specific KAT8 knockout (AKO; Adipoq-Cre;
-Kat8^fl/fl) and floxed control (FL) mice (n = 4-5 per group per depot per sex;
-two outlier samples were excluded after quality assessment). Both male and female
-mice were included in each experimental group with a balanced design. Formal
-Sex x Genotype interaction testing confirmed that significant interactions were
-limited to <4% of genes in either depot, with >99% directional concordance
-between sexes, indicating that the KAT8 AKO transcriptional response is largely
-sex-independent (Supplemental Table X). A unified DESeq2 model
-(design: ~ GroupDepot) was employed across all 38 tissue samples, with
-depot-specific KAT8 knockout effects extracted via explicit contrasts (see
-Methods).
+To investigate the transcriptomic consequences of KAT8 loss in adipocytes, we
+performed bulk RNA-seq on iWAT and gWAT from adipocyte-specific KAT8 knockout
+(AKO; Adipoq-Cre; Kat8^fl/fl) and floxed control (FL) mice (n = 4-5 per group
+per depot). Both male and female mice were included with a balanced design, and
+formal interaction testing confirmed that the KAT8 AKO transcriptional response
+was largely sex-independent in both depots (<4% of genes with significant
+Sex x Genotype interactions; >99% directional concordance; Supplemental Table X).
 
-Principal component analysis of variance-stabilized counts revealed clear
-separation by both adipose depot and genotype across the first two principal
-components (PC1: 27% of variance; PC2: 14.7% of variance; Supplemental Fig. A).
-KAT8 AKO samples segregated from FL controls in both depots, with the genotype
-effect being particularly prominent in iWAT along PC1. Hierarchical clustering of
-the top differentially expressed genes (DEGs; |log2FC| > 1, FDR < 0.05) showed
-robust separation between FL and KAT8 AKO samples in both depots (Supplemental
-Fig. B). In iWAT, the majority of top DEGs were downregulated in the AKO relative
-to controls, whereas in gWAT, both upregulated and downregulated gene clusters
-were evident, with a prominent block of upregulated immune and inflammatory genes.
+Principal component analysis revealed clear separation by both adipose depot and
+genotype (PC1: 27%; PC2: 14.7%; Supplemental Fig. A). KAT8 AKO samples
+segregated from FL controls in both depots, with the genotype effect being
+particularly prominent in iWAT. Hierarchical clustering of the top DEGs
+(|log2FC| > 1, FDR < 0.05) confirmed robust separation between genotypes in both
+depots (Supplemental Fig. B). In iWAT, the majority of top DEGs were
+downregulated in AKO relative to controls, whereas gWAT displayed both
+upregulated and downregulated gene clusters, with a prominent block of
+upregulated immune and inflammatory genes.
 
-KEGG over-representation analysis (ORA) revealed depot-specific functional
-consequences of KAT8 loss (Fig. A). Among genes downregulated in iWAT, the most
-significantly enriched pathways included PPAR signaling (p.adj = 8.3 x 10^-11),
-carbon metabolism (p.adj = 3.1 x 10^-7), propanoate metabolism (p.adj = 3.7 x
-10^-7), valine/leucine/isoleucine degradation (p.adj = 3.7 x 10^-7), metabolism
-of xenobiotics by cytochrome P450 (p.adj = 1.0 x 10^-6), AMPK signaling (p.adj =
-1.3 x 10^-6), pyruvate metabolism (p.adj = 7.8 x 10^-6), fatty acid metabolism
-(p.adj = 4.8 x 10^-5), regulation of lipolysis in adipocytes (p.adj = 8.7 x
-10^-5), and insulin signaling (p.adj = 1.6 x 10^-4). Upregulated genes in iWAT
-were most significantly enriched in ECM-receptor interaction (p.adj = 8.3 x
-10^-8) and cornified envelope formation (p.adj = 8.5 x 10^-8), followed by
-neuroactive ligand-receptor interaction (p.adj = 3.8 x 10^-6), and additional
-pathways including cytokine-cytokine receptor interaction and PI3K-Akt signaling.
-In gWAT, upregulated genes were enriched in cytokine-cytokine receptor
-interaction (p.adj = 2.0 x 10^-7), viral protein interaction with cytokine and
-cytokine receptor (p.adj = 2.2 x 10^-7), IL-17 signaling (p.adj = 3.7 x 10^-3),
-neutrophil extracellular trap formation (p.adj = 0.011), and chemokine signaling
-(p.adj = 0.013), reflecting a pronounced inflammatory transcriptional signature.
-Notably, no KEGG pathways reached significance among gWAT downregulated genes by
-ORA, indicating that the metabolic gene suppression observed in iWAT is a more
-depot-selective feature of KAT8 loss.
+KEGG pathway analysis revealed depot-specific functional consequences of KAT8
+loss (Fig. A). In iWAT, downregulated genes were strongly enriched in metabolic
+pathways including PPAR signaling (p.adj = 8.3 x 10^-11), carbon metabolism,
+branched-chain amino acid degradation, AMPK signaling, pyruvate metabolism, fatty
+acid metabolism, regulation of lipolysis in adipocytes, and insulin signaling.
+Upregulated genes in iWAT were enriched in ECM-receptor interaction (p.adj = 8.3
+x 10^-8), neuroactive ligand-receptor interaction, cytokine-cytokine receptor
+interaction, and PI3K-Akt signaling. In gWAT, upregulated genes were enriched in
+cytokine-cytokine receptor interaction (p.adj = 2.0 x 10^-7), IL-17 signaling,
+neutrophil extracellular trap formation, and chemokine signaling, reflecting a
+pronounced inflammatory signature. Notably, no KEGG pathways reached significance
+among gWAT downregulated genes, indicating that the metabolic gene suppression
+observed in iWAT is depot-selective.
 
-Volcano plot analysis confirmed that iWAT exhibited a broader dynamic range of
-fold changes among DEGs (Fig. B). Significantly downregulated genes in iWAT
-included those involved in lipid and intermediary metabolism (Pxmp2, Ivd, Eci3,
-Acsm5, Cidea, Acacb, Ppara, Pck1, Acaca, Acox1, Ucp1), glutathione/xenobiotic
-metabolism (Gstk1, Mgst3, Gsta4, Mgst2), and other metabolic functions (Amy1,
-Vnn3, Ces1f). Upregulated genes in iWAT included inflammatory mediators (Il1rn,
-Gdf15, Eda2r), ECM components (Cd44, Sdc1), ion channel and calcium signaling
-genes (Slc8a1, Ryr2, Atp1a4, Cacna1d), and integrin family members (Itgb4,
-Itga2, Itgb8). In contrast, gWAT displayed a more prominent upregulation of
-immune and inflammatory genes, with the volcano plot dominated by chemokines
-(Ccl8, Ccl2, Cxcl2, Cxcl10, Cxcl1, Ccl3), cytokines (Il1b, Il12b, Camp),
-immune receptors (Eda2r, Ctss, Il1rn, Itgb2, Itgax, Clec4d), and signaling
-mediators (Traf4, Fosl1, Gdf15, Atp6v0d2).
+Volcano plot analysis confirmed that iWAT exhibited a broader range of fold
+changes among DEGs (Fig. B). Downregulated genes in iWAT included those involved
+in lipid metabolism (Cidea, Acacb, Ppara, Pck1, Acaca, Acox1, Ucp1),
+glutathione metabolism (Gstk1, Mgst3, Gsta4), and peroxisomal function (Pxmp2,
+Eci3). Upregulated genes included inflammatory mediators (Il1rn, Gdf15, Eda2r),
+ECM components (Cd44, Sdc1), and calcium signaling genes (Slc8a1, Ryr2). In
+contrast, gWAT displayed a more prominent upregulation of immune and
+inflammatory genes, including chemokines (Ccl8, Ccl2, Cxcl2, Cxcl10, Ccl3),
+cytokines (Il1b, Il12b), and immune receptors (Ctss, Itgax, Clec4d).
 
 Examination of curated gene sets organized by functional category further
 illustrated these depot-dependent changes (Fig. C). Mitochondrial and energy
 metabolism genes, including electron transport chain components (Atp5pb, Ndufab1,
-Ndufb10, Atp5f1d, Sdhd, Ndufb8, Atp5me), mitochondrial-encoded genes (mt-Nd2,
-mt-Nd5), mitochondrial ribosomal proteins (Mrps10, Mrpl15, Mrpl17), and
-additional mitochondrial factors (Stoml2, Nsun4, Uqcc2, Ptcd1, Mtg2, Dap3,
-Hars1, Gars1), were consistently downregulated in KAT8 AKO samples in iWAT. A subset of these
-genes also trended downward in gWAT, although the gWAT transcriptional response
-was dominated by inflammatory and immune programs rather than metabolic
-suppression. Immune and inflammatory genes, including
-Nckap1l, Myo1f, Cd84, Lat2, Fcer1g, Hmox1, Cd300a, Itgb2, Syk, Spi1, Tyrobp,
-and Pycard, were upregulated in KAT8 AKO adipose tissue in both depots. Lipid
-metabolism genes (Soat1, Lipa, Scarb2, Nus1, Acsl3, P2rx7, Hilpda, Pltp, Abcg1)
-and ECM/remodeling genes (Mdm2, Ctss, Adam8, Tcirg1, Gpnmb, Ctsk, Timp1,
-Lgals3, Cd44, Tnfaip8l2) were also differentially expressed between genotypes.
-While the directionality of these expression changes was largely consistent
-between iWAT and gWAT, the relative magnitude differed by depot, with iWAT
-displaying more pronounced metabolic and thermogenic gene suppression and gWAT
-exhibiting a stronger inflammatory gene signature.
+Ndufb10, Sdhd), mitochondrial-encoded genes (mt-Nd2, mt-Nd5), and mitochondrial
+ribosomal proteins (Mrps10, Mrpl15), were consistently downregulated in KAT8 AKO
+iWAT. A subset of these genes also trended downward in gWAT, although the gWAT
+response was dominated by inflammatory and immune programs. Immune-related genes,
+including Nckap1l, Myo1f, Cd84, Lat2, Fcer1g, Syk, Spi1, and Pycard, were
+upregulated in KAT8 AKO adipose tissue in both depots. Lipid metabolism genes
+(Lipa, Scarb2, Acsl3, Hilpda, Pltp) and ECM/remodeling genes (Ctss, Adam8,
+Gpnmb, Ctsk, Timp1, Lgals3) were also differentially expressed between
+genotypes. While the directionality of these changes was largely consistent
+between depots, iWAT displayed more pronounced metabolic and thermogenic gene
+suppression whereas gWAT exhibited a stronger inflammatory gene signature.
 
 ### Conclusion
 
@@ -194,22 +170,23 @@ subcutaneous and visceral adipose tissue.
 
 ---
 
-## Methods: Sex-Combining Validation
+## Methods: RNA-seq Analysis
 
-**Model decision: ~ 0 + GroupDepot (unified, sexes pooled, no Sex covariate)**
-
-Both male and female mice were included in each experimental group (n = 4-5 per
-sex per genotype per depot, with two outlier samples excluded). A unified DESeq2
-model (design: ~ GroupDepot) was employed across all 38 tissue samples, with
-depot-specific KAT8 knockout effects extracted via explicit contrasts. This
-balanced experimental design (equal numbers of males and females per group)
-ensures that sex does not confound genotype effects. To validate this approach,
-formal Sex x Genotype interaction testing was performed using DESeq2 likelihood
-ratio tests within each depot. Significant interactions were limited to 630 genes
-in iWAT (3.83%) and 374 genes in gWAT (2.22%; FDR < 0.05), with 99.0% (iWAT)
-and 99.5% (gWAT) directional concordance between sex-stratified fold changes,
-confirming that the KAT8 AKO transcriptional response is largely
-sex-independent.
+Sequencing reads were aligned and quantified to generate a gene-level count
+matrix. Following quality assessment, two outlier samples were removed, yielding
+38 samples for downstream analysis. Differential expression analysis was
+performed using DESeq2 with a unified model across both depots, and
+depot-specific KAT8 AKO effects were extracted via pairwise contrasts. Genes
+with |log2FC| > 1 and FDR < 0.05 were considered differentially expressed. KEGG
+pathway over-representation analysis and gene set enrichment analysis (fGSEA)
+were performed on DEG lists and ranked gene lists, respectively. Both male and
+female mice were included in each experimental group with a balanced design
+(equal numbers of males and females per genotype per depot). To validate that
+sexes could be combined, formal Sex x Genotype interaction testing was performed
+using DESeq2 likelihood ratio tests within each depot. Significant interactions
+were limited to 630 genes in iWAT (3.83%) and 374 genes in gWAT (2.22%;
+FDR < 0.05), with >99% directional concordance between sex-stratified fold
+changes (Supplemental Table X).
 
 ### Part 7.7 Validation Numbers (for Supplemental Table X)
 
