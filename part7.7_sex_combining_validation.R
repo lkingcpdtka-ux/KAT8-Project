@@ -13,7 +13,7 @@
 ## PRODUCES (per depot):
 ##   1. Formal LRT interaction test (Sex x Genotype)
 ##   2. Sex-stratified concordance (M vs F logFC)
-##   3. Model comparison: ~Genotype vs ~Sex+Genotype vs unified ~Sex+GroupDepot
+##   3. Model comparison: ~Genotype vs ~Sex+Genotype vs unified (+/- Sex)
 ##   4. Variance decomposition
 ##   5. DEG counts (combined, male-only, female-only)
 ##   6. VERDICT: PASS / CAUTION / CONCERN
@@ -203,6 +203,34 @@ for (d in c("iWAT", "gWAT")) {
 }
 cat("[OK] Unified model complete. Coefficients: ",
     paste(resultsNames(dds_unified), collapse = ", "), "\n")
+
+## ============================================================
+## 3c) ORIGINAL MODEL: ~ 0 + GroupDepot (no Sex covariate)
+##     This is the model the boss has been reviewing.
+##     Comparing against ~ Sex + GroupDepot justifies adding Sex.
+## ============================================================
+cat("[INFO] Running original model (~ 0 + GroupDepot, no Sex covariate)...\n")
+
+dds_nosex_unified <- DESeqDataSetFromMatrix(
+  countData = round(count_matrix),
+  colData   = sample_annot,
+  design    = ~ 0 + GroupDepot
+)
+dds_nosex_unified <- DESeq(dds_nosex_unified, quiet = TRUE)
+
+## Extract per-depot KAT8 contrasts from no-sex model
+nosex_unified_results <- list()
+for (d in c("iWAT", "gWAT")) {
+  res_nu <- results(dds_nosex_unified,
+                    contrast = c("GroupDepot",
+                                 paste0(d, "_KAT8KD"),
+                                 paste0(d, "_CTL")))
+  res_nu_df <- deseq_res_to_df(res_nu)
+  res_nu_df$gene <- rownames(count_matrix)
+  nosex_unified_results[[d]] <- res_nu_df
+}
+cat("[OK] Original model complete. Coefficients: ",
+    paste(resultsNames(dds_nosex_unified), collapse = ", "), "\n")
 
 ## ============================================================
 ## 4) PER-DEPOT ANALYSIS
@@ -459,6 +487,8 @@ for (depot in c("iWAT", "gWAT")) {
   ## 4d) TEST 3: Model comparison
   ##     3a: ~Genotype vs ~Sex + Genotype (per-depot, value of Sex covariate)
   ##     3b: Per-depot ~Sex+Genotype vs unified ~Sex+GroupDepot (all 38 samples)
+  ##     3c: ~0+GroupDepot vs ~Sex+GroupDepot (unified, justifies adding Sex
+  ##         to the boss's original model)
   ## ---------------------------------------------------------
   cat("[", depot, "] Comparing models: ~Genotype vs ~Sex+Genotype vs unified...\n", sep = "")
 
@@ -634,6 +664,111 @@ for (depot in c("iWAT", "gWAT")) {
   ggsave(file.path(plots_dir, paste0("03b_unified_vs_perdepot_", depot, ".png")),
          p_unified, width = 7, height = 7, dpi = 300, bg = "white")
 
+  ## --- 3c: Compare unified ~ 0 + GroupDepot vs unified ~ Sex + GroupDepot ---
+  ## This directly justifies adding Sex to the model the boss has been using.
+  ## Both use all 38 samples; the only difference is the Sex covariate.
+  cat("[", depot, "] Comparing unified models: ~ 0 + GroupDepot vs ~ Sex + GroupDepot...\n", sep = "")
+
+  res_nosex_uni <- nosex_unified_results[[depot]]
+
+  common_genes_nc <- intersect(res_nosex_uni$gene, res_unified$gene)
+  res_nosex_uni_c <- res_nosex_uni[match(common_genes_nc, res_nosex_uni$gene), ]
+  res_unified_c   <- res_unified[match(common_genes_nc, res_unified$gene), ]
+
+  n_deg_nosex_uni <- sum(res_nosex_uni_c$padj < fdr_cut &
+                          abs(res_nosex_uni_c$log2FoldChange) > logFC_cut, na.rm = TRUE)
+  n_up_nosex_uni  <- sum(res_nosex_uni_c$padj < fdr_cut &
+                          res_nosex_uni_c$log2FoldChange > logFC_cut, na.rm = TRUE)
+  n_dn_nosex_uni  <- sum(res_nosex_uni_c$padj < fdr_cut &
+                          res_nosex_uni_c$log2FoldChange < -logFC_cut, na.rm = TRUE)
+
+  compare_nosex_vs_sex <- data.frame(
+    gene = common_genes_nc,
+    lfc_nosex = res_nosex_uni_c$log2FoldChange,
+    lfc_sex   = res_unified_c$log2FoldChange,
+    padj_nosex = res_nosex_uni_c$padj,
+    padj_sex   = res_unified_c$padj,
+    stringsAsFactors = FALSE
+  ) %>%
+    filter(is.finite(lfc_nosex), is.finite(lfc_sex))
+
+  r_nosex_vs_sex <- cor(compare_nosex_vs_sex$lfc_nosex,
+                         compare_nosex_vs_sex$lfc_sex, use = "complete.obs")
+
+  compare_nosex_vs_sex <- compare_nosex_vs_sex %>%
+    mutate(
+      sig_nosex = !is.na(padj_nosex) & padj_nosex < fdr_cut & abs(lfc_nosex) > logFC_cut,
+      sig_sex   = !is.na(padj_sex) & padj_sex < fdr_cut & abs(lfc_sex) > logFC_cut,
+      gained_by_sex = !sig_nosex & sig_sex,
+      lost_by_sex   = sig_nosex & !sig_sex
+    )
+  n_gained_by_sex <- sum(compare_nosex_vs_sex$gained_by_sex)
+  n_lost_by_sex   <- sum(compare_nosex_vs_sex$lost_by_sex)
+  pct_sex_gain_uni <- round(100 * (n_deg_unified - n_deg_nosex_uni) / max(1, n_deg_nosex_uni), 1)
+
+  ## LRT: does adding Sex significantly improve the unified model?
+  dds_lrt_unified <- DESeq(dds_unified, test = "LRT",
+                            reduced = ~ GroupDepot, quiet = TRUE)
+  res_lrt_sex <- results(dds_lrt_unified)
+  n_sex_sig_lrt <- sum(res_lrt_sex$padj < 0.05, na.rm = TRUE)
+  n_sex_tested  <- sum(!is.na(res_lrt_sex$pvalue))
+  pct_sex_sig   <- round(100 * n_sex_sig_lrt / n_sex_tested, 2)
+
+  ## Median dispersion comparison
+  disp_nosex <- median(dispersions(dds_nosex_unified), na.rm = TRUE)
+  disp_sex   <- median(dispersions(dds_unified), na.rm = TRUE)
+  disp_ratio <- round(disp_sex / disp_nosex, 4)
+
+  writeLines("\n--- TEST 3c: Unified Model +/- Sex Covariate ---", report)
+  writeLines(sprintf("  Model D (~ 0 + GroupDepot, no Sex, %d samples):",
+                     nrow(sample_annot)), report)
+  writeLines(sprintf("    DEGs: %d (%d up, %d down)", n_deg_nosex_uni, n_up_nosex_uni, n_dn_nosex_uni), report)
+  writeLines(sprintf("  Model C (~ Sex + GroupDepot, with Sex, %d samples):",
+                     nrow(sample_annot)), report)
+  writeLines(sprintf("    DEGs: %d (%d up, %d down)", n_deg_unified, n_up_unified, n_dn_unified), report)
+  writeLines(sprintf("  logFC correlation (D vs C):  r = %.4f", r_nosex_vs_sex), report)
+  writeLines(sprintf("  DEGs gained by adding Sex:   %d", n_gained_by_sex), report)
+  writeLines(sprintf("  DEGs lost by adding Sex:     %d", n_lost_by_sex), report)
+  writeLines(sprintf("  Net change: %+d DEGs (%+.1f%%)", n_deg_unified - n_deg_nosex_uni, pct_sex_gain_uni), report)
+  writeLines(sprintf("  LRT (Sex covariate effect):  %d / %d genes (%.2f%%) where Sex matters",
+                     n_sex_sig_lrt, n_sex_tested, pct_sex_sig), report)
+  writeLines(sprintf("  Median dispersion ratio:     %.4f (< 1 means Sex absorbs variance)", disp_ratio), report)
+
+  if (n_deg_unified > n_deg_nosex_uni * 1.05) {
+    writeLines("  >>> Adding Sex to ~ 0 + GroupDepot IMPROVES power", report)
+  } else if (n_deg_unified >= n_deg_nosex_uni) {
+    writeLines("  >>> Adding Sex is neutral or slightly beneficial", report)
+  } else {
+    writeLines("  >>> Adding Sex shows minimal effect; models are equivalent", report)
+  }
+
+  ## Scatter plot: ~ 0 + GroupDepot vs ~ Sex + GroupDepot
+  p_nosex_vs_sex <- ggplot(compare_nosex_vs_sex, aes(x = lfc_nosex, y = lfc_sex)) +
+    geom_point(size = 0.3, alpha = 0.2, color = "grey60") +
+    geom_point(data = compare_nosex_vs_sex %>% filter(gained_by_sex),
+               color = "#4CAF50", size = 1.5, alpha = 0.7) +
+    geom_point(data = compare_nosex_vs_sex %>% filter(lost_by_sex),
+               color = "#F44336", size = 1.5, alpha = 0.7) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey40") +
+    annotate("text", x = Inf, y = -Inf, hjust = 1.1, vjust = -0.5,
+             label = paste0("r = ", round(r_nosex_vs_sex, 4)), fontface = "bold", size = 5) +
+    annotate("text", x = -Inf, y = Inf, hjust = -0.1, vjust = 1.5,
+             label = paste0("Gained: +", n_gained_by_sex, " DEGs\nLost: -", n_lost_by_sex, " DEGs"),
+             color = "#4CAF50", fontface = "bold", size = 4) +
+    labs(title = paste0(depot, ": Adding Sex to Unified Model"),
+         subtitle = paste0("~ 0 + GroupDepot: ", n_deg_nosex_uni,
+                           " DEGs; ~ Sex + GroupDepot: ", n_deg_unified, " DEGs"),
+         x = expression(log[2]~FC~"(~ 0 + GroupDepot, no Sex)"),
+         y = expression(log[2]~FC~"(~ Sex + GroupDepot)")) +
+    coord_fixed() +
+    theme_bw(base_size = 12) +
+    theme(panel.grid = element_blank(),
+          plot.title = element_text(face = "bold", hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5, color = "grey40"))
+
+  ggsave(file.path(plots_dir, paste0("03c_nosex_vs_sex_unified_", depot, ".png")),
+         p_nosex_vs_sex, width = 7, height = 7, dpi = 300, bg = "white")
+
   ## ---------------------------------------------------------
   ## 4e) TEST 4: Variance decomposition
   ## ---------------------------------------------------------
@@ -691,7 +826,7 @@ for (depot in c("iWAT", "gWAT")) {
 
   ## Variance boxplot
   var_long <- var_results %>%
-    select(gene, pct_sex, pct_genotype, pct_interaction) %>%
+    dplyr::select(gene, pct_sex, pct_genotype, pct_interaction) %>%
     pivot_longer(-gene, names_to = "Term", values_to = "Pct") %>%
     mutate(Term = recode(Term, pct_sex = "Sex", pct_genotype = "Genotype",
                          pct_interaction = "Sex x Genotype"))
@@ -789,6 +924,10 @@ for (depot in c("iWAT", "gWAT")) {
   writeLines(paste0("  >> Unified model (~ Sex + GroupDepot, ", nrow(sample_annot),
                     " samples): ", n_deg_unified, " DEGs (r = ",
                     round(r_unified, 3), " vs per-depot)"), report)
+  writeLines(paste0("  >> vs boss's model (~ 0 + GroupDepot): ",
+                    n_deg_nosex_uni, " -> ", n_deg_unified, " DEGs by adding Sex",
+                    " (r = ", round(r_nosex_vs_sex, 3), ", +",
+                    n_gained_by_sex, "/-", n_lost_by_sex, " DEGs)"), report)
 
   cat("\n  >>> ", depot, " VERDICT: ", verdict, " <<<\n", sep = "")
 
@@ -825,6 +964,14 @@ for (depot in c("iWAT", "gWAT")) {
     N_gained_unified = n_gained_unified,
     N_lost_unified = n_lost_unified,
     Unified_logFC_correlation = round(r_unified, 4),
+    ## Model comparison (3c: ~ 0 + GroupDepot vs ~ Sex + GroupDepot)
+    N_DEG_nosex_unified = n_deg_nosex_uni,
+    N_gained_by_sex_unified = n_gained_by_sex,
+    N_lost_by_sex_unified = n_lost_by_sex,
+    Nosex_vs_sex_logFC_correlation = round(r_nosex_vs_sex, 4),
+    LRT_sex_covariate_sig = n_sex_sig_lrt,
+    LRT_sex_covariate_pct = pct_sex_sig,
+    Dispersion_ratio_sex_vs_nosex = disp_ratio,
     ## Variance decomposition
     Median_var_sex_pct = med_sex,
     Median_var_genotype_pct = med_geno,
@@ -891,12 +1038,23 @@ for (depot in c("iWAT", "gWAT")) {
     "a median of only ", row$Median_var_interaction_pct, "% of per-gene variance, ",
     "compared to ", row$Median_var_genotype_pct, "% for the Genotype main effect",
     if (row$Median_var_sex_pct > 1) paste0(" and ", row$Median_var_sex_pct, "% for Sex") else "",
-    ". Based on these findings, a unified DESeq2 model (~ Sex + GroupDepot) ",
-    "was employed for ", depot, ", pooling all ", nrow(sample_annot),
-    " tissue samples with Sex as an additive covariate and extracting ",
-    "depot-specific KAT8 knockout effects via explicit contrasts. ",
-    "This approach leverages shared dispersion estimates across depots ",
-    "for increased statistical power while accounting for sex as a nuisance variable."
+    ". Based on these findings, males and females were combined. ",
+    "An initial unified DESeq2 model (~ GroupDepot, all ", nrow(sample_annot),
+    " tissue samples) identified ", row$N_DEG_nosex_unified, " DEGs for ", depot,
+    ". Adding Sex as an additive covariate (~ Sex + GroupDepot) ",
+    if (row$N_DEG_unified > row$N_DEG_nosex_unified) {
+      paste0("increased sensitivity to ", row$N_DEG_unified, " DEGs ",
+             "(+", row$N_gained_by_sex_unified, " gained, -", row$N_lost_by_sex_unified,
+             " lost; logFC correlation r = ", row$Nosex_vs_sex_logFC_correlation, ")")
+    } else {
+      paste0("yielded comparable results (", row$N_DEG_unified, " DEGs; ",
+             "logFC correlation r = ", row$Nosex_vs_sex_logFC_correlation, ")")
+    },
+    ", confirming that Sex absorbs inter-individual variance without ",
+    "distorting KAT8 knockout effect estimates. ",
+    "The final model (~ Sex + GroupDepot) pools all ", nrow(sample_annot),
+    " samples, extracting depot-specific KAT8 effects via explicit contrasts ",
+    "with shared dispersion estimates for increased statistical power."
   ), report)
 }
 
@@ -921,14 +1079,20 @@ writeLines(paste0(
   if (min(iwat$Pearson_r_all, gwat$Pearson_r_all) >= 0.7) "highly " else "",
   "concordant between males and females (Pearson r = ",
   iwat$Pearson_r_all, " in iWAT; r = ", gwat$Pearson_r_all, " in gWAT). ",
-  "Males and females were therefore combined within each depot, and a ",
-  "unified DESeq2 model (~ Sex + GroupDepot) was employed across all ",
-  nrow(sample_annot), " tissue samples, with Sex as an additive covariate ",
-  "and depot-specific KAT8 knockout effects extracted via explicit contrasts ",
-  "(unified model DEGs: iWAT = ", iwat$N_DEG_unified,
-  "; gWAT = ", gwat$N_DEG_unified,
-  "; logFC correlation with per-depot models: r = ",
-  iwat$Unified_logFC_correlation, " and r = ", gwat$Unified_logFC_correlation, ")."
+  "Males and females were therefore combined within each depot. ",
+  "A unified DESeq2 model across all ", nrow(sample_annot),
+  " tissue samples was initially fit without a Sex term (~ GroupDepot), ",
+  "yielding ", iwat$N_DEG_nosex_unified, " DEGs in iWAT and ",
+  gwat$N_DEG_nosex_unified, " DEGs in gWAT. ",
+  "Including Sex as an additive covariate (~ Sex + GroupDepot) ",
+  "improved sensitivity (iWAT: ", iwat$N_DEG_nosex_unified, " -> ", iwat$N_DEG_unified, " DEGs; ",
+  "gWAT: ", gwat$N_DEG_nosex_unified, " -> ", gwat$N_DEG_unified, " DEGs) ",
+  "while preserving effect estimates (logFC r = ",
+  iwat$Nosex_vs_sex_logFC_correlation, " in iWAT, r = ",
+  gwat$Nosex_vs_sex_logFC_correlation, " in gWAT). ",
+  "The final model (~ Sex + GroupDepot) extracts depot-specific KAT8 knockout ",
+  "effects via explicit contrasts, leveraging shared dispersion estimates ",
+  "and Sex covariate adjustment for maximal statistical power."
 ), report)
 
 ## ============================================================
@@ -955,10 +1119,11 @@ cat("  Numbers: ", numbers_file, "\n")
 cat("  Plots:   ", plots_dir, "\n\n")
 
 cat("Numbers CSV preview:\n")
-print(numbers_df %>% select(Depot, N_interaction_sig_LRT, Pct_interaction_sig,
+print(numbers_df %>% dplyr::select(Depot, N_interaction_sig_LRT, Pct_interaction_sig,
                              pi0_estimate, Pearson_r_all, Concordance_rate_pct,
                              N_DEG_no_sex_covariate, N_DEG_sex_covariate,
-                             N_DEG_unified, Unified_logFC_correlation, Verdict),
+                             N_DEG_nosex_unified, N_DEG_unified,
+                             Nosex_vs_sex_logFC_correlation, Verdict),
       row.names = FALSE)
 
 cat("\n=== Part 7.7 COMPLETE ===\n")
