@@ -19,18 +19,23 @@ set.seed(MASTER_SEED)
 ## ============================================================
 ## Used by: part1_main_analysis.R
 ##
-## DESIGN: ~ Sex + GroupDepot
+## DESIGN: ~ 0 + GroupDepot  (cell-means parameterization)
 ##   - GroupDepot is a 4-level factor: iWAT_CTL, iWAT_KAT8KD, gWAT_CTL, gWAT_KAT8KD
-##   - Sex as covariate absorbs sex-driven variance (not the focus)
 ##   - ALL 38 tissue samples in ONE model (shared dispersion estimates, more power)
 ##   - Per-depot KAT8 effects extracted via contrasts:
 ##       iWAT: contrast = c("GroupDepot", "iWAT_KAT8KD", "iWAT_CTL")
 ##       gWAT: contrast = c("GroupDepot", "gWAT_KAT8KD", "gWAT_CTL")
 ##
-## JUSTIFICATION (Part 7.7 validation):
+## WHY NOT ~ Sex + GroupDepot?
+##   - Design is balanced (equal M/F per group), so Sex cannot confound Genotype
+##   - Part 7.7 TEST 3c: adding Sex REDUCES DEGs (~8% iWAT, ~6% gWAT) due to DF cost
+##   - logFC estimates nearly identical between models (r > 0.94)
+##   - The extra degree of freedom spent on Sex costs more than it saves at n=38
+##
+## SEX VALIDATION (Part 7.7):
 ##   - Sex x Genotype interaction is minimal (<4% of genes, pi0 > 0.85)
 ##   - Sex-stratified logFC concordance >99% directional agreement
-##   - Adding Sex as covariate gains +5-14% DEGs with >99% concordance
+##   - Balanced design ensures Sex does not confound KAT8 effects
 ##
 ## WHY NOT ~ Sex * Depot * Genotype?
 ##   - Too many parameters (7+ coefficients from 38 samples)

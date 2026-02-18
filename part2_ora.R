@@ -6,7 +6,7 @@
 ## This script performs Over-Representation Analysis (ORA)
 ## for GO:BP and KEGG pathways using DEG lists from Part 1
 ##
-## Part 1 uses a unified DESeq2 model: ~ Sex + GroupDepot
+## Part 1 uses a unified DESeq2 model: ~ 0 + GroupDepot
 ## (all 38 tissue samples, per-depot KAT8 effects via contrasts)
 ## Output DE tables have the same format as before.
 ## =========================================================

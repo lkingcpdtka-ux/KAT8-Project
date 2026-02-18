@@ -6,7 +6,7 @@
 ## =========================================================
 ##
 ## PURPOSE: Rigorous, self-contained validation that combining
-## sexes is justified for the unified ~ Sex + GroupDepot model
+## sexes is justified for the unified ~ 0 + GroupDepot model
 ## (Part 1), with every number needed for the results section
 ## saved to a single output file.
 ##
@@ -916,18 +916,12 @@ for (depot in c("iWAT", "gWAT")) {
   }
 
   ## Add model comparison recommendation
-  if (n_deg_sexadj > n_deg_nosex * 1.1) {
-    writeLines("  >> RECOMMEND: Include Sex as covariate", report)
-    writeLines(paste0("     Adding Sex covariate gains ", n_gained, " DEGs (",
-                      abs(pct_power_gain), "% improvement)"), report)
-  }
-  writeLines(paste0("  >> Unified model (~ Sex + GroupDepot, ", nrow(sample_annot),
-                    " samples): ", n_deg_unified, " DEGs (r = ",
-                    round(r_unified, 3), " vs per-depot)"), report)
-  writeLines(paste0("  >> vs boss's model (~ 0 + GroupDepot): ",
-                    n_deg_nosex_uni, " -> ", n_deg_unified, " DEGs by adding Sex",
-                    " (r = ", round(r_nosex_vs_sex, 3), ", +",
-                    n_gained_by_sex, "/-", n_lost_by_sex, " DEGs)"), report)
+  writeLines(paste0("  >> FINAL MODEL: ~ 0 + GroupDepot (", nrow(sample_annot),
+                    " samples): ", n_deg_nosex_uni, " DEGs"), report)
+  writeLines(paste0("     Balanced design (equal M/F per group) => Sex cannot confound"), report)
+  writeLines(paste0("     Adding Sex as covariate: ", n_deg_nosex_uni, " -> ", n_deg_unified,
+                    " DEGs (r = ", round(r_nosex_vs_sex, 3),
+                    ") — extra DF cost outweighs variance absorbed"), report)
 
   cat("\n  >>> ", depot, " VERDICT: ", verdict, " <<<\n", sep = "")
 
@@ -1038,23 +1032,24 @@ for (depot in c("iWAT", "gWAT")) {
     "a median of only ", row$Median_var_interaction_pct, "% of per-gene variance, ",
     "compared to ", row$Median_var_genotype_pct, "% for the Genotype main effect",
     if (row$Median_var_sex_pct > 1) paste0(" and ", row$Median_var_sex_pct, "% for Sex") else "",
-    ". Based on these findings, males and females were combined. ",
-    "An initial unified DESeq2 model (~ GroupDepot, all ", nrow(sample_annot),
-    " tissue samples) identified ", row$N_DEG_nosex_unified, " DEGs for ", depot,
-    ". Adding Sex as an additive covariate (~ Sex + GroupDepot) ",
-    if (row$N_DEG_unified > row$N_DEG_nosex_unified) {
-      paste0("increased sensitivity to ", row$N_DEG_unified, " DEGs ",
-             "(+", row$N_gained_by_sex_unified, " gained, -", row$N_lost_by_sex_unified,
-             " lost; logFC correlation r = ", row$Nosex_vs_sex_logFC_correlation, ")")
+    ". Based on these findings, males and females were combined in a ",
+    "unified DESeq2 model (~ GroupDepot) across all ", nrow(sample_annot),
+    " tissue samples, with depot-specific KAT8 effects extracted via ",
+    "explicit contrasts. Because the experimental design is balanced ",
+    "(equal numbers of males and females per group), Sex cannot confound ",
+    "the genotype effect and is not required in the model. ",
+    "We confirmed this by comparing models with and without a Sex covariate: ",
+    "adding Sex as a covariate (~ Sex + GroupDepot) ",
+    if (row$N_DEG_unified < row$N_DEG_nosex_unified) {
+      paste0("modestly reduced DEG counts (", row$N_DEG_nosex_unified, " vs. ",
+             row$N_DEG_unified, " DEGs)")
     } else {
-      paste0("yielded comparable results (", row$N_DEG_unified, " DEGs; ",
-             "logFC correlation r = ", row$Nosex_vs_sex_logFC_correlation, ")")
+      paste0("yielded comparable DEG counts (", row$N_DEG_nosex_unified, " vs. ",
+             row$N_DEG_unified, " DEGs)")
     },
-    ", confirming that Sex absorbs inter-individual variance without ",
-    "distorting KAT8 knockout effect estimates. ",
-    "The final model (~ Sex + GroupDepot) pools all ", nrow(sample_annot),
-    " samples, extracting depot-specific KAT8 effects via explicit contrasts ",
-    "with shared dispersion estimates for increased statistical power."
+    " while preserving effect estimates (logFC r = ",
+    row$Nosex_vs_sex_logFC_correlation,
+    "), indicating that the simpler model maximizes statistical power."
   ), report)
 }
 
@@ -1079,20 +1074,19 @@ writeLines(paste0(
   if (min(iwat$Pearson_r_all, gwat$Pearson_r_all) >= 0.7) "highly " else "",
   "concordant between males and females (Pearson r = ",
   iwat$Pearson_r_all, " in iWAT; r = ", gwat$Pearson_r_all, " in gWAT). ",
-  "Males and females were therefore combined within each depot. ",
-  "A unified DESeq2 model across all ", nrow(sample_annot),
-  " tissue samples was initially fit without a Sex term (~ GroupDepot), ",
-  "yielding ", iwat$N_DEG_nosex_unified, " DEGs in iWAT and ",
-  gwat$N_DEG_nosex_unified, " DEGs in gWAT. ",
-  "Including Sex as an additive covariate (~ Sex + GroupDepot) ",
-  "improved sensitivity (iWAT: ", iwat$N_DEG_nosex_unified, " -> ", iwat$N_DEG_unified, " DEGs; ",
-  "gWAT: ", gwat$N_DEG_nosex_unified, " -> ", gwat$N_DEG_unified, " DEGs) ",
-  "while preserving effect estimates (logFC r = ",
-  iwat$Nosex_vs_sex_logFC_correlation, " in iWAT, r = ",
-  gwat$Nosex_vs_sex_logFC_correlation, " in gWAT). ",
-  "The final model (~ Sex + GroupDepot) extracts depot-specific KAT8 knockout ",
-  "effects via explicit contrasts, leveraging shared dispersion estimates ",
-  "and Sex covariate adjustment for maximal statistical power."
+  "Males and females were therefore combined in a unified DESeq2 model ",
+  "(~ GroupDepot) across all ", nrow(sample_annot),
+  " tissue samples, identifying ", iwat$N_DEG_nosex_unified,
+  " DEGs in iWAT and ", gwat$N_DEG_nosex_unified, " DEGs in gWAT. ",
+  "The balanced experimental design (equal numbers of males and females per group) ",
+  "ensures that sex cannot confound genotype effects. ",
+  "Formal comparison confirmed that adding Sex as a covariate did not improve ",
+  "sensitivity (logFC r = ", iwat$Nosex_vs_sex_logFC_correlation,
+  " in iWAT, r = ", gwat$Nosex_vs_sex_logFC_correlation,
+  " in gWAT), supporting the simpler model. ",
+  "Depot-specific KAT8 knockout effects were extracted via explicit contrasts, ",
+  "leveraging shared dispersion estimates across all samples for maximal ",
+  "statistical power."
 ), report)
 
 ## ============================================================

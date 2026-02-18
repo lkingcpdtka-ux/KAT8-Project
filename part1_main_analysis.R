@@ -309,14 +309,14 @@ tryCatch({
   
   ## 4.6) DESeq2 object + typical prefilter ------------------
   ## DESIGN NOTE (2026-02-18): UNIFIED MODEL with all 38 tissue samples
-  ## - Design: ~ Sex + GroupDepot  (cell-means parameterization)
+  ## - Design: ~ 0 + GroupDepot  (cell-means parameterization)
   ## - GroupDepot: 4-level factor (iWAT_CTL, iWAT_KAT8KD, gWAT_CTL, gWAT_KAT8KD)
-  ## - Sex as covariate absorbs sex variance without being the focus
+  ## - No Sex covariate: balanced design (equal M/F), Sex cannot confound Genotype
   ## - All samples share dispersion estimates = more statistical power
   ## - Per-depot KAT8 effects extracted via DESeq2 contrasts:
   ##     iWAT: contrast = c("GroupDepot", "iWAT_KAT8KD", "iWAT_CTL")
   ##     gWAT: contrast = c("GroupDepot", "gWAT_KAT8KD", "gWAT_CTL")
-  ## - Justified by Part 7.7: <4% interaction genes, pi0>0.85, 99%+ concordance
+  ## - Justified by Part 7.7: <4% interaction, 99%+ concordance, balanced design
   min_count <- prefilter_min_count
   min_samples <- prefilter_min_samples
 
@@ -344,11 +344,11 @@ tryCatch({
   
   count_matrix_filt <- count_matrix_tissue[keep, , drop = FALSE]
   
-  ## Unified model: ~ Sex + GroupDepot (all 38 samples, one model for DE + VST)
+  ## Unified model: ~ 0 + GroupDepot (all 38 samples, cell-means parameterization)
   dds_tissue <- DESeqDataSetFromMatrix(
     countData = round(count_matrix_filt),
     colData   = sample_annot,
-    design    = ~ Sex + GroupDepot
+    design    = ~ 0 + GroupDepot
   )
   
   ## Save centralized parameters
@@ -405,9 +405,9 @@ tryCatch({
     paste0("  IDs: ", paste(params$outlier_samples, collapse = ", ")),
     "",
     "--- DESeq2 Model Design ---",
-    "  Design: ~ Sex + GroupDepot (unified model, all tissue samples)",
+    "  Design: ~ 0 + GroupDepot (unified cell-means model, all tissue samples)",
     "  GroupDepot levels: iWAT_CTL, iWAT_KAT8KD, gWAT_CTL, gWAT_KAT8KD",
-    "  Sex: covariate (absorbs sex variance, not the focus)",
+    "  Sex: not in model (balanced design, validated by Part 7.7)",
     "  iWAT contrast: c('GroupDepot', 'iWAT_KAT8KD', 'iWAT_CTL')",
     "  gWAT contrast: c('GroupDepot', 'gWAT_KAT8KD', 'gWAT_CTL')",
     "",
@@ -450,9 +450,9 @@ tryCatch({
   ## 4.7) Run DESeq2 ----------------------------------------
   cat("\n=== RUNNING DESeq2 ===\n")
 
-  ## Unified model: ~ Sex + GroupDepot (all 38 samples)
-  ## Sex absorbs sex-driven variance; GroupDepot contrasts extract per-depot KAT8 effects
-  cat("[INFO] Unified model (~ Sex + GroupDepot, all ", ncol(count_matrix_filt), " samples)...\n", sep = "")
+  ## Unified model: ~ 0 + GroupDepot (all 38 samples, cell-means)
+  ## Balanced design (equal M/F per group); GroupDepot contrasts extract per-depot KAT8 effects
+  cat("[INFO] Unified model (~ 0 + GroupDepot, all ", ncol(count_matrix_filt), " samples)...\n", sep = "")
   dds_tissue <- DESeq(dds_tissue)
   cat("[OK] Unified DESeq2 complete (", nrow(count_matrix_filt), " genes, ",
       ncol(count_matrix_filt), " samples).\n", sep = "")
@@ -501,7 +501,7 @@ tryCatch({
   dds_all_genes <- DESeqDataSetFromMatrix(
     countData = round(count_matrix_tissue),
     colData   = sample_annot,
-    design    = ~ Sex + GroupDepot
+    design    = ~ 0 + GroupDepot
   )
   dds_all_genes <- estimateSizeFactors(dds_all_genes)
   dds_all_genes <- estimateDispersions(dds_all_genes, fitType = "local")

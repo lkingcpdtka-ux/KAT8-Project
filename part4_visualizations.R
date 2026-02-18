@@ -6,7 +6,7 @@
 ## This script generates ALL plots WITHOUT re-running analysis.
 ## NO PLOTS should be made in parts 1-3!
 ##
-## Part 1 uses a unified DESeq2 model: ~ Sex + GroupDepot
+## Part 1 uses a unified DESeq2 model: ~ 0 + GroupDepot
 ## (all 38 tissue samples, per-depot KAT8 effects via contrasts)
 ##
 ##   SECTION A: QC PLOTS
