@@ -165,12 +165,12 @@ col_male   <- "#2166AC"   ## dark blue
 col_female <- "#B2182B"   ## dark red
 
 ## Category colors for scatter
-## Concordant = DEG in at least one sex, SAME direction in both
-## Discordant = DEG in at least one sex, OPPOSITE direction
 category_colors <- c(
-  "Concordant" = "#4CAF50",
-  "Discordant" = "#F44336",
-  "NS"         = "grey85"
+  "Concordant"  = "#4CAF50",
+  "Male only"   = "#2166AC",
+  "Female only" = "#B2182B",
+  "Discordant"  = "#FF9800",
+  "NS"          = "grey85"
 )
 
 ## ============================================================
@@ -303,13 +303,16 @@ for (depot in c("iWAT", "gWAT")) {
   ) %>%
     filter(is.finite(m_lfc), is.finite(f_lfc))
 
-  ## Classify: DEG in at least one sex → Concordant/Discordant by direction
+  ## Classify: both sig same dir → Concordant; one sig same dir → Male/Female only;
+  ## opposite dir → Discordant; neither sig → NS
   cor_df <- cor_df %>%
     mutate(
       m_sig = !is.na(m_padj) & m_padj < thresh$fdr_cut & abs(m_lfc) > thresh$logFC_cut,
       f_sig = !is.na(f_padj) & f_padj < thresh$fdr_cut & abs(f_lfc) > thresh$logFC_cut,
       category = case_when(
-        (m_sig | f_sig) & sign(m_lfc) == sign(f_lfc) ~ "Concordant",
+        m_sig &  f_sig & sign(m_lfc) == sign(f_lfc) ~ "Concordant",
+        m_sig & !f_sig & sign(m_lfc) == sign(f_lfc) ~ "Male only",
+        !m_sig & f_sig & sign(m_lfc) == sign(f_lfc) ~ "Female only",
         (m_sig | f_sig) & sign(m_lfc) != sign(f_lfc) ~ "Discordant",
         TRUE ~ "NS"
       )
@@ -339,7 +342,7 @@ for (depot in c("iWAT", "gWAT")) {
   top_n_label <- depot_concordance_params$top_n_label
 
   label_df <- cor_df %>%
-    filter(category %in% c("Concordant", "Discordant")) %>%
+    filter(category != "NS") %>%
     filter(!grepl("^Gm\\d|^[0-9]|Rik$", gene)) %>%
     arrange(desc(abs(m_lfc) + abs(f_lfc))) %>%
     slice_head(n = top_n_label)
@@ -357,7 +360,8 @@ for (depot in c("iWAT", "gWAT")) {
   axis_max <- max(pct_max, label_max) * 1.10
 
   ## Concordance among all DEGs (in either sex)
-  n_conc <- sum(cor_df$category == "Concordant")
+  ## Male only / Female only count as concordant (same direction)
+  n_conc <- sum(cor_df$category %in% c("Concordant", "Male only", "Female only"))
   n_disc <- sum(cor_df$category == "Discordant")
   n_all_deg <- n_conc + n_disc
   broad_concordance_pct <- if (n_all_deg > 0) {
@@ -378,8 +382,10 @@ for (depot in c("iWAT", "gWAT")) {
   p_scatter <- ggplot(cor_df, aes(x = m_lfc, y = f_lfc, color = category)) +
     geom_point(data = cor_df %>% filter(category == "NS"),
                size = 0.3, alpha = 0.15) +
-    geom_point(data = cor_df %>% filter(category != "NS"),
-               size = 1.5, alpha = 0.7) +
+    geom_point(data = cor_df %>% filter(category %in% c("Male only", "Female only")),
+               size = 1.2, alpha = 0.6) +
+    geom_point(data = cor_df %>% filter(category %in% c("Concordant", "Discordant")),
+               size = 1.5, alpha = 0.8) +
     geom_text_repel(
       data = label_df,
       aes(label = gene),
