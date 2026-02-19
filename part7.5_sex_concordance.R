@@ -165,12 +165,14 @@ col_male   <- "#2166AC"   ## dark blue
 col_female <- "#B2182B"   ## dark red
 
 ## Category colors for scatter
+## "Concordant (trend)" = DEG in one sex, same direction in the other (not sig)
+## "Discordant (trend)" = DEG in one sex, opposite direction in the other (not sig)
 category_colors <- c(
-  "Concordant"  = "#4CAF50",
-  "Discordant"  = "#F44336",
-  "Male only"   = col_male,
-  "Female only" = col_female,
-  "NS"          = "grey85"
+  "Concordant"        = "#4CAF50",
+  "Concordant (trend)"= "#A5D6A7",
+  "Discordant"        = "#F44336",
+  "Discordant (trend)"= "#EF9A9A",
+  "NS"                = "grey85"
 )
 
 ## ============================================================
@@ -303,7 +305,8 @@ for (depot in c("iWAT", "gWAT")) {
   ) %>%
     filter(is.finite(m_lfc), is.finite(f_lfc))
 
-  ## Classify
+  ## Classify -- includes "trend" categories for sex-specific DEGs
+  ## whose other sex shows the same direction (even if not significant)
   cor_df <- cor_df %>%
     mutate(
       m_sig = !is.na(m_padj) & m_padj < thresh$fdr_cut & abs(m_lfc) > thresh$logFC_cut,
@@ -311,8 +314,10 @@ for (depot in c("iWAT", "gWAT")) {
       category = case_when(
         m_sig & f_sig & sign(m_lfc) == sign(f_lfc) ~ "Concordant",
         m_sig & f_sig & sign(m_lfc) != sign(f_lfc) ~ "Discordant",
-        m_sig & !f_sig ~ "Male only",
-        !m_sig & f_sig ~ "Female only",
+        m_sig & !f_sig & sign(m_lfc) == sign(f_lfc) ~ "Concordant (trend)",
+        !m_sig & f_sig & sign(m_lfc) == sign(f_lfc) ~ "Concordant (trend)",
+        m_sig & !f_sig & sign(m_lfc) != sign(f_lfc) ~ "Discordant (trend)",
+        !m_sig & f_sig & sign(m_lfc) != sign(f_lfc) ~ "Discordant (trend)",
         TRUE ~ "NS"
       )
     )
@@ -341,7 +346,7 @@ for (depot in c("iWAT", "gWAT")) {
   top_n_label <- depot_concordance_params$top_n_label
 
   label_df <- cor_df %>%
-    filter(category %in% c("Concordant", "Discordant")) %>%
+    filter(category %in% c("Concordant", "Discordant", "Discordant (trend)")) %>%
     arrange(desc(abs(m_lfc) + abs(f_lfc))) %>%
     slice_head(n = top_n_label)
 
@@ -357,9 +362,41 @@ for (depot in c("iWAT", "gWAT")) {
   }
   axis_max <- max(pct_max, label_max) * 1.10
 
+  ## Broad concordance: among ALL DEGs (in either sex), what fraction are
+  ## concordant or concordant-trend (same direction)?
+  n_conc_strict <- sum(cor_df$category == "Concordant")
+  n_conc_trend  <- sum(cor_df$category == "Concordant (trend)")
+  n_disc_strict <- sum(cor_df$category == "Discordant")
+  n_disc_trend  <- sum(cor_df$category == "Discordant (trend)")
+  n_all_deg <- n_conc_strict + n_conc_trend + n_disc_strict + n_disc_trend
+  broad_concordance_pct <- if (n_all_deg > 0) {
+    round(100 * (n_conc_strict + n_conc_trend) / n_all_deg, 1)
+  } else {
+    NA_real_
+  }
+
+  ## Build legend labels with gene counts per category
+  cat_counts <- cor_df %>% filter(category != "NS") %>%
+    count(category) %>% arrange(desc(n))
+  legend_labels <- setNames(
+    paste0(names(category_colors), " (", 0, ")"),
+    names(category_colors)
+  )
+  for (i in seq_len(nrow(cat_counts))) {
+    legend_labels[cat_counts$category[i]] <-
+      paste0(cat_counts$category[i], " (n=", cat_counts$n[i], ")")
+  }
+  legend_labels["NS"] <- "NS"
+
   p_scatter <- ggplot(cor_df, aes(x = m_lfc, y = f_lfc, color = category)) +
-    geom_point(data = cor_df %>% filter(category == "NS"), size = 0.5, alpha = 0.3) +
-    geom_point(data = cor_df %>% filter(category != "NS"), size = 1.5, alpha = 0.7) +
+    geom_point(data = cor_df %>% filter(category == "NS"),
+               size = 0.5, alpha = 0.3) +
+    geom_point(data = cor_df %>% filter(category == "Concordant (trend)"),
+               size = 1.2, alpha = 0.5) +
+    geom_point(data = cor_df %>% filter(category == "Discordant (trend)"),
+               size = 1.2, alpha = 0.5) +
+    geom_point(data = cor_df %>% filter(category %in% c("Concordant", "Discordant")),
+               size = 1.5, alpha = 0.7) +
     geom_text_repel(
       data = label_df,
       aes(label = gene),
@@ -369,13 +406,14 @@ for (depot in c("iWAT", "gWAT")) {
     geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
     geom_abline(slope = 1, intercept = 0, linetype = "dotted", color = "grey40") +
-    scale_color_manual(values = category_colors, name = "Category") +
+    scale_color_manual(values = category_colors, labels = legend_labels,
+                       name = "Category") +
     labs(
       title = paste0(depot, ": Male vs Female KAT8-KD Response"),
       subtitle = paste0(
         "Pearson r = ", round(cor_pearson, 3),
-        " (all); r = ", round(cor_sig, 3),
-        " (DEGs); concordance = ", concordance_pct, "%"
+        " | shared DEG concordance = ", concordance_pct, "%",
+        " | directional concordance (all DEGs) = ", broad_concordance_pct, "%"
       ),
       x = expression(log[2]~FC~"(Male KD vs CTL)"),
       y = expression(log[2]~FC~"(Female KD vs CTL)")
@@ -384,7 +422,7 @@ for (depot in c("iWAT", "gWAT")) {
     theme(
       panel.grid = element_blank(),
       plot.title = element_text(face = "bold", hjust = 0.5),
-      plot.subtitle = element_text(hjust = 0.5, color = "grey40"),
+      plot.subtitle = element_text(hjust = 0.5, color = "grey40", size = 9),
       legend.position = "right"
     ) +
     coord_cartesian(xlim = c(-axis_max, axis_max), ylim = c(-axis_max, axis_max))
@@ -537,6 +575,7 @@ for (depot in c("iWAT", "gWAT")) {
     Male_only = length(m_only),
     Female_only = length(f_only),
     Concordance_pct = concordance_pct,
+    Broad_concordance_pct = broad_concordance_pct,
     Pct_Male_shared = round(100 * length(shared_all) / max(1, length(m_all)), 1),
     Pct_Female_shared = round(100 * length(shared_all) / max(1, length(f_all)), 1),
     Pearson_r_all = round(cor_pearson, 4),
