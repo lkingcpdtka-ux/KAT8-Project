@@ -347,27 +347,22 @@ for (depot in c("iWAT", "gWAT")) {
     arrange(desc(abs(m_lfc) + abs(f_lfc))) %>%
     slice_head(n = top_n_label)
 
-  ## Axis limits: based on DEG range (not all-gene 99th pct) so plot isn't too zoomed out
-  deg_df <- cor_df %>% filter(category != "NS")
-  deg_max <- if (nrow(deg_df) > 0) {
-    max(abs(deg_df$m_lfc), abs(deg_df$f_lfc), na.rm = TRUE)
+  ## Axis limits: iWAT data-driven, gWAT capped at +/-5
+  if (depot == "gWAT") {
+    axis_max <- 5
   } else {
-    max(abs(cor_df$m_lfc), abs(cor_df$f_lfc), na.rm = TRUE)
-  }
-  label_max <- if (nrow(label_df) > 0) {
-    max(abs(label_df$m_lfc), abs(label_df$f_lfc), na.rm = TRUE)
-  } else {
-    deg_max
-  }
-  axis_max <- max(deg_max, label_max) * 1.15
-
-  ## Build legend labels with gene counts per category
-  cat_counts <- cor_df %>% filter(category != "NS") %>%
-    count(category) %>% arrange(desc(n))
-  legend_labels <- setNames(names(category_colors), names(category_colors))
-  for (i in seq_len(nrow(cat_counts))) {
-    legend_labels[cat_counts$category[i]] <-
-      paste0(cat_counts$category[i], " (n=", cat_counts$n[i], ")")
+    deg_df <- cor_df %>% filter(category != "NS")
+    deg_max <- if (nrow(deg_df) > 0) {
+      max(abs(deg_df$m_lfc), abs(deg_df$f_lfc), na.rm = TRUE)
+    } else {
+      max(abs(cor_df$m_lfc), abs(cor_df$f_lfc), na.rm = TRUE)
+    }
+    label_max <- if (nrow(label_df) > 0) {
+      max(abs(label_df$m_lfc), abs(label_df$f_lfc), na.rm = TRUE)
+    } else {
+      deg_max
+    }
+    axis_max <- max(deg_max, label_max) * 1.15
   }
 
   p_scatter <- ggplot(cor_df, aes(x = m_lfc, y = f_lfc, color = category)) +
@@ -386,8 +381,7 @@ for (depot in c("iWAT", "gWAT")) {
     geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
     geom_abline(slope = 1, intercept = 0, linetype = "dotted", color = "grey40") +
-    scale_color_manual(values = category_colors, labels = legend_labels,
-                       name = "Category") +
+    scale_color_manual(values = category_colors, name = "Category") +
     labs(
       title = paste0(depot, ": Male vs Female KAT8-KD Response"),
       subtitle = paste0(
