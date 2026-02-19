@@ -347,28 +347,19 @@ for (depot in c("iWAT", "gWAT")) {
     arrange(desc(abs(m_lfc) + abs(f_lfc))) %>%
     slice_head(n = top_n_label)
 
-  ## Axis limits: 99th pct but guarantee labeled genes fit
-  pct_max <- max(
-    quantile(abs(cor_df$m_lfc), 0.99, na.rm = TRUE),
-    quantile(abs(cor_df$f_lfc), 0.99, na.rm = TRUE)
-  )
+  ## Axis limits: based on DEG range (not all-gene 99th pct) so plot isn't too zoomed out
+  deg_df <- cor_df %>% filter(category != "NS")
+  deg_max <- if (nrow(deg_df) > 0) {
+    max(abs(deg_df$m_lfc), abs(deg_df$f_lfc), na.rm = TRUE)
+  } else {
+    max(abs(cor_df$m_lfc), abs(cor_df$f_lfc), na.rm = TRUE)
+  }
   label_max <- if (nrow(label_df) > 0) {
     max(abs(label_df$m_lfc), abs(label_df$f_lfc), na.rm = TRUE)
   } else {
-    pct_max
+    deg_max
   }
-  axis_max <- max(pct_max, label_max) * 1.10
-
-  ## Concordance among all DEGs (in either sex)
-  ## Male only / Female only count as concordant (same direction)
-  n_conc <- sum(cor_df$category %in% c("Concordant", "Male only", "Female only"))
-  n_disc <- sum(cor_df$category == "Discordant")
-  n_all_deg <- n_conc + n_disc
-  broad_concordance_pct <- if (n_all_deg > 0) {
-    round(100 * n_conc / n_all_deg, 1)
-  } else {
-    NA_real_
-  }
+  axis_max <- max(deg_max, label_max) * 1.15
 
   ## Build legend labels with gene counts per category
   cat_counts <- cor_df %>% filter(category != "NS") %>%
@@ -401,8 +392,8 @@ for (depot in c("iWAT", "gWAT")) {
       title = paste0(depot, ": Male vs Female KAT8-KD Response"),
       subtitle = paste0(
         "Pearson r = ", round(cor_pearson, 3),
-        " | concordance = ", broad_concordance_pct, "%",
-        " (", n_conc, " concordant / ", n_all_deg, " DEGs)"
+        " (all); r = ", round(cor_sig, 3),
+        " (DEGs); concordance = ", concordance_pct, "%"
       ),
       x = expression(log[2]~FC~"(Male KD vs CTL)"),
       y = expression(log[2]~FC~"(Female KD vs CTL)")
