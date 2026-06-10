@@ -1,0 +1,476 @@
+================================================================================
+KAT8 PROJECT: PRE-CHIP/snRNA-SEQ ANALYSIS PLAN
+Three things to nail down from existing bulk RNA-seq + how to mine the
+Mof+/- heterozygote paper (Pessoa Rodrigues et al. 2021, Nat Commun)
+Generated: 2026-06-10
+================================================================================
+
+This document answers 4 questions:
+  A. Can I confirm KD efficiency is equal in M vs F from bulk RNA-seq? (YES)
+  B. What is the rigorous, PI-defensible way to show the FEMALE reaction is
+     LARGER than the male reaction?
+  C. What can I mine from the Mof+/- het paper (GSE156463), and how does
+     their KAT8 loss compare to ours?
+  D. A clean hypothesis table to hand the PI.
+
+All code blocks assume you have already sourced the data-loading top of
+part7_sex_analysis_consolidated.R, i.e. these objects exist:
+  count_matrix   gene-symbol rows x sample cols (filtered raw counts)
+  sample_annot   data.frame: Sample, Sex (F/M), Genotype (CTL/KAT8KD), depot
+  de_m, de_f     per-sex DESeq2 result data.frames (log2FoldChange, padj, gene)
+  depot loop var "depot"
+
+
+================================================================================
+PART A -- CONFIRM KD EFFICIENCY IS EQUAL IN MALES vs FEMALES (from bulk data)
+================================================================================
+
+THE LOGIC
+  KAT8-KD lowers Kat8 mRNA. If females knock down Kat8 LESS than males, the
+  entire "female protection" story could be a trivial dose artifact (less
+  knockdown = less phenotype). You can test this directly in the data you
+  already have, BEFORE any wet-lab work. Three nested checks:
+
+CHECK A1 -- Per-sex Kat8 log2 fold change (eyeball + effect size)
+  Pull Kat8's own KD logFC from the per-sex DESeq2 you already ran (de_m,
+  de_f). If KD efficiency is equal, m_lfc and f_lfc for Kat8 should be
+  similar (both strongly negative) with overlapping standard errors.
+
+  HYPOTHESIS (A1):
+    H0: Kat8 KD log2FC is the same in males and females (equal knockdown).
+    H1: Kat8 KD log2FC differs by sex (unequal knockdown -> confound).
+  PREDICTION IF MODEL IS CLEAN: both sexes ~ equal, large negative logFC.
+
+CHECK A2 -- Formal: is Kat8 ITSELF a Sex:Genotype interaction gene?
+  This is the elegant version. You already fit
+  ~ Sex + Genotype + Sex:Genotype. Just read off the interaction statistic
+  for the single gene Kat8. If Kat8 is NOT a significant interaction gene,
+  knockdown is statistically equal across sex. If it IS, efficiency is
+  sex-biased and you must control for it (covariate, or report the dose).
+
+CHECK A3 -- Per-sample Kat8 "dose" plot
+  Normalized Kat8 counts per sample, faceted by Sex x Genotype. This shows
+  whether any single replicate (e.g. one weak-KD female) is driving things,
+  and whether residual Kat8 differs by sex even if the fold change matches.
+
+CAVEAT YOU MUST STATE TO THE PI
+  - mRNA knockdown is a PROXY for protein KAT8 and for the H4K16ac mark.
+    Equal mRNA KD does not guarantee equal H4K16ac loss (translation/
+    half-life can differ). The definitive control is still WB / H4K16ac
+    IF or CUT&RUN by sex (your TODO-0A). The bulk check can only RULE OUT
+    a gross mRNA-level confound -- which is still worth doing first.
+  - If the model is a floxed-exon Cre deletion (not shRNA), featureCounts
+    may still count untargeted exons; confirm by looking at the deleted
+    region specifically, or trust the functional H4K16ac readout instead.
+
+-------- DROP-IN CODE: Part A (run inside or after the depot loop) ----------
+
+## A1 + A3: Kat8 readout from the per-sex fits and normalized counts
+kd_gene <- "Kat8"   # adjust if your symbol differs (e.g. "Mof")
+
+if (kd_gene %in% rownames(count_matrix)) {
+  # --- A1: per-sex KD logFC for Kat8 ---
+  a1 <- data.frame(
+    depot   = depot,
+    gene    = kd_gene,
+    male_lfc   = de_m[kd_gene, "log2FoldChange"],
+    male_padj  = de_m[kd_gene, "padj"],
+    female_lfc = de_f[kd_gene, "log2FoldChange"],
+    female_padj= de_f[kd_gene, "padj"],
+    lfc_diff   = de_m[kd_gene, "log2FoldChange"] - de_f[kd_gene, "log2FoldChange"]
+  )
+  print(a1)
+  write.csv(a1, file.path(tables_dir,
+            paste0("KDefficiency_Kat8_", depot, "_", run_tag, ".csv")),
+            row.names = FALSE)
+
+  # --- A3: per-sample normalized Kat8 dose ---
+  dds_dose <- DESeqDataSetFromMatrix(round(depot_counts), depot_annot, ~ 1)
+  dds_dose <- estimateSizeFactors(dds_dose)
+  kat8_norm <- counts(dds_dose, normalized = TRUE)[kd_gene, ]
+  dose_df <- data.frame(Sample = names(kat8_norm),
+                        Kat8_norm = as.numeric(kat8_norm),
+                        Sex = depot_annot[names(kat8_norm), "Sex"],
+                        Genotype = depot_annot[names(kat8_norm), "Genotype"])
+  p_dose <- ggplot(dose_df, aes(Genotype, Kat8_norm, fill = Genotype)) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.5) +
+    geom_jitter(width = 0.15, size = 2) +
+    facet_wrap(~ Sex) +
+    labs(title = paste0(depot, ": Kat8 knockdown dose by sex"),
+         y = "Normalized Kat8 counts") +
+    theme_bw()
+  ggsave(file.path(sex_dir, paste0("KDdose_Kat8_", depot, "_", run_tag, ".png")),
+         p_dose, width = 7, height = 4, dpi = 150)
+
+  # --- A2: is Kat8 a Sex:Genotype interaction gene? (uses LRT fit dds_lrt) ---
+  if (kd_gene %in% res_lrt$gene) {
+    a2 <- res_lrt[res_lrt$gene == kd_gene, c("gene", "stat", "pvalue", "padj")]
+    cat("[KD-efficiency] Kat8 interaction LRT padj =",
+        signif(a2$padj, 3),
+        "-> ", ifelse(is.na(a2$padj) || a2$padj > 0.1,
+                      "NOT sex-biased (equal KD, good)",
+                      "SEX-BIASED KD (confound, must control)"), "\n")
+    write.csv(a2, file.path(tables_dir,
+              paste0("KDefficiency_interactionTest_", depot, "_", run_tag, ".csv")),
+              row.names = FALSE)
+  }
+} else {
+  cat("[KD-efficiency] ", kd_gene, " not in count matrix for ", depot, "\n", sep="")
+}
+
+INTERPRETATION KEY
+  PASS  -> Kat8 logFC similar in M & F, Kat8 NOT an interaction gene,
+           dose plot shows equal residual Kat8. Female protection is NOT a
+           knockdown artifact. Proceed to Part B.
+  FAIL  -> Kat8 logFC much smaller in females OR Kat8 is an interaction
+           gene. The "protection" may be (partly) weaker female knockdown.
+           You then EITHER (i) add residual Kat8 as a covariate, (ii) report
+           it honestly as a dose-response, or (iii) match samples on KD level.
+
+
+================================================================================
+PART B -- THE RIGOROUS WAY TO SHOW "FEMALE REACTION > MALE REACTION"
+================================================================================
+
+FRAMING (important for the PI)
+  "The female response is larger" is a statement about INTERACTION-MAGNITUDE
+  ASYMMETRY. It is NOT about number of DEGs (that is power-dependent; in your
+  gWAT Venn males actually have MORE DEGs: 730 unique vs 450). The defensible
+  claim is: "Among genes that respond to KD -- and specifically within the
+  PPARgamma/lipid program -- females show LARGER-magnitude fold changes than
+  males." Four complementary tests, weakest-to-strongest evidence stacked:
+
+----------------------------------------------------------------------
+TEST B1 -- Paired |logFC| on shared DEGs  (THE CORE TEST)
+----------------------------------------------------------------------
+  For every gene significant in EITHER sex, compare |female logFC| vs
+  |male logFC| as a PAIRED difference, and test the median against 0 with a
+  Wilcoxon signed-rank test (robust, non-parametric, no distributional
+  assumptions).
+
+  HYPOTHESIS (B1):
+    H0: median(|F logFC| - |M logFC|) = 0  (symmetric response)
+    H1: median(|F logFC| - |M logFC|) > 0  (female response larger)
+  WHAT TO TELL PI: "On shared knockdown-responsive genes, females show a
+    median per-gene fold-change magnitude X% larger than males (Wilcoxon
+    signed-rank p = ...)." This is one number + one p-value. Clean.
+  HONEST CAVEAT: estrous-driven female variance INFLATES noise and tends to
+    DEFLATE female |logFC| estimates, so if anything this test is
+    conservative against your hypothesis -- a positive result is strong.
+
+----------------------------------------------------------------------
+TEST B2 -- Orthogonal (Deming) regression slope, female ~ male
+----------------------------------------------------------------------
+  Fit a total-least-squares line through the M-vs-F logFC scatter (shared
+  DEGs). Slope > 1 means the female axis is "stretched" relative to male =
+  female-amplified. Report slope + bootstrap 95% CI. Ordinary regression is
+  WRONG here (both axes have error); use Deming/orthogonal.
+
+  HYPOTHESIS (B2):
+    H0: slope = 1 (equal gain).   H1: slope > 1 (female amplified).
+  WHAT TO TELL PI: "The female-vs-male response slope is 1.2 (95% CI
+    1.1-1.3), i.e. females mount a ~20% larger transcriptional response per
+    unit male response." Gives an effect size, not just significance.
+
+----------------------------------------------------------------------
+TEST B3 -- Total response magnitude / multivariate displacement
+----------------------------------------------------------------------
+  Per sex, compute the Euclidean length of the logFC vector across the
+  union of DEGs (or across the PPAR module in B4). Bootstrap genes for a CI.
+  This captures "how far from control did the transcriptome move," summed.
+
+  HYPOTHESIS (B3):
+    H0: ||F response|| = ||M response||.   H1: ||F response|| > ||M response||.
+  WHAT TO TELL PI: "The total transcriptional displacement induced by KD is
+    larger in females (bootstrap CI excludes equality)." Good single
+    summary figure (two bars + CIs).
+
+----------------------------------------------------------------------
+TEST B4 -- Targeted PPARgamma-Glut4 MODULE score  (ties to the het paper)
+----------------------------------------------------------------------
+  This is the most mechanistically meaningful and the one the PI will like
+  most, because it connects directly to the Pessoa/Akhtar MOF->Pparg->Glut4
+  axis. Build a fixed gene set (below), compute a per-SAMPLE module score
+  (mean z-scored expression), and fit Sex x Genotype on the score. The
+  interaction term IS the sex-difference-in-response, on the exact pathway
+  the field already accepts as the KAT8 effector.
+
+  MODULE (from Pessoa Rodrigues 2021, the established MOF->PPARg->GLUT4 axis):
+    Core:        Pparg, Ppargc1a (Pgc1a), Mef2c, Slc2a4 (Glut4)
+    PPARg targets/storage: Cd36, Fabp4, Lpl, Plin1, Plin4, Cidec, Adipoq,
+                  Scd1, Lipe (Hsl), Pnpla2 (Atgl)
+    Counter-marker: Rbp4 (UP when Glut4 down -- insulin resistance marker)
+
+  HYPOTHESIS (B4):
+    H0: KD reduces the PPARg-Glut4 module equally in both sexes.
+    H1: KD reduces (or the females defend) the module to a DIFFERENT degree
+        by sex (significant Sex:Genotype on the module score).
+  WHAT TO TELL PI: "On the canonical MOF->PPARgamma->GLUT4 module that the
+    field has established as the KAT8 effector, the sex x genotype
+    interaction is significant (p = ...), with females [defending /
+    over-responding]. This localizes the sex effect to the known mechanism,
+    not a novel pathway." This is your headline sentence.
+
+----------------------------------------------------------------------
+DIRECTIONALITY -- the nuance you MUST resolve (don't let it bite you)
+----------------------------------------------------------------------
+  In iWAT your dominant interaction class is "Male-buffered / Female-
+  amplified" but in the DOWN direction (both sexes down, females MORE down).
+  "Female reacts more" is therefore: females downregulate the lipid/PPAR
+  program more strongly. Whether that is PROTECTIVE or HARMFUL cannot be
+  read from magnitude alone -- it must be anchored to phenotype. Two models
+  to put to the PI explicitly:
+
+    MODEL 1 (active compensation): females mount a LARGER, coordinated
+      remodeling (e.g. more browning / oxidative compensation) that
+      protects them. Larger response = adaptive.
+    MODEL 2 (over-shoot is incidental): the larger female change is a
+      passive consequence of higher baseline expression of these genes in
+      females, not protective per se.
+  DISCRIMINATING TEST: split the module by direction (up-genes vs down-
+  genes) and ask whether the female-amplified set is enriched for
+  thermogenic/oxidative (browning) genes (Ucp1, Ppargc1a, Cidea, Elovl3,
+  Cox7a1, Cpt1b). If yes -> Model 1 (compensation). Pair with phenotype.
+
+-------- DROP-IN CODE: Part B (run inside the depot loop, after de_m/de_f) --
+
+## Shared DEG frame (either-sex significant) for B1-B3
+shared <- merge(
+  de_m[, c("gene","log2FoldChange","padj")],
+  de_f[, c("gene","log2FoldChange","padj")],
+  by = "gene", suffixes = c("_m","_f"))
+shared <- shared[is.finite(shared$log2FoldChange_m) &
+                 is.finite(shared$log2FoldChange_f), ]
+shared$deg_either <- (!is.na(shared$padj_m) & shared$padj_m < fdr_cut) |
+                     (!is.na(shared$padj_f) & shared$padj_f < fdr_cut)
+deg <- shared[shared$deg_either, ]
+
+## --- B1: paired Wilcoxon on |logFC| ---
+mag_diff <- abs(deg$log2FoldChange_f) - abs(deg$log2FoldChange_m)
+b1_p   <- wilcox.test(mag_diff, mu = 0, alternative = "greater")$p.value
+b1_med <- median(mag_diff)
+cat(sprintf("[B1] %s: median(|F|-|M|)=%.3f log2 units, Wilcoxon greater p=%.2e (n=%d DEGs)\n",
+            depot, b1_med, b1_p, nrow(deg)))
+
+## --- B2: Deming/orthogonal slope (PC of the 2D scatter), bootstrap CI ---
+deming_slope <- function(x, y) {
+  v <- prcomp(cbind(x, y))$rotation[, 1]; v[2] / v[1]
+}
+b2_slope <- deming_slope(deg$log2FoldChange_m, deg$log2FoldChange_f)
+set.seed(1)
+b2_boot <- replicate(2000, {
+  i <- sample(nrow(deg), replace = TRUE)
+  deming_slope(deg$log2FoldChange_m[i], deg$log2FoldChange_f[i])
+})
+cat(sprintf("[B2] %s: female~male slope=%.3f (95%% CI %.3f-%.3f); >1 => female amplified\n",
+            depot, b2_slope, quantile(b2_boot,.025), quantile(b2_boot,.975)))
+
+## --- B3: total response magnitude per sex, bootstrap ---
+mag_vec <- function(v) sqrt(sum(v^2))
+b3_m <- mag_vec(deg$log2FoldChange_m); b3_f <- mag_vec(deg$log2FoldChange_f)
+b3_boot <- replicate(2000, {
+  i <- sample(nrow(deg), replace = TRUE)
+  mag_vec(deg$log2FoldChange_f[i]) - mag_vec(deg$log2FoldChange_m[i])
+})
+cat(sprintf("[B3] %s: ||F||=%.1f vs ||M||=%.1f; diff 95%% CI %.1f-%.1f\n",
+            depot, b3_f, b3_m, quantile(b3_boot,.025), quantile(b3_boot,.975)))
+
+## --- B4: PPARg-Glut4 module score, Sex x Genotype interaction ---
+ppar_module <- c("Pparg","Ppargc1a","Mef2c","Slc2a4","Cd36","Fabp4","Lpl",
+                 "Plin1","Plin4","Cidec","Adipoq","Scd1","Lipe","Pnpla2","Rbp4")
+mod <- intersect(ppar_module, rownames(depot_counts))
+if (length(mod) >= 4) {
+  dds_mod <- DESeqDataSetFromMatrix(round(depot_counts), depot_annot, ~ 1)
+  dds_mod <- estimateSizeFactors(dds_mod)
+  vsd <- log2(counts(dds_mod, normalized = TRUE) + 1)
+  z   <- t(scale(t(vsd[mod, , drop = FALSE])))          # gene z-scores
+  score <- colMeans(z, na.rm = TRUE)                    # per-sample module score
+  md <- data.frame(score = score,
+                   Sex = depot_annot[names(score),"Sex"],
+                   Genotype = depot_annot[names(score),"Genotype"])
+  fit  <- lm(score ~ Sex * Genotype, data = md)
+  b4_p <- summary(fit)$coefficients
+  cat(sprintf("[B4] %s: PPARg-Glut4 module Sex:Genotype interaction p=%.3g (genes used=%d)\n",
+              depot, tail(b4_p[,4],1), length(mod)))
+  p_mod <- ggplot(md, aes(Genotype, score, fill = Genotype)) +
+    geom_boxplot(outlier.shape = NA, alpha=.5) + geom_jitter(width=.15) +
+    facet_wrap(~Sex) +
+    labs(title=paste0(depot,": PPARgamma-GLUT4 module score"),
+         subtitle="Pessoa/Akhtar MOF->Pparg->Glut4 axis",
+         y="module z-score") + theme_bw()
+  ggsave(file.path(sex_dir, paste0("PPARmodule_", depot, "_", run_tag, ".png")),
+         p_mod, width=7, height=4, dpi=150)
+  write.csv(md, file.path(tables_dir, paste0("PPARmodule_scores_", depot, "_", run_tag, ".csv")))
+}
+
+
+================================================================================
+PART C -- MINING THE Mof+/- HET PAPER (Pessoa Rodrigues 2021, GSE156463)
+================================================================================
+
+WHAT THE PAPER IS (and how it differs from your model)
+  Citation: Pessoa Rodrigues C, Chatterjee A, et al. Akhtar A.
+    "Histone H4 lysine 16 acetylation controls central carbon metabolism
+    and diet-induced obesity in mice." Nat Commun 2021;12:6212.
+    doi:10.1038/s41467-021-26277-w.  Data: GEO GSE156463.
+
+  THEIR MODEL vs YOURS -- the differences that matter:
+  --------------------------------------------------------------------------
+   Feature           | Pessoa 2021 (theirs)      | Your model
+  -------------------+---------------------------+--------------------------
+   Lesion            | Mof+/- whole-body HET     | Adipocyte KAT8 KNOCKDOWN
+                     | (~50% global, constitutive)| (tissue-restricted)
+   Dose              | Haploinsufficiency        | KD (variable, check Part A)
+   Tissue (RNA-seq)  | Visceral WAT only (~gWAT) | iWAT AND gWAT
+   SEX in RNA-seq    | MALE ONLY (n=3 SD/2 HFD)  | BOTH sexes, n~4-5
+   Sex in phenotype  | "No sex bias" in weight   | Female protection (yours)
+                     | (weight only; no sex-     |
+                     | resolved transcriptome)   |
+   Diet              | SD + 26wk HFD             | (your design)
+   Key readouts      | OGTT, fat mass, ChIP-seq  | DE + interaction by sex
+  --------------------------------------------------------------------------
+
+  THEIR CENTRAL FINDING (your anchor):
+    MOF binds the Pparg promoter -> H4K16ac -> Pparg expression ->
+    Pgc1a/Mef2c -> Glut4 -> glucose uptake -> neutral lipid storage.
+    Loss of MOF collapses this axis: Glut4 down, no glucose uptake, no
+    lipid storage => RESISTANCE to diet-induced obesity but glucose
+    intolerance / prediabetes. Rescue by TZD (PPARg agonist), ectopic
+    Glut4, or SIRT1 inhibition.
+
+  CRITICAL READ FOR YOUR PI:
+    1. Their WAT transcriptome is MALE-ONLY and underpowered (n=2-3). You
+       therefore CANNOT extract a female comparison from their data. What
+       you CAN do is use their MALE Mof+/- signature as a reference to
+       (a) validate that your KD reproduces the canonical KAT8 program, and
+       (b) anchor the PPARg-Glut4 module (Part B4) in published mechanism.
+    2. Their "no sex bias" claim is WEIGHT GAIN ONLY in a HET model. It does
+       NOT contradict your sex-resolved TRANSCRIPTOMIC finding -- nobody has
+       done the sex x genotype transcriptome before. That gap is YOUR
+       novelty. Say this explicitly.
+    3. Het (50% global) vs adipocyte-KD are different doses/compartments.
+       If your phenotype differs from theirs (e.g. you see lipodystrophy in
+       BOTH sexes per your Diabetes 2022 abstract, they see obesity-
+       resistance), that is a real, interesting model difference -- frame
+       it as dose/compartment, not as a contradiction.
+
+----------------------------------------------------------------------
+MINING TASK C1 -- Cross-validate: does YOUR male KD signature reproduce
+                  THEIR Mof+/- WAT signature?
+----------------------------------------------------------------------
+  WHY: establishes that your knockdown engages the same program as a
+  published, accepted KAT8-loss model. Reviewers will want this.
+  HOW:
+    - Get their WAT DEGs. Two sources:
+        (i) Supplementary Data 3 of the paper (WAT mRNA-seq DEGs), or
+        (ii) reprocess GSE156463 counts (STAR/featureCounts already; you
+             can pull processed counts via GEOquery::getGEO or the
+             supplementary file).
+    - Restrict to SD (baseline) Mof+/- vs +/+ to match your unstressed KD.
+    - Compare to your MALE gWAT KD logFCs (de_m for gWAT depot).
+    - Metrics: (a) Pearson r of logFC on shared genes; (b) Rank-Rank
+      Hypergeometric Overlap (RRHO2) for threshold-free concordance;
+      (c) GSEA of their up/down DEG sets in your ranked male list (fgsea).
+  HYPOTHESIS (C1):
+    H0: your KD signature is unrelated to the Mof+/- signature.
+    H1: your male KD logFCs positively correlate with Mof+/- WAT logFCs
+        (same direction on the KAT8 program).
+  PREDICTION IF VALID: positive r, significant RRHO concordance in the
+    down-down and up-up quadrants, esp. for lipid/glucose genes.
+
+----------------------------------------------------------------------
+MINING TASK C2 -- Anchor the PPARg-Glut4 axis (use their gene network)
+----------------------------------------------------------------------
+  WHY: the paper hands you a literature-validated effector module. Use it
+  for Part B4 and to test the sex difference on a PRE-REGISTERED gene set
+  (avoids "you cherry-picked the pathway" criticism).
+  HOW: the module gene list in Part B4 IS their network. Test Sex:Genotype
+  on it in BOTH depots. Also check Rbp4 (their insulin-resistance marker)
+  by sex -- if it goes up more in males, that supports male vulnerability.
+  HYPOTHESIS (C2): the Pparg->Glut4 module shows a significant Sex:Genotype
+  interaction; the direction tells you which sex defends glucose-uptake
+  machinery.
+
+----------------------------------------------------------------------
+MINING TASK C3 -- Use their ChIP-seq to PRE-REGISTER your planned ChIP
+----------------------------------------------------------------------
+  WHY: you have ChIP-seq planned. They have MOF + H4K16ac ChIP-seq in WAT
+  (male, SD) in GSE156463, with the Pparg main-isoform promoter as the
+  validated positive control (MOF binding reduced in Mof+/-). Don't go in
+  blind -- define your target/positive-control loci from their peaks.
+  HOW:
+    - Download their H4K16ac and MOF bigWig/peak files (GSE156463).
+    - Define a target panel: Pparg promoter (their Fig 6h positive
+      control), plus Glut4/Slc2a4, Pgc1a, Mef2c (their NEGATIVE controls --
+      MOF did NOT bind these), plus your own interaction-gene promoters
+      (Elovl3, Scd1, Cd36).
+    - Pre-register the prediction: in YOUR ChIP, H4K16ac should drop at
+      Pparg promoter on KD; the female-vs-male question is whether females
+      RETAIN more H4K16ac at these loci.
+  HYPOTHESIS (C3): females retain more H4K16ac at Pparg/lipid promoters
+  after KD than males (explains buffering at the chromatin level). Their
+  data gives you the exact coordinates to look at first.
+
+-------- OPTIONAL DROP-IN: pull GSE156463 processed data via GEOquery -------
+## (run once, interactive; needs internet)
+# BiocManager::install(c("GEOquery","RRHO2"))
+# library(GEOquery)
+# gse <- getGEO("GSE156463", GSEMatrix = TRUE)        # metadata
+# supp <- getGEOSuppFiles("GSE156463")                # processed counts/DEGs
+# -> then read their WAT count/DEG table, compute Mof+/- vs +/+ logFC,
+#    merge by gene symbol with your de_m (gWAT), and:
+#      cor.test(merged$lfc_theirs, merged$lfc_yours)  # C1 metric (a)
+#      # RRHO2::RRHO2_initialize(...) for C1 metric (b)
+
+WHAT YOU DO **NOT** NEED FROM THEM
+  - Their metabolomics (different assay, mixed sex, het dose) -- not worth
+    reconciling gene-by-gene.
+  - Their HFD arm for the baseline comparison (use SD vs SD).
+  - Any female data -- they have none in the transcriptome; your data is
+    the only sex-resolved source. That is the point.
+
+
+================================================================================
+PART D -- HYPOTHESIS TABLE FOR THE PI (one page)
+================================================================================
+
+ # | Hypothesis                                  | Test (data/assay)         | H1 prediction                         | If H0 (null) instead
+---+---------------------------------------------+---------------------------+---------------------------------------+----------------------------
+ A | KD efficiency is EQUAL in M and F           | Part A: Kat8 per-sex logFC | Kat8 logFC equal; not an interaction  | Female KD weaker => dose
+   | (rule out the trivial confound)             | + interaction LRT (bulk)  | gene; equal residual Kat8             | confound; control for it
+---+---------------------------------------------+---------------------------+---------------------------------------+----------------------------
+ B1| Females mount a LARGER per-gene response    | Wilcoxon |F|-|M| on DEGs  | median(|F|-|M|) > 0, p<0.05           | symmetric response;
+   |                                             | (bulk, have it now)       |                                       | "more" claim unsupported
+---+---------------------------------------------+---------------------------+---------------------------------------+----------------------------
+ B2| Female response is AMPLIFIED (gain>1)       | Deming slope F~M (bulk)   | slope>1, CI excludes 1                | slope ~1, equal gain
+---+---------------------------------------------+---------------------------+---------------------------------------+----------------------------
+ B4| The sex difference localizes to the         | PPARg-Glut4 module        | significant Sex:Genotype on module    | no interaction; sex effect
+   | MOF->PPARg->GLUT4 axis (the known effector) | score, Sex*Genotype (bulk)| (females defend / over-respond)       | is elsewhere/diffuse
+---+---------------------------------------------+---------------------------+---------------------------------------+----------------------------
+ C1| Our KD reproduces the canonical KAT8        | logFC corr / RRHO / GSEA  | positive concordance with Mof+/- WAT  | no overlap => our KD hits a
+   | (Mof+/-) program (model validation)         | vs GSE156463 (male)       | down-down & up-up                     | different program (worrying)
+---+---------------------------------------------+---------------------------+---------------------------------------+----------------------------
+ C3| Females RETAIN H4K16ac at Pparg/lipid       | CUT&RUN/ChIP at loci      | female KD retains more H4K16ac at     | equal H4K16ac loss => sex
+   | promoters after KD (chromatin mechanism)    | from GSE156463 peaks      | Pparg/Elovl3/Scd1 promoters           | effect is post-chromatin
+---+---------------------------------------------+---------------------------+---------------------------------------+----------------------------
+ D | Female "larger response" is COMPENSATORY    | direction-split module +  | female-amplified set enriched for     | no thermogenic enrichment
+   | (browning/oxidative), i.e. protective       | phenotype (GTT, fat mass) | thermogenic/oxidative genes AND       | => "more" is incidental,
+   |                                             |                           | better metabolic phenotype            | not protective
+---+---------------------------------------------+---------------------------+---------------------------------------+----------------------------
+
+ORDER OF OPERATIONS (cheapest first, all before ChIP/snRNA-seq):
+  1. Part A  (Kat8 KD-efficiency check)        -- minutes, existing data
+  2. Part B1/B2/B3/B4 (magnitude + module)     -- an hour, existing data
+  3. Part C1 (download GSE156463, correlate)   -- half day, public data
+  4. Part C2 (module by sex, both depots)      -- folds into B4
+  5. Part C3 (define ChIP target panel)        -- pre-registration doc
+  -> THEN the wet-lab ChIP / snRNA-seq, now hypothesis-driven and
+     pre-registered against published coordinates.
+
+THE ONE-SENTENCE STORY (if it all holds):
+  "Knockdown is equal in both sexes (A); females nonetheless mount a larger-
+  magnitude transcriptional response (B1/B2) that localizes to the published
+  MOF->PPARgamma->GLUT4 effector axis (B4, validated against the Mof+/-
+  het model C1); we predict this reflects greater female retention of
+  H4K16ac at PPARg/lipid promoters (C3), constituting an estrogen-buffered,
+  compensatory program (D)."
