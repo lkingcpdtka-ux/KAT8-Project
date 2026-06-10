@@ -1,0 +1,318 @@
+================================================================================
+KAT8 SEX x GENOTYPE INTERACTION: TODO LIST
+Working document for follow-up experiments & analysis
+Generated: 2026-06-10
+================================================================================
+
+================================================================================
+CENTRAL WORKING HYPOTHESIS
+================================================================================
+
+KAT8/MOF loss collapses the adipocyte PPAR-fatty acid-oxidative metabolism
+program equally in both sexes (~99% concordance), but estrogen/ERa signaling
+buffers the downstream metabolic consequences in females by maintaining
+partial PPAR-axis and insulin-response competence. The sex x genotype
+interaction is not a separate gene program -- it is a magnitude tuning of
+the SAME lipid/insulin handling genes, confined to ~2-4% of the
+transcriptome.
+
+REASONING FROM THE DATA:
+  - 99-99.5% concordance; Pearson r = 0.61-0.73 --> same direction, same program
+  - Variance decomposition: Genotype 17-33%, Sex 7-11%, Interaction only 2%
+  - iWAT interaction genes (630): dominated by fatty acid metabolism, PPAR
+    signaling, triglyceride metabolism, lipid storage, cholesterol
+  - gWAT interaction genes (374): insulin response, dietary excess, lipid
+    metabolism, lipoprotein handling
+  - The interaction is WHERE estrogen is known to act (PPAR/lipid/insulin axis)
+  - This is consistent with your own prior work (Diabetes 2022;71:198-LB)
+    showing female C57BL/6 protection against metabolic effects of KAT8 KO
+
+KEY TENSION TO KEEP IN MIND:
+  The largest iWAT interaction class ("Female-amplified / Male-buffered",
+  370 genes) shows females changing MORE, not less, on the PPAR axis.
+  "Protection" may mean females activate compensatory lipid programs that
+  males cannot -- not simply that females are unaffected. The transcriptomic
+  magnitude does not directly equal phenotypic harm. Phenotype data (GTT,
+  body weight, adiposity) must anchor the direction of "protection."
+
+
+================================================================================
+PRIORITY 0: RULE OUT CONFOUNDS (DO THESE FIRST)
+================================================================================
+
+TODO-0A: Confirm equal KD efficiency in males vs females
+--------
+  QUESTION: Is KAT8 knocked down to the same degree in both sexes?
+  WHY IT MATTERS: If females have less efficient knockdown, the entire
+    "protection" phenotype is a technical artifact, not biology.
+  METHOD: qPCR for Kat8 mRNA + Western blot for KAT8 protein + H4K16ac
+    levels, in iWAT and gWAT, M vs F, KD vs CTL
+  EXPECTED IF HYPOTHESIS HOLDS: Equal KD efficiency, but female tissue
+    retains more H4K16ac at specific loci (not globally)
+  EXPECTED IF CONFOUND: Female KD is weaker --> reinterpret everything
+
+TODO-0B: Confirm phenotypic sex difference exists
+--------
+  QUESTION: Do females actually show metabolic protection at the organism level?
+  WHY IT MATTERS: If there's no phenotypic sex difference, the
+    transcriptomic interaction is real but functionally silent.
+  METHOD: Review existing GTT/ITT, body weight, fat mass, serum
+    NEFA/TG/cholesterol data stratified by sex. If not collected
+    sex-stratified, this is a problem.
+  EXPECTED IF HYPOTHESIS HOLDS: Males show worse glucose tolerance,
+    higher NEFA/TG, more adipose inflammation vs females
+
+
+================================================================================
+PRIORITY 1: VALIDATE THE PPAR AXIS (1-2 DAYS BENCH WORK)
+================================================================================
+
+TODO-1A: PPAR-panel qPCR across sex x genotype
+--------
+  QUESTION: Do PPAR-axis genes show the predicted sex x genotype
+    magnitude difference at the mRNA level (independent validation of
+    RNA-seq)?
+  WHY IT MATTERS: RNA-seq is n=4-5/group. qPCR on stored tissue (or
+    biological replicates if available) strengthens the claim.
+  GENES TO TEST (prioritized):
+    Core PPAR targets:  Ppara, Pparg, Ppargc1a (PGC1a)
+    Fatty acid oxidation: Cpt1b, Acox1, Acadl
+    Lipogenesis/storage:  Scd1, Fasn, Elovl3, Plin1, Plin4
+    Lipid transport:      Cd36, Fabp4, Lpl
+    Insulin signaling:    Irs1, Irs2, Slc2a4 (Glut4)
+  DESIGN: 2x2 (Sex x Genotype), both depots, n>=4/group
+  EXPECTED: All genes change same direction in M and F, but magnitude
+    differs -- females show either less collapse OR compensatory
+    upregulation of specific nodes
+
+TODO-1B: Elovl3 as a single-gene readout
+--------
+  QUESTION: Is Elovl3 a robust sex x genotype marker?
+  WHY IT MATTERS: Elovl3 was the most extreme outlier in gWAT (male-
+    amplified, logFC ~+9 in males, ~+1 in females). It's a PPARa target
+    AND androgen-responsive. If it validates, it's your poster gene.
+  METHOD: qPCR + Western in gWAT, M vs F, KD vs CTL
+  EXPECTED: Massive upregulation in male KD, modest in female KD
+
+TODO-1C: Check steroid synthesis genes (from sex-opposite class)
+--------
+  QUESTION: Are cholesterol/steroid biosynthesis genes genuinely going
+    opposite directions in M vs F?
+  WHY IT MATTERS: iWAT sex-opposite class (162 genes) enriched for
+    cholesterol biosynthesis via lathosterol, steroid metabolism, secondary
+    alcohol biosynthesis. This could mean females maintain steroidogenesis
+    capacity (estrogen precursors) while males lose it.
+  GENES TO CHECK: Hmgcr, Cyp51, Dhcr7, Dhcr24, Sqle, Lss, Fdft1
+  EXPECTED IF INTERESTING: These genes go UP in female KD, DOWN in male
+    KD (or vice versa) -- a true sex-opposite pattern
+
+
+================================================================================
+PRIORITY 2: TEST THE ESTROGEN MECHANISM
+================================================================================
+
+TODO-2A: ERa/ERb expression in your existing data
+--------
+  QUESTION: Are Esr1 (ERa) and Esr2 (ERb) themselves differentially
+    expressed or interaction genes?
+  WHY IT MATTERS: If ERa is an interaction gene, that's a direct link.
+    If not, the mechanism is downstream (ERa activity, not expression).
+  METHOD: Just look them up in your DESeq2 results tables. Also check
+    Cyp19a1 (aromatase), Srd5a1/2 (5-alpha reductase).
+  NOTE: Even if Esr1 is not DE, that doesn't kill the hypothesis --
+    ERa often acts through activity/phosphorylation, not expression.
+
+TODO-2B: ERa target gene signature
+--------
+  QUESTION: Are known ERa transcriptional targets over-represented in
+    the interaction gene set?
+  WHY IT MATTERS: A positive result directly links estrogen signaling
+    to the interaction without needing a new experiment.
+  METHOD: Get a published ERa ChIP-seq target list from adipose tissue
+    (or MCF7 as proxy). Test overlap with your 630 iWAT / 374 gWAT
+    interaction genes using Fisher's exact test.
+  TOOLS: MSigDB "HALLMARK_ESTROGEN_RESPONSE_EARLY/LATE" gene sets,
+    or adipose-specific ERa targets if available.
+
+TODO-2C: The decisive experiment -- OVX +/- E2 replacement
+--------
+  QUESTION: Does removing estrogen in female KD mice eliminate the
+    metabolic protection?
+  WHY IT MATTERS: This is THE experiment. If OVX females phenocopy
+    males, and E2 add-back rescues, the ERa hypothesis is proven.
+  DESIGN:
+    Group 1: Female KD + sham surgery (protected)
+    Group 2: Female KD + OVX (predict: loses protection, looks like male)
+    Group 3: Female KD + OVX + E2 pellet (predict: protection restored)
+    Group 4: Female CTL + sham (baseline)
+    n = 8-10/group, measure GTT/ITT, body comp, then harvest adipose
+    for RNA-seq or targeted qPCR panel from TODO-1A
+  TIMELINE: ~12 weeks (surgery + recovery + phenotyping + harvest)
+  COST: Moderate (surgery, E2 pellets, housing)
+  ALTERNATIVE (faster/cheaper): Treat female KD mice with ICI 182,780
+    (fulvestrant, ERa antagonist) for 4 weeks instead of OVX.
+
+TODO-2D: Reciprocal -- E2 treatment in male KD
+--------
+  QUESTION: Can exogenous estrogen protect male KD mice?
+  WHY IT MATTERS: Complement to 2C. If E2 rescues males, it confirms
+    estrogen is sufficient (not just necessary).
+  DESIGN: Male KD + vehicle vs Male KD + E2 pellet (low dose to avoid
+    feminization artifacts), 4-6 weeks, GTT + adipose harvest.
+  CAVEAT: Dose is tricky -- too much E2 causes its own metabolic
+    effects. Use physiological female-range dosing.
+
+
+================================================================================
+PRIORITY 3: MECHANISTIC DEPTH (LONGER-TERM)
+================================================================================
+
+TODO-3A: H4K16ac CUT&RUN at PPAR targets, M vs F
+--------
+  QUESTION: Do females retain H4K16ac at PPAR-target promoters despite
+    global KAT8 knockdown?
+  WHY IT MATTERS: The mechanistic crux. If female adipose retains
+    H4K16ac specifically at lipid genes, it means ERa is recruiting
+    compensatory acetyltransferase activity or protecting existing marks.
+  METHOD: CUT&RUN for H4K16ac in iWAT, M vs F, KD vs CTL. Focus on
+    Ppara, Cd36, Cpt1b, Elovl3, Scd1 promoters.
+  COST: Moderate-high (CUT&RUN reagents + sequencing or qPCR readout)
+
+TODO-3B: Cell-type deconvolution
+--------
+  QUESTION: Is the sex x genotype interaction driven by cell-type
+    composition shifts rather than cell-intrinsic transcriptional changes?
+  WHY IT MATTERS: Adipose is heterogeneous. If KAT8-KD causes more
+    immune infiltration in males, the "interaction" genes could just be
+    macrophage genes diluting the adipocyte signal in males only.
+  METHOD: Run BisqueRNA or MuSiC deconvolution on your bulk RNA-seq
+    using a published mouse adipose single-cell reference (e.g.,
+    Emont et al. 2022 Nature). Compare estimated cell fractions across
+    sex x genotype.
+  RED FLAG: The gWAT sex-opposite class is full of muscle/myelination/
+    gliogenesis terms -- this screams stromal contamination or cell-type
+    shift, not adipocyte biology.
+
+TODO-3C: In vitro confirmation
+--------
+  QUESTION: Is the sex difference cell-autonomous or systemic?
+  WHY IT MATTERS: If you can recapitulate the sex interaction in
+    primary preadipocytes differentiated in vitro (M vs F, +/- KAT8
+    siRNA, +/- E2), it's cell-intrinsic. If not, it requires the
+    whole-organism hormonal milieu.
+  METHOD: Isolate SVF from male and female iWAT, differentiate to
+    adipocytes, KAT8 siRNA, +/- 10nM E2, measure lipid accumulation
+    (Oil Red O) + PPAR-panel qPCR.
+
+
+================================================================================
+QUESTIONS TO ASK AND ANSWER (STRUCTURED)
+================================================================================
+
+QUESTION 1: Is the protection real or a KD-efficiency artifact?
+  Ask: Is Kat8 mRNA/protein equally reduced in M and F?
+  Answer with: TODO-0A (qPCR + Western)
+  If YES (equal KD) --> protection is real, proceed
+  If NO (unequal KD) --> reinterpret all results; consider dose-response
+
+QUESTION 2: Is the interaction transcriptionally validated?
+  Ask: Do PPAR-axis genes show sex x genotype at qPCR level?
+  Answer with: TODO-1A
+  If YES --> RNA-seq interaction is robust
+  If NO --> possible RNA-seq false positives or batch effects
+
+QUESTION 3: Is estrogen the mediator?
+  Ask: Does removing estrogen eliminate female protection?
+  Answer with: TODO-2C (OVX) or TODO-2B (ERa target overlap) as proxy
+  If YES --> write the paper around ERa-PPAR-H4K16ac axis
+  If NO --> look for other sex-linked mechanisms (X-linked escapees,
+    androgens, growth hormone axis)
+
+QUESTION 4: Is it cell-autonomous or systemic?
+  Ask: Can you see the sex difference in isolated adipocytes?
+  Answer with: TODO-3C (in vitro) or TODO-3B (deconvolution) as proxy
+  If CELL-AUTONOMOUS --> ERa acts directly in adipocytes on chromatin
+  If SYSTEMIC --> protection requires whole-body hormonal context
+    (liver crosstalk, circulating lipids, etc.)
+
+QUESTION 5: What is the gWAT sex-opposite signal?
+  Ask: Is the muscle/myelination/gliogenesis enrichment in gWAT
+    sex-opposite real biology or contamination?
+  Answer with: TODO-3B (deconvolution); also check dissection notes
+    for muscle/fascia contamination in gWAT samples
+  If CONTAMINATION --> drop gWAT sex-opposite from the story
+  If REAL --> gWAT stromovascular fraction responds differently by sex
+
+QUESTION 6: Why does iWAT have more interaction genes than gWAT?
+  Ask: Is iWAT more estrogen-responsive, or is gWAT just noisier?
+  Answer with: Compare Esr1/Esr2 expression levels between depots;
+    check gWAT dispersion estimates (the fitType='local' warning
+    suggests gWAT has noisier dispersion --> less power)
+  LIKELY ANSWER: Both -- iWAT is more metabolically responsive AND
+    gWAT has worse dispersion fit (fewer samples, more heterogeneity)
+
+QUESTION 7: What does "Female-amplified" actually mean for protection?
+  Ask: If females change PPAR genes MORE than males, how is that
+    protective?
+  CRITICAL NUANCE: Larger transcriptomic response does not equal more
+    damage. Females may be mounting a COMPENSATORY upregulation of
+    lipid-handling genes that males cannot. Think of it as: males lose
+    KAT8 and the PPAR program collapses; females lose KAT8, the program
+    starts to collapse, but ERa-driven compensation partially restores
+    it -- making the NET female response look LARGER in magnitude but
+    ADAPTIVE rather than pathological.
+  Answer with: Pair transcriptomics with phenotype (TODO-0B). If
+    females have better metabolic outcomes DESPITE larger gene changes,
+    the compensation model holds.
+
+
+================================================================================
+NARRATIVE ARC FOR A PAPER
+================================================================================
+
+Title concept: "Estrogen signaling buffers the metabolic consequences of
+KAT8/H4K16ac loss in adipose tissue through PPAR-axis compensation"
+
+Story in 4 sentences:
+1. KAT8 knockdown collapses the adipocyte lipid-metabolic program
+   identically in both sexes (99% concordance).
+2. A small but highly specific sex x genotype interaction (~2-4% of
+   genes) maps precisely onto the PPAR-fatty acid-insulin signaling axis.
+3. Females show altered magnitude (not direction) of this response,
+   consistent with estrogen/ERa-mediated compensation at PPAR targets.
+4. Removing estrogen (OVX) eliminates female protection, confirming
+   ERa as the buffering mechanism.
+
+(Sentence 4 requires TODO-2C. Without it, the paper is correlative.)
+
+
+================================================================================
+DEPOT-SPECIFIC SUMMARY
+================================================================================
+
+iWAT (cleaner, build the story here):
+  - 630 interaction genes, 3.83%, pi0=0.87
+  - 370 Male-buffered --> PPAR, fatty acid, lipid catabolism, fat cell diff
+  - 98 Female-buffered --> nothing coherent (motor neuron axon guidance, n=4)
+  - 162 Sex-opposite --> cholesterol/steroid biosynthesis (interesting!)
+  - VERDICT: PASS for pooling sexes; interaction is real but minority
+
+gWAT (noisier, supporting role):
+  - 374 interaction genes, 2.22%, pi0=0.85
+  - 34 Male-buffered --> chylomicron clearance, cholesterol transport (small)
+  - 146 Female-buffered --> nothing significant at GO level
+  - 194 Sex-opposite --> muscle/myelination/gliogenesis (likely contamination)
+  - VERDICT: CAUTION; use as replication for iWAT PPAR finding, don't
+    build independent claims on gWAT sex-opposite
+
+
+================================================================================
+QUICK WINS (CAN DO THIS WEEK)
+================================================================================
+
+[ ] Look up Esr1, Esr2, Cyp19a1 in your existing DESeq2 results
+[ ] Run MSigDB HALLMARK_ESTROGEN_RESPONSE overlap with interaction genes
+[ ] Check Kat8 expression M vs F in your RNA-seq (is KD equal?)
+[ ] Pull the actual gene names from the PPAR KEGG leading edge
+[ ] Order primers for TODO-1A panel (if tissue is available)
+[ ] Review existing phenotype data sex-stratified (GTT, body weight)
