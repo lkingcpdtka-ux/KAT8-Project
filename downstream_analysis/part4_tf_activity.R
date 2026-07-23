@@ -55,13 +55,51 @@ tp <- tf_params
 ## CollecTRI (Muller-Dott et al. 2023): the current best signed TF->target
 ## network. ~1000 mouse TFs; each edge signed +1 (activation) / -1 (repression),
 ## including complexes (NF-kB, AP-1, SREBF ...).
+## Robust to the OmnipathR "static table" bug: try a local CSV, then
+## get_collectri, then a cache-wipe retry, then a DoRothEA (A-C) fallback.
+## The first success is cached to network_cache so later runs are offline.
+valid_net <- function(x) {
+  !is.null(x) && is.data.frame(x) && nrow(x) > 0 &&
+    all(c("source", "target", "mor") %in% colnames(x))
+}
 get_network <- function() {
   if (file.exists(tp$network_cache)) {
-    cat("[INFO] Loading cached CollecTRI network:", tp$network_cache, "\n")
-    return(readRDS(tp$network_cache))
+    cat("[INFO] Loading cached network:", tp$network_cache, "\n")
+    net <- readRDS(tp$network_cache); if (valid_net(net)) return(net)
+    cat("[WARN] cached network looks invalid; refetching\n")
   }
-  cat("[INFO] Fetching CollecTRI (", ORGANISM, ") via OmniPath (needs internet) ...\n", sep = "")
-  net <- decoupleR::get_collectri(organism = ORGANISM, split_complexes = FALSE)
+  ## 1) local CSV escape hatch (set tf_params$network_csv)
+  if (!is.null(tp$network_csv) && file.exists(tp$network_csv)) {
+    cat("[INFO] Loading regulon from local CSV:", tp$network_csv, "\n")
+    net <- utils::read.csv(tp$network_csv, stringsAsFactors = FALSE)
+    if (!valid_net(net)) stop("network_csv must have columns: source, target, mor")
+    saveRDS(net, tp$network_cache); return(net)
+  }
+  fetch_collectri <- function() decoupleR::get_collectri(organism = ORGANISM, split_complexes = FALSE)
+  ## 2) CollecTRI via OmniPath
+  cat("[INFO] Fetching CollecTRI (", ORGANISM, ") via OmniPath ...\n", sep = "")
+  net <- tryCatch(fetch_collectri(), error = function(e) {
+    cat("[WARN] get_collectri failed:", conditionMessage(e), "\n")
+    ## 2b) OmnipathR often falls back to a buggy static table when its server
+    ## is briefly down; wiping the cache and retrying usually hits the good path.
+    cat("[INFO] wiping OmnipathR cache and retrying once...\n")
+    try(OmnipathR::omnipath_cache_wipe(), silent = TRUE)
+    tryCatch(fetch_collectri(), error = function(e2) {
+      cat("[WARN] retry failed:", conditionMessage(e2), "\n"); NULL })
+  })
+  ## 3) DoRothEA (A-C) fallback (also OmniPath, different endpoint)
+  if (!valid_net(net)) {
+    cat("[INFO] falling back to DoRothEA (confidence A-C)...\n")
+    net <- tryCatch(decoupleR::get_dorothea(organism = ORGANISM, levels = c("A","B","C")),
+                    error = function(e) { cat("[WARN] DoRothEA failed:", conditionMessage(e), "\n"); NULL })
+  }
+  if (!valid_net(net)) {
+    stop("Could not obtain a TF regulon.\n",
+         "  Fixes: (1) BiocManager::install(c('OmnipathR','decoupleR')); ",
+         "OmnipathR::omnipath_cache_wipe(); then retry.\n",
+         "  Or (2) set tf_params$network_csv to a signed-regulon CSV ",
+         "(columns: source, target, mor) in config_downstream.R.", call. = FALSE)
+  }
   saveRDS(net, tp$network_cache)
   cat("[INFO] Cached network to:", tp$network_cache, "\n")
   net

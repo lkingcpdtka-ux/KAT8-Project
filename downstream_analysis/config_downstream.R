@@ -77,6 +77,12 @@ tf_params <- list(
   ## do not depend on OmniPath being reachable every time.
   network_cache = file.path("downstream_analysis", "collectri_mouse.rds"),
 
+  ## OmniPath escape hatch. If OmniPath is down/buggy, point this at a local
+  ## signed-regulon CSV with columns: source, target, mor (+ optional weight).
+  ## Leave NULL to fetch CollecTRI from OmniPath. Once any fetch succeeds it is
+  ## cached to network_cache, so you only need a working fetch once.
+  network_csv = NULL,
+
   ## Empirical null: permute gene labels to confirm the analytic
   ## p-values are calibrated (recommended at n = 4/group). 0 disables.
   n_permutations = 1000,
