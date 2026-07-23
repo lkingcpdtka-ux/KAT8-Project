@@ -2,224 +2,212 @@
 
 ## =========================================================
 ## KAT8 - PART 8: TRANSCRIPTION FACTOR ACTIVITY INFERENCE
+##                (cells-focused)
 ## =========================================================
-## Question: KAT8 is an H4K16ac co-activator, not a TF. When it is
-##   lost, WHICH transcription-factor programs shift? Doing this in
-##   the 3T3-L1 cells (clean adipocyte system) gives the
-##   cell-autonomous regulator response; doing it in iWAT/gWAT and
-##   comparing tells us which TF shifts are cell-autonomous vs
-##   likely driven by tissue composition (infiltration).
+## KAT8 is an H4K16ac co-activator, not a TF. When it is lost, WHICH
+## transcription-factor programs shift? The clean read-out is the pure
+## 3T3-L1 adipocytes (no immune infiltrate, no systemic context), so this
+## script centres the CELLS and uses iWAT/gWAT tissue only as comparison.
 ##
-## Method: decoupleR univariate linear model (ULM) over the CollecTRI
-##   mouse regulon network, using the genome-wide DESeq2 Wald
-##   statistic as input. This aggregates the coordinated behaviour of
-##   each TF's whole target set, so it does NOT require many DEGs.
+## Method: decoupleR univariate linear model (ULM) over the signed CollecTRI
+##   mouse regulon, scored on the GENOME-WIDE DESeq2 Wald statistic (every
+##   tested gene, NOT the DEG list). ULM aggregates the coordinated shift of
+##   each TF's whole target set, so a low cell DEG count does NOT limit it:
+##   50 targets each drifting a little is a strong, testable signal even when
+##   no single gene clears FDR.
 ##
-## Inputs : the DE CSVs configured in config_downstream.R
-## Outputs: per-contrast TF activity tables, a cells barplot, and a
-##   TF x contrast activity heatmap (the cell-autonomy readout).
+## The concordance analysis (part9) showed the adipocyte-identity/metabolic
+## collapse seen in iWAT tissue is ABSENT in these cells. This script tests
+## the regulator-level version of that: the adipogenic TFs (Pparg, Cebpa,
+## Srebf1, ...) are expected to read strongly repressed in iWAT but FLAT in
+## the cells -- i.e. that TF-program collapse is not cell-autonomous.
+##
+## Inputs : the DE CSVs configured in config_downstream.R (need gene_name + stat)
+## Outputs: cells TF table + barplot + highlighted adipogenic/inflammatory
+##   read-out; a TF x contrast activity heatmap; and a cells-vs-tissue TF
+##   scatter (the cell-autonomy view).
+##
+## NOTE: fetching CollecTRI needs OmniPath reachable ONCE (then it is cached
+##   to downstream_analysis/collectri_mouse.rds). Run this where you have
+##   internet; offline machines can load a pre-saved cache.
 ## =========================================================
 
 ## 1) Packages ----------------------------------------------
-required_cran <- c("dplyr", "tidyr", "ggplot2", "tibble", "pheatmap", "RColorBrewer")
+required_cran <- c("dplyr", "tidyr", "ggplot2", "ggrepel", "tibble", "pheatmap", "RColorBrewer")
 to_install <- setdiff(required_cran, rownames(installed.packages()))
 if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
 
 if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
 if (!requireNamespace("decoupleR", quietly = TRUE)) BiocManager::install("decoupleR", ask = FALSE, update = FALSE)
-## OmnipathR is used by decoupleR::get_collectri() to fetch the network
 if (!requireNamespace("OmnipathR", quietly = TRUE)) BiocManager::install("OmnipathR", ask = FALSE, update = FALSE)
 
 suppressPackageStartupMessages({
-  library(dplyr)
-  library(tidyr)
-  library(ggplot2)
-  library(tibble)
-  library(pheatmap)
-  library(RColorBrewer)
-  library(decoupleR)
+  library(dplyr); library(tidyr); library(ggplot2); library(ggrepel)
+  library(tibble); library(pheatmap); library(RColorBrewer); library(decoupleR)
 })
 
 ## 2) Config -------------------------------------------------
 source(file.path("downstream_analysis", "config_downstream.R"))
 set.seed(MASTER_SEED)
+tp <- tf_params
 
 ## 3) CollecTRI network (cached) -----------------------------
-## CollecTRI (Muller-Dott et al. 2023) is the current best signed
-## TF -> target network: ~1000 TFs, each edge signed +1 (activation)
-## or -1 (repression), including complexes (NF-kB, AP-1, SREBF...).
+## CollecTRI (Muller-Dott et al. 2023): the current best signed TF->target
+## network. ~1000 mouse TFs; each edge signed +1 (activation) / -1 (repression),
+## including complexes (NF-kB, AP-1, SREBF ...).
 get_network <- function() {
-  cache <- tf_params$network_cache
-  if (file.exists(cache)) {
-    cat("[INFO] Loading cached CollecTRI network:", cache, "\n")
-    return(readRDS(cache))
+  if (file.exists(tp$network_cache)) {
+    cat("[INFO] Loading cached CollecTRI network:", tp$network_cache, "\n")
+    return(readRDS(tp$network_cache))
   }
-  cat("[INFO] Fetching CollecTRI (", ORGANISM, ") via OmniPath ...\n", sep = "")
+  cat("[INFO] Fetching CollecTRI (", ORGANISM, ") via OmniPath (needs internet) ...\n", sep = "")
   net <- decoupleR::get_collectri(organism = ORGANISM, split_complexes = FALSE)
-  saveRDS(net, cache)
-  cat("[INFO] Cached network to:", cache, "\n")
+  saveRDS(net, tp$network_cache)
+  cat("[INFO] Cached network to:", tp$network_cache, "\n")
   net
 }
 net <- get_network()
-cat("[INFO] Network: ", length(unique(net$source)), " TFs, ",
-    nrow(net), " edges\n", sep = "")
+cat("[INFO] Network:", length(unique(net$source)), "TFs,", nrow(net), "edges\n")
 
 ## 4) Load DE tables ----------------------------------------
 de <- load_all_de()
 
-## 5) Score TF activity, one contrast at a time -------------
-## Running per contrast (rather than one shared matrix) lets each
-## contrast keep its full expressed-gene universe and avoids NA
-## handling across data sets with different gene coverage.
+## 5) Score TF activity per contrast ------------------------
+## Run each contrast on its OWN expressed-gene universe (decoupleR intersects
+## the network with the supplied genes and applies minsize automatically), so
+## TFs are only scored where they actually have >= min_regulon_size targets
+## measured in that data set.
 score_contrast <- function(de_tbl, label) {
   v <- de_tbl %>%
     dplyr::filter(!is.na(.data[[RANK_STAT]]), !is.na(gene), gene != "") %>%
     dplyr::distinct(gene, .keep_all = TRUE)
-  mat <- matrix(v[[RANK_STAT]], ncol = 1,
-                dimnames = list(v$gene, label))
+  mat <- matrix(v[[RANK_STAT]], ncol = 1, dimnames = list(v$gene, label))
 
-  if (identical(tf_params$method, "consensus")) {
-    acts <- decoupleR::decouple(
-      mat, net,
-      .source = "source", .target = "target",
-      statistics = c("ulm", "mlm", "wsum"),
-      consensus_only = TRUE, minsize = tf_params$min_regulon_size
-    )
-  } else {
-    acts <- decoupleR::run_ulm(
-      mat, net,
-      .source = "source", .target = "target", .mor = "mor",
-      minsize = tf_params$min_regulon_size
-    )
+  ulm <- decoupleR::run_ulm(mat, net, .source = "source", .target = "target",
+                            .mor = "mor", minsize = tp$min_regulon_size) %>%
+    dplyr::transmute(contrast = label, TF = source,
+                     activity_ulm = score, p_ulm = p_value)
+
+  out <- ulm
+  if (isTRUE(tp$run_consensus)) {
+    cons <- tryCatch(
+      decoupleR::decouple(mat, net, .source = "source", .target = "target",
+                          statistics = c("ulm", "mlm", "wsum"),
+                          consensus_only = TRUE, minsize = tp$min_regulon_size) %>%
+        dplyr::transmute(TF = source, activity_consensus = score),
+      error = function(e) { cat("[WARN] consensus failed:", conditionMessage(e), "\n"); NULL })
+    if (!is.null(cons)) out <- dplyr::left_join(out, cons, by = "TF")
   }
-
-  acts %>%
-    dplyr::transmute(
-      contrast = label,
-      TF       = source,
-      activity = score,
-      p_value  = p_value
-    ) %>%
-    dplyr::mutate(FDR = p.adjust(p_value, method = "BH")) %>%
-    dplyr::arrange(dplyr::desc(abs(activity)))
+  out %>%
+    dplyr::mutate(FDR = p.adjust(p_ulm, method = "BH")) %>%
+    dplyr::arrange(dplyr::desc(abs(activity_ulm)))
 }
 
-acts_all <- dplyr::bind_rows(lapply(names(de), function(nm) score_contrast(de[[nm]], nm)))
+acts <- dplyr::bind_rows(lapply(names(de), function(nm) score_contrast(de[[nm]], nm)))
 
-## 5b) Optional permutation null (calibration check) --------
-## Shuffle gene labels and re-score to confirm the analytic p-values
-## are not inflated at n = 4/group. Reports an empirical FDR per TF
-## for the cells contrast only (the one that matters most here).
-if (tf_params$n_permutations > 0) {
-  cat("[INFO] Permutation calibration on cells (",
-      tf_params$n_permutations, " shuffles)...\n", sep = "")
-  cell_tbl <- de[[CELL_KEY]] %>%
-    dplyr::filter(!is.na(.data[[RANK_STAT]])) %>%
+## 5b) Permutation calibration for the CELLS -----------------
+## At n = 4/group, confirm the analytic p-values are not inflated: shuffle
+## gene labels, re-score, and derive an empirical p from the null of max|score|.
+if (tp$n_permutations > 0) {
+  cat("[INFO] Permutation calibration on cells (", tp$n_permutations, " shuffles)...\n", sep = "")
+  cv <- de[[CELL_KEY]] %>% dplyr::filter(!is.na(.data[[RANK_STAT]])) %>%
     dplyr::distinct(gene, .keep_all = TRUE)
-  obs <- acts_all %>% dplyr::filter(contrast == CELL_KEY)
-  null_max <- numeric(tf_params$n_permutations)
-  for (i in seq_len(tf_params$n_permutations)) {
-    shuffled <- cell_tbl
-    shuffled$gene <- sample(shuffled$gene)
-    m <- matrix(shuffled[[RANK_STAT]], ncol = 1,
-                dimnames = list(shuffled$gene, "perm"))
+  null_max <- numeric(tp$n_permutations)
+  for (i in seq_len(tp$n_permutations)) {
+    g <- sample(cv$gene)
+    m <- matrix(cv[[RANK_STAT]], ncol = 1, dimnames = list(g, "perm"))
     a <- decoupleR::run_ulm(m, net, .source = "source", .target = "target",
-                            .mor = "mor", minsize = tf_params$min_regulon_size)
+                            .mor = "mor", minsize = tp$min_regulon_size)
     null_max[i] <- max(abs(a$score), na.rm = TRUE)
   }
-  obs$emp_p <- vapply(abs(obs$activity),
-                      function(x) (1 + sum(null_max >= x)) / (1 + tf_params$n_permutations),
-                      numeric(1))
-  write.csv(obs, file.path(OUTDIR, paste0("TF_cells_permutation_calibration_", RUN_TAG, ".csv")),
-            row.names = FALSE)
-  cat("[INFO] Wrote permutation calibration for cells.\n")
+  cell_idx <- acts$contrast == CELL_KEY
+  acts$emp_p <- NA_real_
+  acts$emp_p[cell_idx] <- vapply(abs(acts$activity_ulm[cell_idx]),
+    function(x) (1 + sum(null_max >= x)) / (1 + tp$n_permutations), numeric(1))
 }
 
-## 6) Write per-contrast tables -----------------------------
-for (nm in unique(acts_all$contrast)) {
-  tab <- acts_all %>% dplyr::filter(contrast == nm) %>% dplyr::arrange(FDR, dplyr::desc(abs(activity)))
-  write.csv(tab, file.path(OUTDIR, paste0("TF_activity_", nm, "_", RUN_TAG, ".csv")),
-            row.names = FALSE)
-  n_sig <- sum(tab$FDR < tf_params$fdr_cutoff, na.rm = TRUE)
+## 6) Write tables ------------------------------------------
+for (nm in unique(acts$contrast)) {
+  tab <- acts %>% dplyr::filter(contrast == nm) %>% dplyr::arrange(FDR, dplyr::desc(abs(activity_ulm)))
+  write.csv(tab, file.path(OUTDIR, paste0("TF_activity_", nm, "_", RUN_TAG, ".csv")), row.names = FALSE)
   cat(sprintf("[RESULT] %-6s: %d TFs scored, %d significant (FDR < %.2f)\n",
-              nm, nrow(tab), n_sig, tf_params$fdr_cutoff))
+              nm, nrow(tab), sum(tab$FDR < tp$fdr_cutoff, na.rm = TRUE), tp$fdr_cutoff))
 }
+write.csv(acts, file.path(OUTDIR, paste0("TF_activity_ALL_", RUN_TAG, ".csv")), row.names = FALSE)
 
-## 7) Cells barplot: top activated / repressed TFs ----------
-cells_top <- acts_all %>%
-  dplyr::filter(contrast == CELL_KEY) %>%
-  dplyr::arrange(dplyr::desc(abs(activity))) %>%
-  dplyr::slice_head(n = tf_params$top_n_cells) %>%
-  dplyr::mutate(
-    TF = factor(TF, levels = TF[order(activity)]),
-    sig = ifelse(FDR < tf_params$fdr_cutoff, "FDR < 0.05", "n.s.")
-  )
-
-p_cells <- ggplot(cells_top, aes(x = activity, y = TF, fill = activity)) +
+## 7) CELLS read-out: top activated / repressed TFs ---------
+cells <- acts %>% dplyr::filter(contrast == CELL_KEY)
+top <- cells %>% dplyr::arrange(dplyr::desc(abs(activity_ulm))) %>%
+  dplyr::slice_head(n = tp$top_n_cells) %>%
+  dplyr::mutate(TF = factor(TF, levels = TF[order(activity_ulm)]),
+                sig = ifelse(FDR < tp$fdr_cutoff, "FDR < 0.05", "n.s."))
+p_cells <- ggplot(top, aes(activity_ulm, TF, fill = activity_ulm)) +
   geom_col(aes(alpha = sig), color = "grey20", linewidth = 0.2) +
   scale_alpha_manual(values = c("FDR < 0.05" = 1, "n.s." = 0.35), name = NULL) +
-  scale_fill_gradient2(low = "#2166AC", mid = "grey95", high = "#B2182B",
-                       midpoint = 0, name = "TF activity") +
-  geom_vline(xintercept = 0, color = "black", linewidth = 0.3) +
+  scale_fill_gradient2(low = "#2166AC", mid = "grey95", high = "#B2182B", midpoint = 0,
+                       name = "TF activity") +
+  geom_vline(xintercept = 0, linewidth = 0.3) +
   labs(title = "TF activity in KAT8-KD 3T3-L1 adipocytes (cell-autonomous)",
-       subtitle = "decoupleR ULM x CollecTRI, ranked on DESeq2 Wald statistic",
+       subtitle = "decoupleR ULM x CollecTRI on the genome-wide DESeq2 Wald statistic",
        x = "Inferred TF activity (KAT8KD vs CTL)", y = NULL) +
-  theme_bw(base_size = 11) +
-  theme(panel.grid.minor = element_blank(),
-        plot.title = element_text(face = "bold", size = 12))
+  theme_bw(base_size = 11) + theme(panel.grid.minor = element_blank(),
+                                   plot.title = element_text(face = "bold", size = 12))
+ggsave(file.path(OUTDIR, paste0("TF_cells_barplot_", RUN_TAG, ".png")), p_cells,
+       width = 7.5, height = 8, dpi = 300)
 
-ggsave(file.path(OUTDIR, paste0("TF_activity_cells_barplot_", RUN_TAG, ".png")),
-       p_cells, width = 7.5, height = 8, dpi = 300)
-cat("[INFO] Wrote cells TF barplot.\n")
+## 7b) The prediction: adipogenic vs inflammatory TFs -------
+## Print where the key regulators land in CELLS. Prediction from part9:
+## adipogenic TFs ~ 0 (flat) in cells despite crashing in iWAT tissue.
+hl <- function(set, name) {
+  x <- cells %>% dplyr::filter(TF %in% set) %>% dplyr::arrange(dplyr::desc(activity_ulm)) %>%
+    dplyr::select(TF, activity_ulm, FDR, dplyr::any_of("emp_p"))
+  cat("\n--- ", name, " TFs in CELLS ---\n", sep = ""); if (nrow(x)) print(as.data.frame(x), row.names = FALSE)
+  x
+}
+adip <- hl(tp$tf_adipogenic,  "Adipogenic/lipogenic")
+infl <- hl(tp$tf_inflammatory, "Inflammatory/stress")
 
-## 8) Cross-contrast heatmap: the cell-autonomy readout -----
-## A TF active in cells AND tissue = cell-autonomous regulator.
-## A TF active only in tissue (e.g. inflammatory NF-kB/IRF/STAT)
-## = candidate non-cell-autonomous (infiltration-driven).
-wide <- acts_all %>%
-  dplyr::select(TF, contrast, activity) %>%
-  tidyr::pivot_wider(names_from = contrast, values_from = activity)
-
-## choose TFs that are strong in ANY contrast
-strength <- acts_all %>%
-  dplyr::group_by(TF) %>%
-  dplyr::summarise(m = max(abs(activity), na.rm = TRUE), .groups = "drop") %>%
-  dplyr::arrange(dplyr::desc(m)) %>%
-  dplyr::slice_head(n = tf_params$top_n_heatmap)
-
-hm_mat <- wide %>%
-  dplyr::filter(TF %in% strength$TF) %>%
-  tibble::column_to_rownames("TF") %>%
-  as.matrix()
-## order columns cells first
-col_order <- intersect(c(CELL_KEY, TISSUE_KEYS), colnames(hm_mat))
-hm_mat <- hm_mat[, col_order, drop = FALSE]
-## A TF may be unscored in a contrast (regulon < minsize there); treat as
-## no inferred activity (0) so row clustering has no NA distances.
-hm_mat[is.na(hm_mat)] <- 0
-
-lim <- max(abs(hm_mat), na.rm = TRUE)
-brk <- seq(-lim, lim, length.out = 101)
-png(file.path(OUTDIR, paste0("TF_activity_heatmap_", RUN_TAG, ".png")),
-    width = 1400, height = 2000, res = 220)
-pheatmap(hm_mat,
-         color = colorRampPalette(c("#2166AC", "#4393C3", "grey97", "#D6604D", "#B2182B"))(100),
-         breaks = brk,
-         cluster_cols = FALSE, cluster_rows = TRUE,
-         display_numbers = TRUE, number_format = "%.1f", fontsize_number = 7,
-         main = "TF activity across contrasts (cells = cell-autonomous)",
-         angle_col = 0)
+## 8) Cross-contrast heatmap (cells first) ------------------
+wide <- acts %>% dplyr::select(TF, contrast, activity_ulm) %>%
+  tidyr::pivot_wider(names_from = contrast, values_from = activity_ulm)
+strength <- acts %>% dplyr::group_by(TF) %>%
+  dplyr::summarise(m = max(abs(activity_ulm), na.rm = TRUE), .groups = "drop") %>%
+  dplyr::slice_max(m, n = tp$top_n_heatmap)
+hm <- wide %>% dplyr::filter(TF %in% strength$TF) %>% tibble::column_to_rownames("TF") %>% as.matrix()
+hm <- hm[, intersect(c(CELL_KEY, TISSUE_KEYS), colnames(hm)), drop = FALSE]
+hm[is.na(hm)] <- 0
+lim <- max(abs(hm), na.rm = TRUE)
+png(file.path(OUTDIR, paste0("TF_heatmap_", RUN_TAG, ".png")), width = 1400, height = 2100, res = 220)
+pheatmap(hm, color = colorRampPalette(c("#2166AC","#4393C3","grey97","#D6604D","#B2182B"))(100),
+         breaks = seq(-lim, lim, length.out = 101), cluster_cols = FALSE, cluster_rows = TRUE,
+         display_numbers = TRUE, number_format = "%.1f", fontsize_number = 7, angle_col = 0,
+         main = "TF activity across contrasts (cells = cell-autonomous)")
 dev.off()
-cat("[INFO] Wrote TF activity heatmap.\n")
 
-## 9) Combined table ----------------------------------------
-write.csv(acts_all %>% dplyr::arrange(TF, contrast),
-          file.path(OUTDIR, paste0("TF_activity_ALL_contrasts_", RUN_TAG, ".csv")),
-          row.names = FALSE)
+## 9) Cell-autonomy scatter: cells vs iWAT activity ---------
+## TFs on the diagonal are cell-autonomous; TFs strong in iWAT but ~0 in
+## cells (off the y=0 line, along the x axis) are non-cell-autonomous.
+sc <- wide %>% dplyr::filter(!is.na(.data[[CELL_KEY]]), !is.na(.data[["iWAT"]])) %>%
+  dplyr::mutate(class = dplyr::case_when(
+    TF %in% tp$tf_adipogenic   ~ "adipogenic",
+    TF %in% tp$tf_inflammatory ~ "inflammatory",
+    TRUE ~ "other"))
+p_sc <- ggplot(sc, aes(.data[["iWAT"]], .data[[CELL_KEY]])) +
+  geom_hline(yintercept = 0, color = "grey70", linewidth = .3) +
+  geom_vline(xintercept = 0, color = "grey70", linewidth = .3) +
+  geom_abline(slope = 1, linetype = 2, color = "grey60") +
+  geom_point(aes(color = class), alpha = .6, size = 1.4) +
+  ggrepel::geom_text_repel(data = dplyr::filter(sc, class != "other"),
+                           aes(label = TF, color = class), size = 3, max.overlaps = 40) +
+  scale_color_manual(values = c(adipogenic = "#2166AC", inflammatory = "#B2182B", other = "grey75")) +
+  labs(title = "TF activity: cells vs iWAT (cell-autonomy view)",
+       subtitle = "adipogenic TFs strong in iWAT but ~0 in cells => non-cell-autonomous",
+       x = "iWAT TF activity", y = "cells TF activity") +
+  theme_bw(base_size = 11) + theme(panel.grid.minor = element_blank(),
+                                   plot.title = element_text(face = "bold"))
+ggsave(file.path(OUTDIR, paste0("TF_cells_vs_iWAT_scatter_", RUN_TAG, ".png")), p_sc,
+       width = 7.5, height = 6.5, dpi = 300)
 
 cat("\n[DONE] Part 8 complete. Outputs in ", OUTDIR, "\n", sep = "")
-cat("       Interpretation guide:\n")
-cat("       - Repressed adipogenic TFs in CELLS (Pparg/Cebpa/Srebf1/nuclear receptors)\n")
-cat("         = cell-autonomous collapse of the adipocyte program (candidate DIRECT route).\n")
-cat("       - Inflammatory TFs (Nfkb/Rel/Stat/Irf) active in TISSUE but not CELLS\n")
-cat("         = candidate non-cell-autonomous (infiltration-driven, INDIRECT).\n")
+cat("Read the cells table first; then check whether the adipogenic TFs above\n")
+cat("are flat (predicted) vs their strong repression in the iWAT column of the heatmap.\n")

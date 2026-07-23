@@ -59,9 +59,11 @@ tf_params <- list(
   min_regulon_size = 5,
 
   ## Primary method. "ulm" (univariate linear model) is the
-  ## benchmarked-robust default in decoupleR. "consensus" also runs
-  ## mlm + wsum and takes the normalised consensus (more robust, slower).
-  method = "ulm",
+  ## benchmarked-robust default in decoupleR. Set run_consensus = TRUE
+  ## to ALSO compute the multi-method consensus (ulm + mlm + wsum) as a
+  ## robustness cross-check (recommended for the low-signal cells).
+  method        = "ulm",
+  run_consensus = TRUE,
 
   ## FDR threshold for calling a TF's activity significant.
   fdr_cutoff = 0.05,
@@ -77,7 +79,20 @@ tf_params <- list(
 
   ## Empirical null: permute gene labels to confirm the analytic
   ## p-values are calibrated (recommended at n = 4/group). 0 disables.
-  n_permutations = 1000
+  n_permutations = 1000,
+
+  ## --- Biological highlight sets (for the cells read-out) ---
+  ## Adipogenic / lipogenic master regulators. The concordance result
+  ## predicts these should be FLAT in the cells (their collapse in iWAT
+  ## tissue is non-cell-autonomous), and are the key TFs to watch.
+  tf_adipogenic = c("Pparg","Cebpa","Cebpd","Srebf1","Srebf2","Nr1h3","Nr1h2",
+                    "Rxra","Foxo1","Klf15","Klf5","Ebf1","Mlxipl","Ppara",
+                    "Esrra","Nr3c1","Gata2","Gata3","Stat5a","Creb1"),
+  ## Inflammatory / stress regulators (expected active in TISSUE, driven
+  ## partly by infiltrate; the cells test whether any are cell-autonomous).
+  tf_inflammatory = c("Nfkb1","Rela","Rel","Relb","Stat1","Stat3","Irf1","Irf3",
+                      "Irf7","Irf8","Jun","Junb","Fos","Fosb","Atf3","Cebpb",
+                      "Spi1","Egr1","Egr2","Nfe2l2","Hif1a")
 )
 
 ## ---------------------------------------------------------

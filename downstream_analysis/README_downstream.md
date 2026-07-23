@@ -5,9 +5,20 @@ cell-autonomous?"** using **only data you already have**. Both are threshold-fre
 and aggregate weak signals across many genes, so the **low 3T3-L1 DEG count does
 not limit them**.
 
-- `part8_tf_activity.R` — which TF programs shift when KAT8 is lost (decoupleR ULM × CollecTRI).
+- `part8_tf_activity.R` — **cells-focused** TF activity inference (decoupleR ULM × CollecTRI
+  on the genome-wide Wald statistic). Centres the 3T3-L1 cells, uses iWAT/gWAT as comparison,
+  and prints where the adipogenic vs inflammatory TFs land. **Needs OmniPath reachable once**
+  to fetch CollecTRI (then cached to `collectri_mouse.rds`); run it where you have internet.
 - `part9_cell_tissue_concordance.R` — which tissue changes reproduce in the pure adipocyte cells.
-- `config_downstream.R` — shared config; **edit the input paths here**.
+  (Also has a runnable Python port: `run_part9_python.py` + `run_program_level.py`, already executed —
+  results in `results/`.)
+- `config_downstream.R` — shared config; **edit the input paths here**. Also holds the TF
+  highlight sets (`tf_adipogenic`, `tf_inflammatory`) and the consensus toggle for part8.
+
+**Prediction part8 tests (from the part9 result):** the metabolic-identity collapse is
+non-cell-autonomous, so the adipogenic TFs (Pparg, Cebpa, Srebf1, …) should read strongly
+repressed in **iWAT** but **flat in the cells**. Whatever *is* cell-autonomous (ECM/fibrosis
+program) should surface as the TFs active in the cells column.
 
 ## What to upload (this is all I need)
 
