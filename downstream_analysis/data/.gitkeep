@@ -1,0 +1,4 @@
+Put your three DESeq2 DE CSVs here (see README_downstream.md):
+  DE_cells_KAT8KD_vs_CTL.csv
+  DE_tissue_iWAT_KD_vs_CTL.csv
+  DE_tissue_gWAT_KD_vs_CTL.csv
