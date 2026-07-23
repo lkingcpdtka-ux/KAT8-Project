@@ -186,7 +186,7 @@ p_cells <- ggplot(top, aes(activity_ulm, TF, fill = activity_ulm)) +
                        name = "TF activity") +
   geom_vline(xintercept = 0, linewidth = 0.3) +
   labs(title = "TF activity in KAT8-KD 3T3-L1 adipocytes (cell-autonomous)",
-       subtitle = "decoupleR ULM x CollecTRI on the genome-wide DESeq2 Wald statistic",
+       subtitle = "decoupleR ULM x signed TF regulon (DoRothEA A-C / CollecTRI) on the DESeq2 Wald stat",
        x = "Inferred TF activity (KAT8KD vs CTL)", y = NULL) +
   theme_bw(base_size = 11) + theme(panel.grid.minor = element_blank(),
                                    plot.title = element_text(face = "bold", size = 12))

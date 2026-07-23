@@ -77,11 +77,14 @@ tf_params <- list(
   ## do not depend on OmniPath being reachable every time.
   network_cache = file.path("downstream_analysis", "collectri_mouse.rds"),
 
-  ## OmniPath escape hatch. If OmniPath is down/buggy, point this at a local
-  ## signed-regulon CSV with columns: source, target, mor (+ optional weight).
-  ## Leave NULL to fetch CollecTRI from OmniPath. Once any fetch succeeds it is
-  ## cached to network_cache, so you only need a working fetch once.
-  network_csv = NULL,
+  ## Signed-regulon source. Defaults to the BUNDLED DoRothEA (mouse,
+  ## confidence A-C) CSV committed alongside this config -- fully offline, so
+  ## it sidesteps the OmnipathR static-table bug entirely. 273 TFs, all with
+  ## >= 5 targets, incl. Pparg/Cebpa/Srebf1/Nr1h3/Ppara and the inflammatory
+  ## set. Columns: source, target, mor.
+  ## Set to NULL to instead fetch live CollecTRI from OmniPath (once your
+  ## OmnipathR is fixed and OmniPath's server is up).
+  network_csv = file.path("downstream_analysis", "regulon_dorothea_mm_ABC.csv"),
 
   ## Empirical null: permute gene labels to confirm the analytic
   ## p-values are calibrated (recommended at n = 4/group). 0 disables.
