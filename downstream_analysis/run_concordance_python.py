@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cell <-> tissue concordance (part9), Python port. Direct/indirect & cell-autonomy.
+"""Cell <-> tissue concordance (part4b), Python port. Direct/indirect & cell-autonomy.
 Threshold-free on the cell side. No external data needed."""
 import os, numpy as np, pandas as pd
 from scipy import stats

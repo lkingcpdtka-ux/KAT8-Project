@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 
 ## =========================================================
-## KAT8 - PART 8: TRANSCRIPTION FACTOR ACTIVITY INFERENCE
-##                (cells-focused)
+## KAT8 - PART 4: TRANSCRIPTION FACTOR ACTIVITY INFERENCE
+##                (cells-focused; main analysis after DE/ORA/GSEA)
 ## =========================================================
 ## KAT8 is an H4K16ac co-activator, not a TF. When it is lost, WHICH
 ## transcription-factor programs shift? The clean read-out is the pure
@@ -16,7 +16,7 @@
 ##   50 targets each drifting a little is a strong, testable signal even when
 ##   no single gene clears FDR.
 ##
-## The concordance analysis (part9) showed the adipocyte-identity/metabolic
+## The concordance analysis (part4b) showed the adipocyte-identity/metabolic
 ## collapse seen in iWAT tissue is ABSENT in these cells. This script tests
 ## the regulator-level version of that: the adipogenic TFs (Pparg, Cebpa,
 ## Srebf1, ...) are expected to read strongly repressed in iWAT but FLAT in
@@ -156,7 +156,7 @@ ggsave(file.path(OUTDIR, paste0("TF_cells_barplot_", RUN_TAG, ".png")), p_cells,
        width = 7.5, height = 8, dpi = 300)
 
 ## 7b) The prediction: adipogenic vs inflammatory TFs -------
-## Print where the key regulators land in CELLS. Prediction from part9:
+## Print where the key regulators land in CELLS. Prediction from part4b:
 ## adipogenic TFs ~ 0 (flat) in cells despite crashing in iWAT tissue.
 hl <- function(set, name) {
   x <- cells %>% dplyr::filter(TF %in% set) %>% dplyr::arrange(dplyr::desc(activity_ulm)) %>%
@@ -208,6 +208,6 @@ p_sc <- ggplot(sc, aes(.data[["iWAT"]], .data[[CELL_KEY]])) +
 ggsave(file.path(OUTDIR, paste0("TF_cells_vs_iWAT_scatter_", RUN_TAG, ".png")), p_sc,
        width = 7.5, height = 6.5, dpi = 300)
 
-cat("\n[DONE] Part 8 complete. Outputs in ", OUTDIR, "\n", sep = "")
+cat("\n[DONE] Part 4 (TF activity) complete. Outputs in ", OUTDIR, "\n", sep = "")
 cat("Read the cells table first; then check whether the adipogenic TFs above\n")
 cat("are flat (predicted) vs their strong repression in the iWAT column of the heatmap.\n")

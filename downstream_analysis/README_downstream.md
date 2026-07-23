@@ -5,17 +5,17 @@ cell-autonomous?"** using **only data you already have**. Both are threshold-fre
 and aggregate weak signals across many genes, so the **low 3T3-L1 DEG count does
 not limit them**.
 
-- `part8_tf_activity.R` — **cells-focused** TF activity inference (decoupleR ULM × CollecTRI
+- `part4_tf_activity.R` — **cells-focused** TF activity inference (decoupleR ULM × CollecTRI
   on the genome-wide Wald statistic). Centres the 3T3-L1 cells, uses iWAT/gWAT as comparison,
   and prints where the adipogenic vs inflammatory TFs land. **Needs OmniPath reachable once**
   to fetch CollecTRI (then cached to `collectri_mouse.rds`); run it where you have internet.
-- `part9_cell_tissue_concordance.R` — which tissue changes reproduce in the pure adipocyte cells.
-  (Also has a runnable Python port: `run_part9_python.py` + `run_program_level.py`, already executed —
+- `part4b_cell_tissue_concordance.R` — which tissue changes reproduce in the pure adipocyte cells.
+  (Also has a runnable Python port: `run_concordance_python.py` + `run_program_level.py`, already executed —
   results in `results/`.)
 - `config_downstream.R` — shared config; **edit the input paths here**. Also holds the TF
-  highlight sets (`tf_adipogenic`, `tf_inflammatory`) and the consensus toggle for part8.
+  highlight sets (`tf_adipogenic`, `tf_inflammatory`) and the consensus toggle for part4.
 
-**Prediction part8 tests (from the part9 result):** the metabolic-identity collapse is
+**Prediction part4 (TF) tests (from the part4b result):** the metabolic-identity collapse is
 non-cell-autonomous, so the adipogenic TFs (Pparg, Cebpa, Srebf1, …) should read strongly
 repressed in **iWAT** but **flat in the cells**. Whatever *is* cell-autonomous (ECM/fibrosis
 program) should surface as the TFs active in the cells column.
@@ -41,11 +41,11 @@ Each must contain columns `gene_name`, `log2FoldChange`, `stat`, `pvalue`, `padj
 
 ```r
 # from the repo root
-source("downstream_analysis/part8_tf_activity.R")            # TF activity
-source("downstream_analysis/part9_cell_tissue_concordance.R") # concordance
+source("downstream_analysis/part4_tf_activity.R")            # TF activity
+source("downstream_analysis/part4b_cell_tissue_concordance.R") # concordance
 ```
 
-Outputs land in `downstream_analysis/results/`. `part8` needs internet **once** to
+Outputs land in `downstream_analysis/results/`. `part4_tf_activity.R` needs internet **once** to
 fetch the CollecTRI network from OmniPath; it is then cached to
 `downstream_analysis/collectri_mouse.rds`.
 
@@ -59,11 +59,11 @@ effect is loss of expression. Prediction — the **down** metabolic/adipocyte-id
 program is **direct & cell-autonomous** (reproduces in cells); the **up** inflammatory
 program is **indirect & non-cell-autonomous** (infiltration, tissue-only).
 
-- **part8 heatmap** — a TF active in *cells and* tissue is a cell-autonomous regulator;
+- **part4 heatmap** — a TF active in *cells and* tissue is a cell-autonomous regulator;
   a TF active only in tissue (NF-κB/IRF/STAT) is likely infiltration-driven. Watch the
   adipogenic TFs (Pparg, Cebpa, Srebf1, nuclear receptors) in the **cells** column —
   their repression is your cell-autonomous mechanism.
-- **part9 scatter + GSEA** — a positive, significant `NES(tissue_DOWN)` in cells means
+- **part4b scatter + GSEA** — a positive, significant `NES(tissue_DOWN)` in cells means
   the tissue down-program is cell-autonomous; a non-significant `tissue_UP` in cells
   supports the inflammation being non-cell-autonomous. The `binom_p` directional tests
   quantify the same thing while borrowing power from the well-powered tissue DEGs.
@@ -96,7 +96,7 @@ upload counts + scripts.
    count and treat |log2FC| as a descriptor, not a gate.
 
 4. **[M] For direct/indirect, do not lean on a hard DEG-overlap (Venn).** *Applied.*
-   With few cell DEGs a Venn is underpowered and misleading. `part9` instead uses rank
+   With few cell DEGs a Venn is underpowered and misleading. `part4b` instead uses rank
    correlation, a signature-GSEA of the tissue program against the full cell ranking, and
    directional binomial tests that borrow power from the tissue side — all threshold-free on cells.
 
@@ -105,11 +105,11 @@ upload counts + scripts.
    top ~500 most-variable genes without unit scaling (`DESeq2::plotPCA`). Cosmetic, not a
    conclusion-changer.
 
-6. **[L] Cross-dataset gene matching.** *Applied.* `part9` merges cells↔tissue on gene symbol and
+6. **[L] Cross-dataset gene matching.** *Applied.* `part4b` merges cells↔tissue on gene symbol and
    de-duplicates by keeping the most significant row, so `make.unique` suffixes don't silently
    drop genes.
 
-7. **[L] Permutation calibration.** *Applied.* `part8` can permute gene labels (`n_permutations`)
+7. **[L] Permutation calibration.** *Applied.* `part4_tf_activity.R` can permute gene labels (`n_permutations`)
    to confirm the analytic TF p-values aren't inflated at this sample size.
 
 The validated tissue design (`~ 0 + GroupDepot`, sex handling) is sound and left unchanged.
@@ -118,6 +118,6 @@ The validated tissue design (`~ 0 + GroupDepot`, sex handling) is sound and left
 - **snRNA-seq** — the definitive test of *which cell type* drives each signature.
 - **H4K16ac / KAT8 ChIP-seq** — the definitive *direct-target* map. Until then, integrating
   *public* MOF/H4K16ac ChIP (Cistrome/ENCODE) via BETA is the strongest no-new-experiment proxy
-  (a possible part 10).
+  (a possible follow-up analysis).
 - KAT8 also has **non-histone substrates**, so some effects are post-translational and invisible
   to any RNA-based readout — state as a limitation.

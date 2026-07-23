@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 
 ## =========================================================
-## KAT8 - PART 9: CELL <-> TISSUE CONCORDANCE
+## KAT8 - PART 4b: CELL <-> TISSUE CONCORDANCE
 ##                (direct/indirect & cell-autonomy)
 ## =========================================================
 ## The Adipoq-Cre KO tissue is a cell MIXTURE, so a tissue change can
@@ -177,7 +177,7 @@ summ <- dplyr::bind_rows(summary_rows)
 write.csv(summ, file.path(OUTDIR, paste0("concordance_SUMMARY_", RUN_TAG, ".csv")), row.names = FALSE)
 
 cat("\n=== CONCORDANCE SUMMARY ===\n"); print(summ)
-cat("\n[DONE] Part 9 complete. Outputs in ", OUTDIR, "\n", sep = "")
+cat("\n[DONE] Part 4b (concordance) complete. Outputs in ", OUTDIR, "\n", sep = "")
 cat("Read-out:\n")
 cat(" - High Spearman + positive NES(tissue_DOWN) in cells = the metabolic/adipocyte\n")
 cat("   down-program is CELL-AUTONOMOUS (direct-candidate).\n")

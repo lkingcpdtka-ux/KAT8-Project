@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Program-level KAT8 concordance: mean log2FC per curated program across
 cells / iWAT / gWAT, with a competitive test and a summary bar figure.
-Companion to run_part9_python.py. Inputs = downstream_analysis/data/DE_*.csv."""
+Companion to run_concordance_python.py. Inputs = downstream_analysis/data/DE_*.csv."""
 import numpy as np, pandas as pd
 from scipy import stats
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt

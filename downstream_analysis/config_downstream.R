@@ -2,8 +2,8 @@
 ## KAT8 downstream analysis - SHARED CONFIG
 ## =========================================================
 ## Sourced by:
-##   part8_tf_activity.R           (TF activity inference)
-##   part9_cell_tissue_concordance.R (direct/indirect, cell-autonomous)
+##   part4_tf_activity.R            (TF activity inference; main focus)
+##   part4b_cell_tissue_concordance.R (direct/indirect, cell-autonomous)
 ##
 ## These two scripts consume the per-gene DESeq2 result tables that
 ## your existing pipeline already writes (they contain gene_name,
@@ -50,7 +50,7 @@ MASTER_SEED <- 12345
 RANK_STAT <- "stat"
 
 ## ---------------------------------------------------------
-## 5) TF ACTIVITY PARAMETERS (part8)
+## 5) TF ACTIVITY PARAMETERS (part4)
 ## ---------------------------------------------------------
 tf_params <- list(
   ## Minimum number of a TF's target genes that must be present
@@ -96,7 +96,7 @@ tf_params <- list(
 )
 
 ## ---------------------------------------------------------
-## 6) CONCORDANCE PARAMETERS (part9)
+## 6) CONCORDANCE PARAMETERS (part4b)
 ## ---------------------------------------------------------
 concordance_params <- list(
   ## Significance used only to DEFINE the well-powered tissue gene
