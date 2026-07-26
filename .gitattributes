@@ -1,0 +1,3 @@
+*.R text eol=crlf
+*.md text
+*.py text
