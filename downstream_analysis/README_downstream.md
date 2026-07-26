@@ -9,9 +9,9 @@ not limit them**.
   on the genome-wide Wald statistic). Centres the 3T3-L1 cells, uses iWAT/gWAT as comparison,
   and prints where the adipogenic vs inflammatory TFs land. **Needs OmniPath reachable once**
   to fetch CollecTRI (then cached to `collectri_mouse.rds`); run it where you have internet.
-- `part4b_cell_tissue_concordance.R` — which tissue changes reproduce in the pure adipocyte cells.
-  (Also has a runnable Python port: `run_concordance_python.py` + `run_program_level.py`, already executed —
-  results in `results/`.)
+- `part4b_cell_tissue_concordance.R` — which tissue changes reproduce in the pure adipocyte cells,
+  plus a **program-level** section (adipocyte identity / thermogenic / lipid / inflammatory / ECM
+  scored competitively in each dataset) that produces the cells-vs-iWAT-vs-gWAT summary figure.
 - `part5_cells_mechanism.R` — **the mechanism analysis for the cells.** Modules:
   **A** secretome (what the KAT8-null adipocyte broadcasts + whether it replicates in vivo),
   **B/C/D** three independent TF layers (TF genes → regulon activity → ChIP-derived target

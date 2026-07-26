@@ -177,9 +177,87 @@ summ <- dplyr::bind_rows(summary_rows)
 write.csv(summ, file.path(OUTDIR, paste0("concordance_SUMMARY_", RUN_TAG, ".csv")), row.names = FALSE)
 
 cat("\n=== CONCORDANCE SUMMARY ===\n"); print(summ)
+
+## =========================================================
+## 5) PROGRAM-LEVEL VIEW  (cells vs iWAT vs gWAT)
+## =========================================================
+## The gene-by-gene concordance above can hide the headline. This section asks
+## the same question one level up: for each curated biological PROGRAM, how big
+## is the KAT8 effect in the pure adipocytes versus each depot?
+##
+## Each program gets a COMPETITIVE test (Wilcoxon of its genes' Wald statistics
+## against all other genes in that dataset), so "the program moved" is a
+## statistical claim, not just a mean. This is what shows -- in one figure --
+## that the adipocyte-identity / thermogenic / lipid programs collapse in iWAT
+## but are FLAT in the cells, while ECM is the program that reproduces.
+PROGRAMS <- list(
+  "Adipocyte identity" = c("Pparg","Adipoq","Plin1","Cd36","Fabp4","Lep","Cfd","Lipe",
+                           "Pnpla2","Cav1","Retn"),
+  "Thermogenic"        = c("Ucp1","Cidea","Ppargc1a","Cox7a1","Elovl3","Dio2","Cox8b","Prdm16"),
+  "Lipid metabolism"   = c("Ppara","Acox1","Acacb","Pck1","Scd1","Fasn","Acaca","Cpt1b","Lpl"),
+  "Inflammatory"       = c("Ccl2","Ccl8","Cxcl2","Cxcl10","Il1b","Il12b","Itgax","Ctss",
+                           "Adgre1","Tnf","Cd68","Lyz2"),
+  "ECM / fibrosis"     = c("Col1a1","Col3a1","Col6a1","Fn1","Timp1","Sparc","Col1a2","Lox")
+)
+
+prog_rows <- list()
+for (nm in names(de)) {
+  d <- de[[nm]]
+  for (pname in names(PROGRAMS)) {
+    present <- intersect(PROGRAMS[[pname]], d$gene)
+    if (length(present) < 3) next
+    sub <- d[d$gene %in% present, ]
+    bg  <- d[!d$gene %in% present, ]
+    pv <- tryCatch(suppressWarnings(wilcox.test(sub$stat, bg$stat)$p.value),
+                   error = function(e) NA_real_)
+    prog_rows[[length(prog_rows) + 1]] <- data.frame(
+      dataset      = nm,
+      program      = pname,
+      n_genes      = length(present),
+      mean_log2FC  = mean(sub$log2FC, na.rm = TRUE),
+      mean_Wald    = mean(sub$stat, na.rm = TRUE),
+      n_sig        = sum(sub$padj < cp$tissue_fdr, na.rm = TRUE),
+      p_vs_background = pv,
+      stringsAsFactors = FALSE)
+  }
+}
+prog <- dplyr::bind_rows(prog_rows)
+if (nrow(prog) > 0) {
+  write.csv(prog, file.path(OUTDIR, paste0("program_level_concordance_", RUN_TAG, ".csv")),
+            row.names = FALSE)
+  cat("\n=== PROGRAM-LEVEL SUMMARY (mean log2FC) ===\n")
+  print(tidyr::pivot_wider(prog[, c("program","dataset","mean_log2FC")],
+                           names_from = dataset, values_from = mean_log2FC),
+        n = 100)
+
+  ord <- c(CELL_KEY, TISSUE_KEYS)
+  prog$dataset <- factor(prog$dataset, levels = ord[ord %in% unique(prog$dataset)])
+  prog$program <- factor(prog$program, levels = rev(names(PROGRAMS)))
+  p_prog <- ggplot(prog, aes(x = mean_log2FC, y = program, fill = dataset)) +
+    geom_col(position = position_dodge(width = 0.8), width = 0.72,
+             color = "black", linewidth = 0.25) +
+    geom_vline(xintercept = 0, color = "grey40", linewidth = 0.4) +
+    scale_fill_brewer(palette = "RdYlBu", direction = -1, name = NULL) +
+    labs(x = expression(mean~log[2]~fold~change~(KD/KO~vs~CTL)), y = NULL,
+         title = "Program-level KAT8 response: pure adipocytes vs tissue",
+         subtitle = "flat in cells + strong in tissue = NOT cell-autonomous",
+         caption = paste0("Curated programs; each tested competitively against all other genes ",
+                          "in that dataset (Wilcoxon on Wald stats).\nSee program_level_concordance_",
+                          RUN_TAG, ".csv for n, p-values and significant-gene counts.")) +
+    theme_bw(base_size = 11) +
+    theme(panel.grid.minor = element_blank(),
+          plot.title = element_text(face = "bold"),
+          plot.caption = element_text(size = 7.5, colour = "grey35", hjust = 0))
+  ggsave(file.path(OUTDIR, paste0("program_level_concordance_", RUN_TAG, ".png")),
+         p_prog, width = 9, height = 4.8, dpi = 300, bg = "white")
+  cat("[OK] Wrote program-level table + figure.\n")
+}
+
 cat("\n[DONE] Part 4b (concordance) complete. Outputs in ", OUTDIR, "\n", sep = "")
 cat("Read-out:\n")
 cat(" - High Spearman + positive NES(tissue_DOWN) in cells = the metabolic/adipocyte\n")
 cat("   down-program is CELL-AUTONOMOUS (direct-candidate).\n")
 cat(" - tissue_UP inflammatory set NOT enriched in cells = NON-cell-autonomous (indirect,\n")
 cat("   consistent with the macrophage infiltration seen histologically).\n")
+cat(" - Program-level figure: any program strong in tissue but FLAT in cells is\n")
+cat("   non-cell-autonomous; a program that reproduces in cells is the direct candidate.\n")
