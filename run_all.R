@@ -41,13 +41,16 @@ TISSUE <- list(
 CELLS <- list(
   list(label = "Cells   DE / ORA / GSEA",          path = "KAT8_bulk_cells_comprehensive.R", required = TRUE)
 )
+## One script per question, run in this order.
 DOWNSTREAM <- list(
-  list(label = "Part 4  TF activity (all contrasts)",
-       path = file.path("downstream_analysis", "part4_tf_activity.R"), required = FALSE),
-  list(label = "Part 4b Cell<->tissue concordance",
+  list(label = "Part 4b  Is it cell-autonomous?  (concordance + programs)",
        path = file.path("downstream_analysis", "part4b_cell_tissue_concordance.R"), required = FALSE),
-  list(label = "Part 5  Cell-autonomous mechanism",
-       path = file.path("downstream_analysis", "part5_cells_mechanism.R"), required = FALSE)
+  list(label = "Part 5a  What does the cell broadcast?  (secretome)",
+       path = file.path("downstream_analysis", "part5a_secretome.R"), required = FALSE),
+  list(label = "Part 5b  Which TF drives it?  (3 layers + PROGENy)",
+       path = file.path("downstream_analysis", "part5b_tf_analysis.R"), required = FALSE),
+  list(label = "Part 5c  Is the KAT8/NSL program engaged?  (complex output)",
+       path = file.path("downstream_analysis", "part5c_kat8_complex.R"), required = FALSE)
 )
 
 steps <- switch(what,

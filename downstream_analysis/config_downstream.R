@@ -2,10 +2,12 @@
 ## KAT8 downstream analysis - SHARED CONFIG
 ## =========================================================
 ## Sourced by:
-##   part4_tf_activity.R            (TF activity inference; main focus)
-##   part4b_cell_tissue_concordance.R (direct/indirect, cell-autonomous)
+##   part4b_cell_tissue_concordance.R  is the effect cell-autonomous?
+##   part5a_secretome.R                what does the KAT8-null cell broadcast?
+##   part5b_tf_analysis.R              which TF drives it?
+##   part5c_kat8_complex.R             is the KAT8/NSL program engaged?
 ##
-## These two scripts consume the per-gene DESeq2 result tables that
+## All four scripts consume the per-gene DESeq2 result tables that
 ## your existing pipeline already writes (they contain gene_name,
 ## log2FoldChange, stat, pvalue, padj). No raw counts required.
 ## =========================================================
@@ -50,7 +52,7 @@ MASTER_SEED <- 12345
 RANK_STAT <- "stat"
 
 ## ---------------------------------------------------------
-## 5) TF ACTIVITY PARAMETERS (part4)
+## 5) TF ACTIVITY PARAMETERS (part5b)
 ## ---------------------------------------------------------
 tf_params <- list(
   ## Minimum number of a TF's target genes that must be present
@@ -188,6 +190,85 @@ load_all_de <- function(paths = DE_PATHS) {
   }
   lst
 }
+
+## ---------------------------------------------------------
+## 8) SHARED LOOK + SANITY HELPERS
+## ---------------------------------------------------------
+## Kept here so every downstream script stays short and they all look and
+## behave the same. Sourced by part4b / part5a / part5b / part5c.
+
+FDR_CUT  <- 0.05
+col_up   <- "#B2182B"   ## up in KAT8 KD/KO
+col_down <- "#2166AC"   ## down in KAT8 KD/KO
+
+theme_pub <- function(base_size = 11) {
+  ggplot2::theme_bw(base_size = base_size) %+replace%
+    ggplot2::theme(
+      panel.grid.minor = ggplot2::element_blank(),
+      axis.text    = ggplot2::element_text(color = "black"),
+      axis.title   = ggplot2::element_text(color = "black", face = "bold"),
+      plot.title   = ggplot2::element_text(face = "bold", hjust = 0),
+      plot.caption = ggplot2::element_text(size = 7.5, color = "grey35", hjust = 0))
+}
+
+## Sanity ledger: each script calls init_sanity() once, log_sanity() as it goes,
+## and write_sanity() at the end. Everything the script checked lands in one CSV
+## so a run can be audited without re-reading the console.
+.SANITY <- new.env(parent = emptyenv())
+init_sanity <- function(script) {
+  .SANITY$rows <- list(); .SANITY$script <- script
+  cat("\n== ", script, " ==\n", sep = "")
+}
+log_sanity <- function(check, value, status = "INFO") {
+  .SANITY$rows[[length(.SANITY$rows) + 1]] <- data.frame(
+    script = .SANITY$script, check = check, value = as.character(value),
+    status = status, stringsAsFactors = FALSE)
+  cat(sprintf("  [%-4s] %-48s %s\n", status, check, value))
+}
+write_sanity <- function() {
+  df <- do.call(rbind, .SANITY$rows)
+  if (is.null(df)) return(invisible(NULL))
+  f <- file.path(OUTDIR, paste0("SANITY_", .SANITY$script, "_", RUN_TAG, ".csv"))
+  utils::write.csv(df, f, row.names = FALSE)
+  nf <- sum(df$status == "FAIL"); nw <- sum(df$status == "WARN")
+  cat("\n  ", nrow(df), " checks | ", nf, " FAIL | ", nw, " WARN  -> ", basename(f), "\n", sep = "")
+  if (nf > 0) print(df[df$status == "FAIL", ], row.names = FALSE)
+  invisible(df)
+}
+
+## Guard against the gene-name bug class (dplyr::filter dropping row names,
+## which silently produced "1","2","3" identifiers and emptied enrichment).
+## Every downstream script calls this on its inputs.
+check_gene_names <- function(de_list) {
+  for (nm in names(de_list)) {
+    fr <- mean(grepl("^[0-9]+$", de_list[[nm]]$gene))
+    log_sanity(paste0(nm, ": gene IDs that look numeric"),
+               sprintf("%.1f%%", 100 * fr), ifelse(fr > 0.5, "FAIL", "OK"))
+    if (fr > 0.5)
+      stop("Gene names in '", nm, "' are numeric -- upstream lost gene symbols.",
+           call. = FALSE)
+  }
+}
+
+## GO gene sets from org.Mm.eg.db. Offline and independent of these data, so
+## annotation is NOT circular (a seed list curated from this dataset could only
+## ever re-find genes already annotated by eye). Cached per session.
+.GOCACHE <- new.env(parent = emptyenv())
+go_genes <- function(go_id) {
+  if (!is.null(.GOCACHE[[go_id]])) return(.GOCACHE[[go_id]])
+  out <- tryCatch({
+    eg <- AnnotationDbi::select(org.Mm.eg.db::org.Mm.eg.db, keys = go_id,
+                                keytype = "GOALL", columns = "SYMBOL")
+    unique(eg$SYMBOL[!is.na(eg$SYMBOL)])
+  }, error = function(e) { message("  GO lookup failed for ", go_id, ": ",
+                                   conditionMessage(e)); character(0) })
+  .GOCACHE[[go_id]] <- out
+  out
+}
+GO_IDS <- c(extracellular = "GO:0005576", ecm = "GO:0031012",
+            cell_surface  = "GO:0009986", ligand = "GO:0048018",
+            cytokine      = "GO:0005125", growth_factor = "GO:0008083",
+            tf_activity   = "GO:0003700")
 
 dir.create(OUTDIR, showWarnings = FALSE, recursive = TRUE)
 cat("[INFO] Loaded config_downstream.R  | RUN_TAG =", RUN_TAG, "\n")
