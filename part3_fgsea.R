@@ -99,9 +99,30 @@ if (length(run_dirs) == 0) {
   stop("No Part 1 run directories found in savepoints/")
 }
 
-## Sort by modification time and get most recent
-run_dirs_sorted <- run_dirs[order(file.info(run_dirs)$mtime, decreasing = TRUE)]
-outdir <- run_dirs_sorted[1]
+## Resolve the run folder Part 1 created.
+## BUGFIX: previously selected by file mtime. This project lives in OneDrive and
+## file sync updates mtimes, which can silently promote a STALE run folder --
+## causing this script to read the wrong DE tables and write results into the
+## wrong run. Prefer the explicit pointer written by Part 1; fall back to a
+## FOLDER-NAME sort (RUN_YYYYMMDD_HHMMSS sorts chronologically and is immune
+## to mtime churn). Never sort by mtime.
+outdir <- NULL
+latest_ptr <- file.path(savepoint_dir, "LATEST_RUN.txt")
+if (file.exists(latest_ptr)) {
+  cand <- trimws(readLines(latest_ptr, warn = FALSE))
+  cand <- cand[nzchar(cand)]
+  if (length(cand) >= 1 && dir.exists(cand[1])) {
+    outdir <- cand[1]
+    cat("[OK] Run folder from LATEST_RUN.txt: ", outdir, "\n", sep = "")
+  } else {
+    cat("[WARN] LATEST_RUN.txt present but path missing; falling back to name sort\n")
+  }
+}
+if (is.null(outdir)) {
+  run_dirs_sorted <- run_dirs[order(basename(run_dirs), decreasing = TRUE)]
+  outdir <- run_dirs_sorted[1]
+  cat("[INFO] Using newest RUN_ folder by name: ", outdir, "\n", sep = "")
+}
 
 ## Extract run tag from directory name
 run_tag <- gsub("^RUN_", "", basename(outdir))
@@ -158,7 +179,12 @@ local_gsea_params <- list(
 gse_kegg_params <- list(
   min_gs_size     = gsea_params$min_gs_size,
   max_gs_size     = gsea_params$max_gs_size,
-  pvalue_cutoff   = 0.1,  ## Initial filter (final uses fdr_cut)
+  ## Retain ALL tested pathways (1.0), matching gseGO's pvalueCutoff = 1.0.
+  ## Previously 0.1, which pre-filtered the result object so that the
+  ## N_Pathways_Tested sanity column counted only pathways already passing
+  ## p<0.1 -- not comparable to the GO row. Reported CSVs are unchanged:
+  ## they are still filtered at padj < fdr_cutoff downstream.
+  pvalue_cutoff   = 1.0,
   p_adjust_method = "BH",
   organism        = "mmu",
   seed            = TRUE
@@ -447,7 +473,13 @@ tryCatch({
             if (n_to_simplify > 1) {
               cat("[INFO] Simplifying ", n_to_simplify, " GO:BP terms (cutoff=", simplify_cutoff, ")...\n", sep = "")
               cat("[INFO] Lower cutoff = more aggressive merging. This may take 1-3 minutes...\n")
-              tryCatch({
+              ## BUGFIX: assign from the tryCatch RETURN VALUE. Previously the
+              ## fallback was `gsea_go <- gsea_go_sig` INSIDE error=function(e),
+              ## which writes to the handler's own scope only -- so a failed
+              ## simplify() silently left gsea_go as the FULL UNFILTERED result
+              ## (all terms, incl. non-significant), which was then saved to the
+              ## .rds and the CSV. Returning the value fixes the scoping.
+              gsea_go <- tryCatch({
                 gsea_go_simplified <- clusterProfiler::simplify(
                   gsea_go_sig,
                   cutoff = simplify_cutoff,
@@ -456,13 +488,11 @@ tryCatch({
                 )
                 n_after_simplify <- nrow(gsea_go_simplified@result)
                 cat("[OK] Simplified GO:BP from ", n_to_simplify, " to ", n_after_simplify, " terms\n", sep = "")
-                
-                ## Use simplified results
-                gsea_go <- gsea_go_simplified
+                gsea_go_simplified
               }, error = function(e) {
                 cat("[WARN] GO:BP simplification failed: ", conditionMessage(e), "\n", sep = "")
-                cat("[WARN] Using unsimplified top significant results\n")
-                gsea_go <- gsea_go_sig
+                cat("[WARN] Falling back to unsimplified TOP SIGNIFICANT results\n")
+                gsea_go_sig
               })
             } else {
               cat("[INFO] Only ", n_to_simplify, " significant term(s) - no simplification needed\n", sep = "")

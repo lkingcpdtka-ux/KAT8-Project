@@ -82,9 +82,30 @@ if (length(run_dirs) == 0) {
   stop("No Part 1 run directories found in savepoints/")
 }
 
-## Sort by modification time and get most recent
-run_dirs_sorted <- run_dirs[order(file.info(run_dirs)$mtime, decreasing = TRUE)]
-outdir <- run_dirs_sorted[1]
+## Resolve the run folder Part 1 created.
+## BUGFIX: previously selected by file mtime. This project lives in OneDrive and
+## file sync updates mtimes, which can silently promote a STALE run folder --
+## causing this script to read the wrong DE tables and write results into the
+## wrong run. Prefer the explicit pointer written by Part 1; fall back to a
+## FOLDER-NAME sort (RUN_YYYYMMDD_HHMMSS sorts chronologically and is immune
+## to mtime churn). Never sort by mtime.
+outdir <- NULL
+latest_ptr <- file.path(savepoint_dir, "LATEST_RUN.txt")
+if (file.exists(latest_ptr)) {
+  cand <- trimws(readLines(latest_ptr, warn = FALSE))
+  cand <- cand[nzchar(cand)]
+  if (length(cand) >= 1 && dir.exists(cand[1])) {
+    outdir <- cand[1]
+    cat("[OK] Run folder from LATEST_RUN.txt: ", outdir, "\n", sep = "")
+  } else {
+    cat("[WARN] LATEST_RUN.txt present but path missing; falling back to name sort\n")
+  }
+}
+if (is.null(outdir)) {
+  run_dirs_sorted <- run_dirs[order(basename(run_dirs), decreasing = TRUE)]
+  outdir <- run_dirs_sorted[1]
+  cat("[INFO] Using newest RUN_ folder by name: ", outdir, "\n", sep = "")
+}
 
 ## Extract run tag from directory name
 run_tag <- gsub("^RUN_", "", basename(outdir))

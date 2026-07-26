@@ -125,6 +125,18 @@ outdir  <- run_ctx$outdir
 run_tag <- run_ctx$run_tag
 cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
 
+## 3.1) Write an explicit pointer to THIS run -----------------
+## Parts 2/3/4 must read the run folder Part 1 just created. Selecting it by
+## modification time is unsafe here: this project lives in OneDrive, and file
+## sync updates mtimes, which can silently promote a STALE run folder so the
+## downstream scripts read and write the wrong results. An explicit pointer
+## (plus a name-sort fallback) removes that failure mode entirely.
+savepoint_root <- dirname(outdir)
+dir.create(savepoint_root, recursive = TRUE, showWarnings = FALSE)
+writeLines(normalizePath(outdir, winslash = "/", mustWork = FALSE),
+           con = file.path(savepoint_root, "LATEST_RUN.txt"))
+cat("[OK] Wrote run pointer: ", file.path(savepoint_root, "LATEST_RUN.txt"), "\n", sep = "")
+
 ## -----------------------------
 ## Genes of interest for focused heatmap/volcano
 ## -----------------------------
@@ -307,7 +319,86 @@ tryCatch({
   cat("Number of samples: ", ncol(count_matrix_tissue), "\n")
   cat("Library sizes (colSums raw counts):\n")
   print(colSums(count_matrix_tissue))
-  
+
+  ## ==========================================================
+  ## SANITY CHECK: VALIDATE SAMPLE ANNOTATION AGAINST THE DATA
+  ## ==========================================================
+  ## The Depot/Sex/Genotype assignment above is POSITIONAL (rep("iWAT",10),
+  ## rep("F",5), ...). Nothing so far confirms it is BIOLOGICALLY correct: a
+  ## swapped, renamed or reordered column in counts.txt would be silently
+  ## mislabelled and every downstream result would be confidently wrong.
+  ## These checks catch that using the data itself:
+  ##   SEX      Xist (X-inactivation, high in F) vs Y genes (Ddx3y/Uty/Eif2s3y)
+  ##   GENOTYPE Kat8 must be LOWER in KAT8KD than CTL within each depot
+  ## Failures are reported loudly; set STOP_ON_ANNOTATION_FAIL to halt instead.
+  STOP_ON_ANNOTATION_FAIL <- FALSE
+
+  validate_sample_annotation <- function(cm, annot) {
+    ok_all <- TRUE
+    cpm <- t(t(cm) / pmax(colSums(cm), 1)) * 1e6
+    getg <- function(g) if (g %in% rownames(cpm)) cpm[g, ] else NULL
+
+    ## ---- SEX CHECK ----
+    xist <- getg("Xist")
+    ygenes <- c("Ddx3y", "Uty", "Eif2s3y", "Kdm5d")
+    ymat <- do.call(rbind, Filter(Negate(is.null), lapply(ygenes, getg)))
+    cat("\n--- Sex check (Xist vs Y-linked genes) ---\n")
+    if (is.null(xist) || is.null(ymat) || nrow(ymat) == 0) {
+      cat("[WARN] Xist and/or Y genes not found in counts; SEX CHECK SKIPPED.\n")
+    } else {
+      yscore <- colMeans(ymat, na.rm = TRUE)
+      pred <- ifelse(yscore > xist, "M", "F")
+      obs  <- as.character(annot$Sex[match(colnames(cpm), annot$Sample)])
+      mism <- which(pred != obs)
+      cat("  Y-gene score used: ", paste(rownames(ymat), collapse = ", "), "\n", sep = "")
+      if (length(mism) == 0) {
+        cat("[OK] Sex annotation matches expression for all ", ncol(cpm), " samples.\n", sep = "")
+      } else {
+        ok_all <- FALSE
+        cat("[FAIL] Sex MISMATCH in ", length(mism), " sample(s):\n", sep = "")
+        for (i in mism) {
+          cat("   ", colnames(cpm)[i], ": annotated=", obs[i], " predicted=", pred[i],
+              "  (Xist=", round(xist[i], 1), " CPM, Y=", round(yscore[i], 1), " CPM)\n", sep = "")
+        }
+      }
+    }
+
+    ## ---- GENOTYPE CHECK ----
+    cat("\n--- Genotype check (Kat8 lower in KAT8KD) ---\n")
+    k <- getg("Kat8")
+    if (is.null(k)) {
+      cat("[WARN] Kat8 not found in counts; GENOTYPE CHECK SKIPPED.\n")
+    } else {
+      for (dep in levels(annot$Depot)) {
+        idx <- annot$Depot[match(colnames(cpm), annot$Sample)] == dep
+        gt  <- annot$Genotype[match(colnames(cpm), annot$Sample)]
+        mc <- mean(k[idx & gt == "CTL"], na.rm = TRUE)
+        mk <- mean(k[idx & gt == "KAT8KD"], na.rm = TRUE)
+        pass <- is.finite(mc) && is.finite(mk) && mk < mc
+        if (!pass) ok_all <- FALSE
+        cat(sprintf("  %-5s Kat8 CPM: CTL=%.1f  KAT8KD=%.1f  [%s]\n",
+                    dep, mc, mk, ifelse(pass, "OK", "FAIL - KD not lower!")))
+      }
+    }
+
+    ## ---- DESIGN BALANCE ----
+    cat("\n--- Design balance (after outlier removal) ---\n")
+    print(table(annot$Depot, annot$Sex, annot$Genotype))
+    invisible(ok_all)
+  }
+
+  annot_ok <- validate_sample_annotation(count_matrix_tissue, sample_annot)
+  cat("\n==========================================================\n")
+  if (isTRUE(annot_ok)) {
+    cat("SAMPLE ANNOTATION VALIDATION: PASS\n")
+  } else {
+    cat("SAMPLE ANNOTATION VALIDATION: **FAIL** - inspect the mismatches above\n")
+    cat("  -> Verify counts.txt column order against your sample sheet BEFORE\n")
+    cat("     trusting any downstream result.\n")
+    if (STOP_ON_ANNOTATION_FAIL) stop("Sample annotation validation failed.")
+  }
+  cat("==========================================================\n")
+
   ## 4.6) DESeq2 object + typical prefilter ------------------
   ## DESIGN NOTE (2026-01-23): Depot-focused analysis
   ## - Analyzing by depot only (combining males and females within each depot)

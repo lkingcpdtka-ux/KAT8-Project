@@ -12,6 +12,13 @@ not limit them**.
 - `part4b_cell_tissue_concordance.R` — which tissue changes reproduce in the pure adipocyte cells.
   (Also has a runnable Python port: `run_concordance_python.py` + `run_program_level.py`, already executed —
   results in `results/`.)
+- `part5_cells_mechanism.R` — **the mechanism analysis for the cells.** Modules:
+  **A** secretome (what the KAT8-null adipocyte broadcasts + whether it replicates in vivo),
+  **B/C/D** three independent TF layers (TF genes → regulon activity → ChIP-derived target
+  sets), **E** PROGENy pathway activity, **F** KAT8 MSL/NSL complex output with mito-encoded
+  and ribosomal specificity controls, **G** cross-layer TF convergence. Writes a
+  `SANITY_part5_*.csv` ledger of every check. Uses GO annotations from `org.Mm.eg.db`
+  (offline, non-circular) — no matrisome download, no hand-curated seed lists.
 - `config_downstream.R` — shared config; **edit the input paths here**. Also holds the TF
   highlight sets (`tf_adipogenic`, `tf_inflammatory`) and the consensus toggle for part4.
 
@@ -121,3 +128,44 @@ The validated tissue design (`~ 0 + GroupDepot`, sex handling) is sound and left
   (a possible follow-up analysis).
 - KAT8 also has **non-histone substrates**, so some effects are post-translational and invisible
   to any RNA-based readout — state as a limitation.
+
+
+---
+
+## Pipeline hygiene (added during the audit)
+
+**Driver.** `run_all.R` at the project root runs everything in dependency order and
+**stops at the first failure**, so a mid-chain error can never leave a half-populated
+run folder for the next script to read:
+
+```bash
+Rscript run_all.R tissue      # parts 1-4
+Rscript run_all.R cells       # cells DE/ORA/GSEA
+Rscript run_all.R downstream  # TF activity, concordance, mechanism
+Rscript run_all.R all         # everything
+```
+Each part runs in its own environment so variables cannot leak between scripts.
+
+**Run-folder resolution.** Part 1 now writes `savepoints/LATEST_RUN.txt`. Parts 2/3/4 read
+that pointer, falling back to a folder-**name** sort. They no longer sort by mtime —
+OneDrive sync updates mtimes and could silently promote a stale run folder.
+
+**Sample-annotation validation.** Part 1 validates the positional Depot/Sex/Genotype
+assignment against the data itself: `Xist` vs Y-linked genes for sex, `Kat8` down in every
+KD group for genotype, plus a design-balance table. Set `STOP_ON_ANNOTATION_FAIL <- TRUE`
+to halt instead of warn.
+
+**Cell DEG definition.** `parameters.R` now owns the cell thresholds (`cells_params`).
+Both DEG definitions are computed and saved (`DEG_lists_cells_*.rds`); `primary_deg_rule`
+selects which is authoritative. Default is `"fdr_only"` — the `|log2FC| > 0.5` gate
+discarded 290 of 392 real cell DEGs (74%), because median |log2FC| in these cells is ~0.37.
+
+**Bugs fixed in this pass**
+| Where | Bug | Effect |
+|---|---|---|
+| `part3_fgsea.R` | `gsea_go <- gsea_go_sig` inside `error=function(e)` | assigned to the handler's local scope, so a failed `simplify()` silently saved the **full unfiltered** GO result |
+| `part2/3/4` | run folder chosen by mtime | OneDrive sync could promote a stale run; wrong tables read *and* written |
+| `part3_fgsea.R` | `gseKEGG(pvalueCutoff = 0.1)` vs `gseGO(1.0)` | `N_Pathways_Tested` counted only pathways already passing p<0.1 — not comparable to the GO row |
+| cells script | `use_ora_universe <- FALSE` | liberal background inflated ORA significance and disagreed with `part2_ora.R` (TRUE) |
+| `part5` (new) | `FDR` constant shadowed by the `FDR` column | `ifelse(FDR < FDR, …)` always FALSE — caught and fixed before release |
+| `part5` (new) | leading-edge stat vector unnamed | reproduced the earlier silent-empty-table bug; now uses a named vector and asserts non-zero rows |

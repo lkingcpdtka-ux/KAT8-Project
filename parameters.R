@@ -32,6 +32,36 @@ default_logFC_cut <- 1.0
 default_fdr_cut   <- 0.05
 
 ## ============================================================
+## CELL (3T3-L1) PARAMETERS
+## ============================================================
+## Used by: KAT8_bulk_cells_comprehensive.R, downstream_analysis/*
+## Previously these lived INSIDE the cells script, which contradicted this
+## file's "all cutoffs defined HERE ONLY" contract. Values are unchanged.
+##
+## IMPORTANT NOTE ON THE logFC GATE:
+##   The cells are a MAINTENANCE experiment (KAT8 siRNA in already-
+##   differentiated 3T3-L1). Effects are real but small: among FDR<0.05 genes
+##   the median |log2FC| is ~0.37, so gating at 0.5 discards ~74% of genuine
+##   DEGs (290 of 392) before any downstream analysis. FDR-only is therefore
+##   the PRIMARY DEG definition for cells; the logFC-gated list is retained
+##   for backward compatibility and reporting.
+cells_params <- list(
+  ## Prefilter: counts >= min_count in >= min_samples_per_group in AT LEAST
+  ## ONE group (appropriate for a 2-group comparison).
+  prefilter_min_count            = 10,
+  prefilter_min_samples_per_group = 2,
+
+  ## DE thresholds
+  fdr_cutoff   = 0.05,
+  logFC_cutoff = 0.5,     ## descriptive gate, NOT the primary DEG rule
+
+  ## Which rule defines the AUTHORITATIVE cell DEG list used downstream:
+  ##   "fdr_only"    - FDR < fdr_cutoff                (RECOMMENDED)
+  ##   "fdr_and_lfc" - FDR < fdr_cutoff AND |logFC| >  (legacy behaviour)
+  primary_deg_rule = "fdr_only"
+)
+
+## ============================================================
 ## ORA PARAMETERS (Over-Representation Analysis)
 ## ============================================================
 ## Used by: part2_ora.R, part4_publication_plots.R
@@ -67,7 +97,7 @@ gsea_params <- list(
   rank_metric     = "DESeq2 Wald statistic",
   
   ## GO:BP simplification - reduces redundant GO terms using semantic similarity
-  ## WARNING: simplify() is O(n²) complexity - can hang with many terms!
+  ## WARNING: simplify() is O(nï¿½) complexity - can hang with many terms!
   ## Strategy: Only simplify the TOP N most significant terms (by p-value)
   simplify_go     = TRUE,    ## Enable GO:BP simplification
   simplify_cutoff = 0.5,     ## Semantic similarity threshold (lower = more aggressive merging)

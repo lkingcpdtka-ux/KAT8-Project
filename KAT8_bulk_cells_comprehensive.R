@@ -146,18 +146,28 @@ cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
 ## =======================================================
 ## ANALYSIS PARAMETERS
 ## =======================================================
-## PREFILTER: Keep genes with sufficient expression in at least one group
-prefilter_min_count <- 10                # Minimum count threshold
-prefilter_min_samples_per_group <- 2     # Min samples per group (was 3, now 2 = 50% of 4 samples)
+## PREFILTER + DE THRESHOLDS now come from parameters.R (cells_params), so this
+## file no longer defines cutoffs of its own. Values are IDENTICAL to before;
+## the fallbacks below only apply if an older parameters.R is in use.
+.cp <- if (exists("cells_params")) cells_params else list(
+  prefilter_min_count = 10, prefilter_min_samples_per_group = 2,
+  fdr_cutoff = 0.05, logFC_cutoff = 0.5, primary_deg_rule = "fdr_only")
 
-## DIFFERENTIAL EXPRESSION THRESHOLDS
-## NOTE: Cell culture typically shows smaller fold changes than tissues
-## Using 0.5 (1.4-fold) instead of 1.0 (2-fold) to capture biologically relevant changes
-logFC_cut_cells <- 0.5   # |log2FC| threshold (was 1, changed to 0.5 for cells)
-fdr_cut_cells   <- 0.05  # FDR threshold (standard)
+prefilter_min_count             <- .cp$prefilter_min_count
+prefilter_min_samples_per_group <- .cp$prefilter_min_samples_per_group
+
+logFC_cut_cells <- .cp$logFC_cutoff   # descriptive gate (1.4-fold)
+fdr_cut_cells   <- .cp$fdr_cutoff     # FDR threshold (standard)
+primary_deg_rule_cells <- .cp$primary_deg_rule
+cat("[INFO] Cell thresholds from parameters.R: FDR<", fdr_cut_cells,
+    ", |logFC|>", logFC_cut_cells, ", primary rule = ", primary_deg_rule_cells, "\n", sep = "")
 
 ## ORA settings
-use_ora_universe <- FALSE
+## RIGOR FIX: was FALSE (liberal -- every gene in org.Mm.eg.db as background,
+## which inflates enrichment significance and is inconsistent with the tissue
+## pipeline). part2_ora.R uses TRUE; the cells now match. Background = all genes
+## actually tested by DESeq2 in this experiment, which is the correct universe.
+use_ora_universe <- TRUE
 
 ## GSEA settings
 run_go_bp <- TRUE
@@ -900,13 +910,40 @@ tryCatch({
   ## Use pull(gene_name), NOT rownames(): dplyr::filter() drops row names,
   ## so rownames() would feed "1","2",... into ORA instead of gene symbols.
   if (!"gene_name" %in% colnames(tt)) tt$gene_name <- rownames(tt)
-  up_genes <- tt %>%
-    dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut_cells, logFC > logFC_cut_cells) %>%
-    dplyr::pull(gene_name)
 
-  down_genes <- tt %>%
-    dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut_cells, logFC < -logFC_cut_cells) %>%
-    dplyr::pull(gene_name)
+  ## Build BOTH definitions, then select the primary one (parameters.R).
+  ## FDR-only is recommended for these cells: effects are small but real
+  ## (median |log2FC| ~0.37 among FDR<0.05 genes), so the 0.5 gate discards
+  ## the majority of genuine DEGs before ORA/GSEA ever see them.
+  up_fdr    <- tt %>% dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut_cells, logFC > 0)  %>% dplyr::pull(gene_name)
+  down_fdr  <- tt %>% dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut_cells, logFC < 0)  %>% dplyr::pull(gene_name)
+  up_gated  <- tt %>% dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut_cells, logFC >  logFC_cut_cells) %>% dplyr::pull(gene_name)
+  down_gated<- tt %>% dplyr::filter(!is.na(adj.P.Val), adj.P.Val < fdr_cut_cells, logFC < -logFC_cut_cells) %>% dplyr::pull(gene_name)
+
+  if (identical(primary_deg_rule_cells, "fdr_and_lfc")) {
+    up_genes <- up_gated; down_genes <- down_gated
+  } else {
+    up_genes <- up_fdr;   down_genes <- down_fdr
+  }
+
+  ## Persist BOTH lists so nothing is lost and downstream scripts can choose.
+  cells_deg_lists <- list(
+    primary_rule = primary_deg_rule_cells,
+    fdr_only    = list(up = up_fdr,   down = down_fdr,   fdr_cutoff = fdr_cut_cells, logFC_cutoff = 0),
+    fdr_and_lfc = list(up = up_gated, down = down_gated, fdr_cutoff = fdr_cut_cells, logFC_cutoff = logFC_cut_cells)
+  )
+  saveRDS(cells_deg_lists,
+          file = file.path(outdir, "tables", paste0("DEG_lists_cells_", run_tag, ".rds")))
+
+  cat("\n=== SANITY CHECK: CELL DEG LIST DEFINITIONS ===\n")
+  cat("  FDR-only     : up=", length(up_fdr),   " down=", length(down_fdr),
+      " (total ", length(up_fdr) + length(down_fdr), ")\n", sep = "")
+  cat("  FDR+|logFC|  : up=", length(up_gated), " down=", length(down_gated),
+      " (total ", length(up_gated) + length(down_gated), ")\n", sep = "")
+  cat("  Genes discarded by the logFC gate: ",
+      (length(up_fdr) + length(down_fdr)) - (length(up_gated) + length(down_gated)), "\n", sep = "")
+  cat("  PRIMARY rule in use: ", primary_deg_rule_cells, "\n", sep = "")
+  cat("===============================================\n\n")
 
   cat("[INFO] Up genes: ", length(up_genes), "\n", sep = "")
   cat("[INFO] Down genes: ", length(down_genes), "\n", sep = "")
