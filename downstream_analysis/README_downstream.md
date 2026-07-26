@@ -34,7 +34,18 @@ source("downstream_analysis/part5a_secretome.R")
 source("downstream_analysis/part5b_tf_analysis.R")
 source("downstream_analysis/part5c_kat8_complex.R")
 ```
-or `Rscript run_all.R downstream` to run all four in order.
+or let the driver do it:
+
+```bash
+Rscript run_all.R              # everything: tissue -> cells -> downstream
+Rscript run_all.R downstream   # just these four
+```
+
+The driver **automatically copies** the newest `DE_tissue_*` / `DE_cells_*` tables out of
+`savepoints/RUN_*/tables/` into `downstream_analysis/data/` before the downstream steps run,
+so you don't have to move files by hand. (The tissue and cells scripts each create their own
+timestamped run folder, which is why this staging step exists.) If a table can't be found the
+downstream steps are **skipped with a message** rather than failing halfway.
 
 Everything lands in `downstream_analysis/results/`, and each script writes a
 `SANITY_*.csv` listing every check it performed.
