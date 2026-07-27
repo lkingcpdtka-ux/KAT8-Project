@@ -1486,8 +1486,11 @@ if (generate_marker_forest_plots) {
           geom_vline(xintercept = 0, colour = "grey35", linewidth = 0.4) +
           geom_vline(xintercept = c(-thr$logFC_cut, thr$logFC_cut),
                      colour = "grey75", linetype = "dotted", linewidth = 0.4) +
-          geom_errorbarh(aes(xmin = lo, xmax = hi, colour = negLogFDR),
-                         height = 0, linewidth = 0.7) +
+          ## geom_errorbarh() was deprecated in ggplot2 4.0.0 (and its `height`
+          ## argument silently became `width`). geom_errorbar(orientation = "y")
+          ## is the supported way to draw a horizontal interval.
+          geom_errorbar(aes(xmin = lo, xmax = hi, colour = negLogFDR),
+                        orientation = "y", width = 0, linewidth = 0.7) +
           geom_point(aes(colour = negLogFDR), size = 3.2) +
           geom_text(aes(x = hi + nudge, label = stars), hjust = 0, vjust = 0.78,
                     size = 4.2, fontface = "bold", na.rm = TRUE) +
@@ -1559,8 +1562,8 @@ if (generate_marker_forest_plots) {
 
         p_c <- ggplot(sub, aes(x = logFC, y = gene, colour = Depot, group = Depot)) +
           geom_vline(xintercept = 0, colour = "grey35", linewidth = 0.4) +
-          geom_errorbarh(aes(xmin = lo, xmax = hi), height = 0,
-                         linewidth = 0.7, position = dg) +
+          geom_errorbar(aes(xmin = lo, xmax = hi), orientation = "y",
+                        width = 0, linewidth = 0.7, position = dg) +
           geom_point(size = 3, position = dg) +
           geom_text(aes(x = hi + rng2 * 0.03, label = stars), position = dg,
                     hjust = 0, vjust = 0.78, size = 3.8, fontface = "bold",

@@ -185,7 +185,32 @@ run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
   dir.create(sp, recursive = TRUE, showWarnings = FALSE)
   existing <- list.dirs(sp, recursive = FALSE, full.names = TRUE)
   existing <- existing[grepl("^RUN_", basename(existing))]
-  existing <- existing[order(basename(existing), decreasing = TRUE)]  ## name = timestamp
+
+  ## "Newest run" is decided by the TIMESTAMP IN THE NAME, not by sorting the
+  ## name as a string.
+  ##
+  ## Sorting basenames in reverse looks like a date sort only while every
+  ## folder is named RUN_<timestamp>. A labelled folder breaks it completely:
+  ## RUN_TISSUE_PANELS_20260515_163857 sorts ABOVE RUN_20260727_164416,
+  ## because "T" beats "2" before either timestamp is reached. Resume then
+  ## silently reused a folder from MAY -- with its stale duplicated DE tables,
+  ## which is why Part 4 kept drawing four contrasts instead of two.
+  ##
+  ## The trailing YYYYMMDD_HHMMSS is parsed instead; anything without one
+  ## falls back to the folder's modification time.
+  .run_time <- function(paths) {
+    b  <- basename(paths)
+    ts <- regmatches(b, regexpr("[0-9]{8}_[0-9]{6}$", b))
+    out <- rep(NA_real_, length(paths))
+    has <- vapply(regexpr("[0-9]{8}_[0-9]{6}$", b), function(x) x > 0, logical(1))
+    if (any(has))
+      out[has] <- as.numeric(as.POSIXct(ts, format = "%Y%m%d_%H%M%S", tz = "UTC"))
+    if (any(!has))
+      out[!has] <- as.numeric(file.info(paths[!has])$mtime)
+    out
+  }
+  if (length(existing))
+    existing <- existing[order(.run_time(existing), decreasing = TRUE)]
 
   if (!fresh && length(existing) > 0) {
     KAT8_RUN_DIR <- existing[1]
