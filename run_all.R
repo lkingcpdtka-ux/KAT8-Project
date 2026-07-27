@@ -3,141 +3,188 @@
 ## =========================================================
 ## KAT8 RNA-seq - PIPELINE DRIVER
 ## =========================================================
-## Runs the pipeline in DEPENDENCY ORDER and stops at the first failure.
+## Runs the pipeline in dependency order, RESUMING where it left off.
 ##
-## WHY THIS EXISTS
-##   The parts must run in order: Part 1 writes the DE tables, the authoritative
-##   DEG lists and the run-folder pointer that Parts 2/3/4 consume. Running them
-##   out of order, or continuing after a mid-chain failure, leaves a partially
-##   populated run folder that the next script will happily read -- producing
-##   results that look fine but are stale or incomplete.
+## RESUME BEHAVIOUR (the default)
+##   The driver reuses the most recent savepoints/RUN_* folder and SKIPS any
+##   step that already completed, so a failure late in the pipeline no longer
+##   costs you another full ORA + GSEA run. A step counts as complete if
+##   either
+##      (a) the driver recorded it finishing  -> RUN_<tag>/.done/<key>.done
+##      (b) its signature output file is present in the run folder
+##   (b) means runs made before this feature existed, or scripts you ran by
+##   hand, are still detected.
 ##
-## HOW TO RUN  (both work; sourcing is SAFE and will not close your session)
+## HOW TO RUN  (sourcing is SAFE - it will not close your R session)
 ##
-##   From RStudio / the R console:
-##       setwd("path/to/KAT8KD_RNAseq")     # must be the project root
-##       source("run_all.R")                 # runs everything
+##   setwd("path/to/KAT8KD_RNAseq")   # the folder containing parameters.R
+##   source("run_all.R")              # resume: run only what is missing
 ##
-##       # to run only part of it, set this BEFORE sourcing:
-##       RUN_TARGET <- "tissue"; source("run_all.R")
+##   RUN_FRESH <- TRUE;  source("run_all.R")   # ignore old runs, new folder
+##   RUN_FORCE <- "all"; source("run_all.R")   # same folder, redo everything
+##   RUN_FORCE <- c("part2","part3"); source("run_all.R")  # redo just those
+##   RUN_TARGET <- "tissue"; source("run_all.R")           # subset of steps
 ##
-##   From a terminal:
-##       Rscript run_all.R                   # everything
-##       Rscript run_all.R tissue            # parts 1-4 only
-##       Rscript run_all.R cells             # cells DE/ORA/GSEA only
-##       Rscript run_all.R downstream        # the four mechanism scripts only
+##   Terminal equivalents:
+##     Rscript run_all.R                 # resume everything
+##     Rscript run_all.R all fresh       # force a brand-new run folder
+##     Rscript run_all.R tissue          # parts 1-4 only
 ##
-## Targets: all (default) | tissue | cells | downstream
+## STEP KEYS for RUN_FORCE:
+##   part1  part2  part3  part4  cells  p4b  p5a  p5b  p5c   (or "all")
 ##
-## Before running anything the driver PRE-FLIGHTS: it checks every script it is
-## about to run actually exists, so a missing file fails in one second with a
-## clear list, instead of after Part 1 has spent ten minutes on DESeq2.
+## TARGETS: all (default) | tissue | cells | downstream
 ##
-## Between the cells step and the downstream steps it AUTOMATICALLY copies the
-## newest DE tables from savepoints/RUN_*/tables into downstream_analysis/data/
-## under the canonical names the downstream scripts expect.
+## OUTPUT: one timestamped folder holds the whole run --
+##   savepoints/RUN_<tag>/{tissue,cells,downstream,data}
 ## =========================================================
 
-run_pipeline <- function(target = NULL, project_root = getwd()) {
+run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
+                         project_root = getwd()) {
 
-  ## ---- resolve target -------------------------------------------------
-  if (is.null(target)) {
-    args <- commandArgs(trailingOnly = TRUE)
-    target <- if (length(args) > 0) tolower(args[1]) else
-              if (exists("RUN_TARGET", envir = globalenv()))
-                tolower(get("RUN_TARGET", envir = globalenv())) else "all"
-  }
+  ## ---- resolve options -------------------------------------------------
+  gv <- function(nm) if (exists(nm, envir = globalenv())) get(nm, envir = globalenv()) else NULL
+  args <- commandArgs(trailingOnly = TRUE)
+  if (is.null(target)) target <- if (length(args) > 0) tolower(args[1]) else
+                                 if (!is.null(gv("RUN_TARGET"))) tolower(gv("RUN_TARGET")) else "all"
+  if (is.null(fresh))  fresh  <- ("fresh" %in% tolower(args)) || isTRUE(gv("RUN_FRESH"))
+  if (is.null(force))  force  <- gv("RUN_FORCE")
+  force <- if (is.null(force)) character(0) else tolower(as.character(force))
   target <- tolower(target)
 
   cat("Project root : ", project_root, "\n", sep = "")
   cat("Target       : ", target, "\n", sep = "")
+  cat("Mode         : ", if (fresh) "FRESH (new run folder)" else "RESUME (reuse latest)", "\n", sep = "")
+  if (length(force)) cat("Force re-run : ", paste(force, collapse = ", "), "\n", sep = "")
+
+  ## ---- step definitions -------------------------------------------------
+  ## done = c(subfolder, regex) : if a file matching regex exists in that
+  ## subfolder of the run directory, the step is treated as already complete.
+  st <- function(key, label, path, done_dir, done_pat)
+    list(key = key, label = label, path = path, done_dir = done_dir, done_pat = done_pat)
 
   TISSUE <- list(
-    list(label = "Part 1  DE / QC / DEG lists", path = "part1_main_analysis.R", required = TRUE),
-    list(label = "Part 2  ORA",                 path = "part2_ora.R",           required = TRUE),
-    list(label = "Part 3  GSEA",                path = "part3_fgsea.R",         required = TRUE),
-    list(label = "Part 4  Visualisation",       path = "part4_visualization.R", required = TRUE))
+    st("part1", "Part 1  DE / QC / DEG lists", "part1_main_analysis.R",
+       "tissue/tables", "^DEG_lists_authoritative_.*\\.rds$"),
+    st("part2", "Part 2  ORA  (slow)",         "part2_ora.R",
+       "tissue/tables", "^ORA_sanity_check_.*\\.csv$"),
+    st("part3", "Part 3  GSEA (slow)",         "part3_fgsea.R",
+       "tissue/tables", "^fgsea_sanity_check_.*\\.csv$"),
+    st("part4", "Part 4  Visualisation",       "part4_visualization.R",
+       "tissue/plots",  "\\.png$"))
   CELLS <- list(
-    list(label = "Cells   DE / ORA / GSEA", path = "KAT8_bulk_cells_comprehensive.R", required = TRUE))
+    st("cells", "Cells   DE / ORA / GSEA (slow)", "KAT8_bulk_cells_comprehensive.R",
+       "cells/tables", "^DE_cells_KAT8KD_vs_CTL_.*\\.csv$"))
   DOWNSTREAM <- list(
-    list(label = "Part 4b  Is it cell-autonomous?  (concordance + programs)",
-         path = "downstream_analysis/part4b_cell_tissue_concordance.R", required = TRUE),
-    list(label = "Part 5a  What does the cell broadcast?  (secretome)",
-         path = "downstream_analysis/part5a_secretome.R", required = TRUE),
-    list(label = "Part 5b  Which TF drives it?  (3 layers + PROGENy)",
-         path = "downstream_analysis/part5b_tf_analysis.R", required = TRUE),
-    list(label = "Part 5c  Is the KAT8/NSL program engaged?  (complex output)",
-         path = "downstream_analysis/part5c_kat8_complex.R", required = TRUE))
+    st("p4b", "Part 4b  Is it cell-autonomous?", "downstream_analysis/part4b_cell_tissue_concordance.R",
+       "downstream", "^concordance_SUMMARY_.*\\.csv$"),
+    st("p5a", "Part 5a  What does the cell broadcast?", "downstream_analysis/part5a_secretome.R",
+       "downstream", "^part5a_secretome_annotated_.*\\.csv$"),
+    st("p5b", "Part 5b  Which TF drives it?", "downstream_analysis/part5b_tf_analysis.R",
+       "downstream", "^part5b_L1_TF_genes_.*\\.csv$"),
+    st("p5c", "Part 5c  Is the KAT8/NSL program engaged?", "downstream_analysis/part5c_kat8_complex.R",
+       "downstream", "^part5c_complex_output_.*\\.csv$"))
 
-  steps <- switch(target,
-    "tissue"     = TISSUE,
-    "cells"      = CELLS,
-    "downstream" = DOWNSTREAM,
-    "all"        = c(TISSUE, CELLS, DOWNSTREAM),
-    NULL)
+  steps <- switch(target, "tissue" = TISSUE, "cells" = CELLS, "downstream" = DOWNSTREAM,
+                  "all" = c(TISSUE, CELLS, DOWNSTREAM), NULL)
   if (is.null(steps)) {
     cat("\n[ERROR] Unknown target '", target, "'. Use: all | tissue | cells | downstream\n", sep = "")
     return(invisible(NULL))
   }
 
-  ## ---- PRE-FLIGHT: fail in one second, not ten minutes ----------------
+  ## ---- pre-flight -------------------------------------------------------
   cat("\n--- pre-flight ---\n")
   problems <- character(0)
   if (!file.exists(file.path(project_root, "parameters.R")))
     problems <- c(problems, "parameters.R  (are you in the project root?)")
   for (s in steps)
     if (!file.exists(file.path(project_root, s$path))) problems <- c(problems, s$path)
-
   if (length(problems) > 0) {
-    cat("[ERROR] These required files are missing from the project root:\n")
-    for (p in problems) cat("   - ", p, "\n", sep = "")
-    cat("\n  Working directory is:\n    ", project_root, "\n", sep = "")
+    cat("[ERROR] Missing required files:\n"); for (p in problems) cat("   - ", p, "\n", sep = "")
+    cat("\n  Working directory:\n    ", project_root, "\n", sep = "")
     present <- list.files(project_root, pattern = "\\.R$")
-    cat("  R scripts actually here (", length(present), "):\n", sep = "")
-    if (length(present)) cat("    ", paste(present, collapse = "\n    "), "\n", sep = "") else
-      cat("    (none)\n")
+    cat("  R scripts here (", length(present), "): ",
+        if (length(present)) paste(present, collapse = ", ") else "(none)", "\n", sep = "")
     dsa <- file.path(project_root, "downstream_analysis")
     cat("  downstream_analysis/ exists: ", dir.exists(dsa), "\n", sep = "")
-    if (dir.exists(dsa)) cat("    contains: ",
-        paste(list.files(dsa, pattern = "\\.R$"), collapse = ", "), "\n", sep = "")
-    cat("\n  Fix: setwd() to the folder holding parameters.R and the part*.R files,\n")
-    cat("  and make sure you downloaded the whole repo (including downstream_analysis/).\n")
+    cat("\n  Fix: setwd() to the folder holding parameters.R, and make sure the\n")
+    cat("  whole repo was downloaded (including downstream_analysis/).\n")
     return(invisible(NULL))
   }
   cat("[OK] all ", length(steps), " scripts found\n", sep = "")
 
-  ## ---- ONE run folder for the whole pipeline ---------------------------
-  ## Without this, part1 creates savepoints/RUN_<a>/, the cells script creates a
-  ## SEPARATE savepoints/RUN_<b>/, and the downstream scripts write to
-  ## downstream_analysis/results/ -- three places for one run. Setting
-  ## KAT8_RUN_DIR makes every script write into the same timestamped folder:
-  ##
-  ##   savepoints/RUN_<tag>/
-  ##       tissue/     tables, plots, logs   (parts 1-4)
-  ##       cells/      tables, plots, logs   (cells script)
-  ##       downstream/ tables, plots         (parts 4b, 5a, 5b, 5c)
-  ##       data/       the staged DE tables used by downstream
-  ##
-  ## Scripts run standalone ignore this and behave exactly as before.
-  RUN_TAG_SHARED <- format(Sys.time(), "%Y%m%d_%H%M%S")
-  KAT8_RUN_DIR   <- file.path(project_root, "savepoints", paste0("RUN_", RUN_TAG_SHARED))
-  dir.create(KAT8_RUN_DIR, recursive = TRUE, showWarnings = FALSE)
+  ## ---- pick the run folder: reuse newest, or make a fresh one ----------
+  sp <- file.path(project_root, "savepoints")
+  dir.create(sp, recursive = TRUE, showWarnings = FALSE)
+  existing <- list.dirs(sp, recursive = FALSE, full.names = TRUE)
+  existing <- existing[grepl("^RUN_", basename(existing))]
+  existing <- existing[order(basename(existing), decreasing = TRUE)]  ## name = timestamp
+
+  if (!fresh && length(existing) > 0) {
+    KAT8_RUN_DIR <- existing[1]
+    cat("Run folder   : ", KAT8_RUN_DIR, "  (REUSING)\n", sep = "")
+  } else {
+    KAT8_RUN_DIR <- file.path(sp, paste0("RUN_", format(Sys.time(), "%Y%m%d_%H%M%S")))
+    dir.create(KAT8_RUN_DIR, recursive = TRUE, showWarnings = FALSE)
+    cat("Run folder   : ", KAT8_RUN_DIR, "  (NEW)\n", sep = "")
+  }
   assign("KAT8_RUN_DIR", KAT8_RUN_DIR, envir = globalenv())
   on.exit(suppressWarnings(rm("KAT8_RUN_DIR", envir = globalenv())), add = TRUE)
-  cat("Run folder   : ", KAT8_RUN_DIR, "\n", sep = "")
+  done_dir <- file.path(KAT8_RUN_DIR, ".done")
+  dir.create(done_dir, recursive = TRUE, showWarnings = FALSE)
 
-  ## ---- staging helper --------------------------------------------------
+  ## When Part 1 is SKIPPED, Parts 2/3/4 still need a pointer to the tables.
+  ## Handle both layouts: the nested one (RUN_<tag>/tissue/tables) and the
+  ## legacy flat one (RUN_<tag>/tables) used by older runs.
+  ptr_target <- NULL
+  if (dir.exists(file.path(KAT8_RUN_DIR, "tissue", "tables")))      ptr_target <- file.path(KAT8_RUN_DIR, "tissue")
+  else if (dir.exists(file.path(KAT8_RUN_DIR, "tables")))           ptr_target <- KAT8_RUN_DIR
+  if (!is.null(ptr_target)) {
+    writeLines(normalizePath(ptr_target, winslash = "/", mustWork = FALSE),
+               file.path(sp, "LATEST_RUN.txt"))
+    cat("Tables from  : ", ptr_target, "\n", sep = "")
+  }
+
+  ## ---- completion test --------------------------------------------------
+  is_done <- function(s) {
+    if ("all" %in% force || s$key %in% force) return(FALSE)          ## forced re-run
+    if (file.exists(file.path(done_dir, paste0(s$key, ".done")))) return(TRUE)
+    ## Look in the nested layout (tissue/tables) AND the legacy flat layout
+    ## (tables/) used by run folders created before the shared-folder change,
+    ## so work you already finished is still recognised.
+    cand <- unique(c(s$done_dir, sub("^(tissue|cells)/", "", s$done_dir)))
+    for (cd in cand) {
+      d <- file.path(KAT8_RUN_DIR, cd)
+      if (dir.exists(d) && length(list.files(d, pattern = s$done_pat)) > 0) return(TRUE)
+    }
+    FALSE
+  }
+  mark_done <- function(s)
+    writeLines(format(Sys.time()), file.path(done_dir, paste0(s$key, ".done")))
+
+  ## ---- plan -------------------------------------------------------------
+  todo <- vapply(steps, function(s) !is_done(s), logical(1))
+  cat("\n==========================================================\n")
+  cat("PLAN  (", sum(todo), " to run, ", sum(!todo), " already complete)\n", sep = "")
+  cat("==========================================================\n")
+  for (i in seq_along(steps))
+    cat(sprintf("  %-4s %-46s %s\n", steps[[i]]$key, steps[[i]]$label,
+                if (todo[i]) "RUN" else "skip (done)"))
+  if (!any(todo)) {
+    cat("\nNothing to do. To redo work:\n")
+    cat("   RUN_FORCE <- \"all\";  source(\"run_all.R\")   # same folder\n")
+    cat("   RUN_FRESH <- TRUE;    source(\"run_all.R\")   # brand-new folder\n")
+    return(invisible(NULL))
+  }
+
+  ## ---- staging helper ---------------------------------------------------
   stage_downstream_inputs <- function() {
-    sp   <- file.path(project_root, "savepoints")
-    ## Stage into the run folder AND the conventional location, so the
-    ## downstream scripts find the tables however they are invoked.
     dest <- file.path(project_root, "downstream_analysis", "data")
-    if (!dir.exists(sp)) { cat("[WARN] no savepoints/ yet - nothing to stage\n"); return(FALSE) }
     dir.create(dest, recursive = TRUE, showWarnings = FALSE)
     newest <- function(pat) {
       hits <- list.files(sp, pattern = pat, recursive = TRUE, full.names = TRUE)
       if (length(hits) == 0) return(NA_character_)
-      hits[order(basename(hits), decreasing = TRUE)][1]   ## RUN tag sorts chronologically
+      hits[order(basename(hits), decreasing = TRUE)][1]
     }
     wanted <- list(
       c("^DE_cells_KAT8KD_vs_CTL_.*\\.csv$",   "DE_cells_KAT8KD_vs_CTL.csv"),
@@ -149,45 +196,38 @@ run_pipeline <- function(target = NULL, project_root = getwd()) {
       src <- newest(w[1])
       if (is.na(src)) { cat("[MISS] ", w[2], "\n", sep = ""); ok <- FALSE; next }
       file.copy(src, file.path(dest, w[2]), overwrite = TRUE)
-      if (exists("KAT8_RUN_DIR", envir = globalenv())) {
-        rd <- file.path(get("KAT8_RUN_DIR", envir = globalenv()), "data")
-        dir.create(rd, recursive = TRUE, showWarnings = FALSE)
-        file.copy(src, file.path(rd, w[2]), overwrite = TRUE)
-      }
+      rd <- file.path(KAT8_RUN_DIR, "data"); dir.create(rd, showWarnings = FALSE)
+      file.copy(src, file.path(rd, w[2]), overwrite = TRUE)
       cat("[OK]   ", w[2], "  <- ", basename(src), "\n", sep = "")
     }
     if (!ok) cat("[WARN] some DE tables not found; downstream steps will be skipped.\n")
     ok
   }
 
-  ## ---- run -------------------------------------------------------------
-  cat("\n==========================================================\n")
-  cat("RUNNING: ", toupper(target), "  (", length(steps), " steps)\n", sep = "")
-  cat("==========================================================\n")
-  for (s in steps) cat("   - ", s$label, "\n", sep = "")
-
+  ## ---- run --------------------------------------------------------------
   is_down <- function(p) grepl("^downstream_analysis/", p)
   staged  <- if (identical(target, "downstream")) stage_downstream_inputs() else NA
   results <- data.frame(step = character(), status = character(),
                         seconds = numeric(), stringsAsFactors = FALSE)
   t_all <- Sys.time()
 
-  for (s in steps) {
+  for (i in seq_along(steps)) {
+    s <- steps[[i]]
+    if (!todo[i]) {
+      results <- rbind(results, data.frame(step = s$label, status = "skipped (done)", seconds = 0))
+      next
+    }
     if (is_down(s$path) && is.na(staged)) staged <- stage_downstream_inputs()
     if (is_down(s$path) && isFALSE(staged)) {
       cat("\n[SKIP] ", s$label, " - inputs not staged\n", sep = "")
-      results <- rbind(results, data.frame(step = s$label, status = "SKIPPED", seconds = 0))
-      next
+      results <- rbind(results, data.frame(step = s$label, status = "SKIPPED", seconds = 0)); next
     }
 
     cat("\n----------------------------------------------------------\n")
     cat(">>> ", s$label, "   [", s$path, "]\n", sep = "")
     cat("----------------------------------------------------------\n")
-
     t0 <- Sys.time()
-    ## Each part runs in its OWN environment so variables cannot leak between
-    ## scripts and silently change behaviour.
-    env <- new.env(parent = globalenv())
+    env <- new.env(parent = globalenv())   ## isolate each script
     ok <- tryCatch({ source(file.path(project_root, s$path), local = env, echo = FALSE); TRUE },
                    error = function(e) {
                      cat("\n[FAIL] ", s$label, "\n  ", conditionMessage(e), "\n", sep = ""); FALSE })
@@ -197,14 +237,13 @@ run_pipeline <- function(target = NULL, project_root = getwd()) {
     if (!ok) {
       cat("\n==========================================================\n")
       cat("PIPELINE HALTED at: ", s$label, "\n", sep = "")
-      cat("  Later steps were NOT run, so no stale/partial results were produced.\n")
-      cat("  Fix the error above and re-run.\n")
+      cat("  Completed steps are recorded, so re-running resumes from HERE --\n")
+      cat("  fix the error, then simply: source(\"run_all.R\")\n")
       cat("==========================================================\n")
       print(results, row.names = FALSE)
-      ## NOTE: return, never quit(). quit() would terminate an interactive
-      ## RStudio session and lose the user's workspace.
-      return(invisible(results))
+      return(invisible(results))   ## never quit(): that would kill an RStudio session
     }
+    mark_done(s)
     cat("[OK] ", s$label, "  (", el, "s)\n", sep = "")
   }
 
@@ -213,19 +252,14 @@ run_pipeline <- function(target = NULL, project_root = getwd()) {
       round(as.numeric(difftime(Sys.time(), t_all, units = "mins")), 1), " min)\n", sep = "")
   cat("==========================================================\n")
   print(results, row.names = FALSE)
-
-  ptr <- file.path(project_root, "savepoints", "LATEST_RUN.txt")
-  if (file.exists(ptr))
-    cat("\nCurrent run folder: ", trimws(readLines(ptr, warn = FALSE))[1], "\n", sep = "")
-  cat("\nBefore interpreting anything, check the SANITY / VALIDATION blocks in the\n")
-  cat("console output above (sample annotation, DEG counts, Part 1-3 cross-validation).\n")
+  cat("\nRun folder: ", KAT8_RUN_DIR, "\n", sep = "")
+  cat("To redo work:  RUN_FORCE <- \"all\" (same folder)  |  RUN_FRESH <- TRUE (new folder)\n")
+  cat("\nCheck the SANITY / VALIDATION blocks above before interpreting anything.\n")
   invisible(results)
 }
 
 ## ---------------------------------------------------------
-## Entry point
+## Entry point -- safe to source(); returns instead of quitting.
 ## ---------------------------------------------------------
-## Safe to source() interactively: on failure it RETURNS, it does not quit().
-## Only a non-interactive `Rscript run_all.R` sets a failing exit status.
 .res <- run_pipeline()
-if (!interactive() && !is.null(.res) && any(.res$status %in% c("FAILED"))) quit(status = 1)
+if (!interactive() && !is.null(.res) && any(.res$status == "FAILED")) quit(status = 1)
