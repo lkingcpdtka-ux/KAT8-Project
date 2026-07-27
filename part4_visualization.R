@@ -2,7 +2,7 @@
 
 ## -------------------------------------------------------------------------
 ## SCRIPT VERSION: 2026-07-27
-##   adds Section E box plots + Section F marker forest plots
+##   Section E box plots; Section F forest plots + iWAT-vs-gWAT
 ##   All pipeline scripts should carry the SAME version date. run_all.R prints
 ##   them at pre-flight -- a date that differs from the rest means that file is
 ##   a stale copy and should be re-downloaded before you trust its output.
@@ -1412,6 +1412,7 @@ if (generate_marker_forest_plots) {
     cat("[SKIP] MARKER_PANELS not defined in parameters.R\n")
   } else {
     de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
+    cross <- list()   ## accumulates every depot's rows for the iWAT-vs-gWAT figures
 
     for (de_file in de_files) {
       contrast <- str_match(basename(de_file), "DE_tissue_(.+)_[0-9]+_[0-9]+\\.csv")[2]
@@ -1518,6 +1519,77 @@ if (generate_marker_forest_plots) {
         cat("[OK] Saved: ", fp_file, "  (", nrow(fp), " genes, ",
             n_sig, " significant", if (length(absent))
               paste0(", ", length(absent), " not measured") else "", ")\n", sep = "")
+
+        fp$Depot <- tissue
+        cross[[length(cross) + 1]] <- transform(fp, panel_name = pname)
+      }
+    }
+
+    ## ---- cross-depot version: both depots on one axis -------------------
+    ## The per-depot figures answer "did this program move in iWAT?". This one
+    ## answers the question that actually separates your depots: does the SAME
+    ## gene behave differently in iWAT and gWAT? Two figures side by side make
+    ## that comparison by eye and by memory; putting both intervals on one row
+    ## makes it a direct read -- overlapping intervals mean the depots are not
+    ## resolved apart, however different the two panels looked.
+    cd <- if (length(cross)) dplyr::bind_rows(cross) else NULL
+    if (!is.null(cd) && dplyr::n_distinct(cd$Depot) > 1) {
+      for (pname in unique(cd$panel_name)) {
+        sub <- cd[cd$panel_name == pname, , drop = FALSE]
+        ## Keep only genes measured in EVERY depot, otherwise a missing row
+        ## reads as "no effect" rather than "not measured".
+        keep_g <- names(which(table(sub$gene) == dplyr::n_distinct(sub$Depot)))
+        dropped <- setdiff(as.character(unique(sub$gene)), keep_g)
+        sub <- sub[sub$gene %in% keep_g, , drop = FALSE]
+        if (!nrow(sub)) next
+
+        sub$Depot <- factor(sub$Depot, levels = c("iWAT", "gWAT"))
+        sub$group <- factor(as.character(sub$group), levels = names(panels[[pname]]$groups))
+        sub$gene  <- factor(as.character(sub$gene),
+                            levels = rev(unique(as.character(sub$gene))))
+
+        rng2 <- max(abs(c(sub$lo, sub$hi)), na.rm = TRUE) * 1.08
+        dg   <- ggplot2::position_dodge(width = 0.62)
+        cap2 <- paste0(
+          "Same genes, both depots. Bars = ", round(100 * conf), "% CI.\n",
+          "* FDR<0.05   ** <0.01   *** <0.001   (per depot)",
+          if (length(dropped))
+            paste0("\nnot measured in both depots, so excluded: ",
+                   paste(dropped, collapse = ", ")) else "")
+
+        p_c <- ggplot(sub, aes(x = logFC, y = gene, colour = Depot, group = Depot)) +
+          geom_vline(xintercept = 0, colour = "grey35", linewidth = 0.4) +
+          geom_errorbarh(aes(xmin = lo, xmax = hi), height = 0,
+                         linewidth = 0.7, position = dg) +
+          geom_point(size = 3, position = dg) +
+          geom_text(aes(x = hi + rng2 * 0.03, label = stars), position = dg,
+                    hjust = 0, vjust = 0.78, size = 3.8, fontface = "bold",
+                    show.legend = FALSE, na.rm = TRUE) +
+          scale_colour_manual(values = c(iWAT = "#4575B4", gWAT = "#D73027")) +
+          facet_grid(group ~ ., scales = "free_y", space = "free_y", switch = "y") +
+          scale_x_continuous(limits = c(-rng2, rng2 * 1.12)) +
+          labs(title = paste0("iWAT vs gWAT: ", pname),
+               subtitle = "the same gene in both depots -- non-overlapping intervals mean the depots differ",
+               x = expression(log[2]~"Fold Change (KAT8KD/CTL)"), y = NULL,
+               caption = cap2) +
+          theme_bw(base_size = 12) +
+          theme(panel.grid.major.y = element_blank(),
+                panel.grid.minor   = element_blank(),
+                axis.text.y  = element_text(face = "italic", size = 11),
+                strip.placement = "outside",
+                strip.text.y.left = element_text(angle = 0, face = "bold"),
+                strip.background = element_rect(fill = "grey95", colour = "grey70"),
+                plot.title    = element_text(face = "bold", hjust = 0.5),
+                plot.subtitle = element_text(hjust = 0.5, colour = "grey35"),
+                plot.caption  = element_text(hjust = 0.5, colour = "grey45", size = 8),
+                legend.position = "bottom")
+
+        safe <- gsub("[^A-Za-z0-9]+", "_", pname)
+        cf <- paste0("Forest_", safe, "_iWAT_vs_gWAT_", run_tag, ".png")
+        ggsave(file.path(plots_dir, cf), p_c,
+               width = 9.5, height = max(4.5, 0.5 * length(keep_g) + 2.6),
+               dpi = 300, bg = "white", limitsize = FALSE)
+        cat("[OK] Saved: ", cf, "  (", length(keep_g), " genes in both depots)\n", sep = "")
       }
     }
   }

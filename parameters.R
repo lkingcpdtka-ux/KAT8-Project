@@ -1,6 +1,6 @@
 ## -------------------------------------------------------------------------
 ## SCRIPT VERSION: 2026-07-27
-##   PCA all-genes/unit-scaled; GENES_OF_INTEREST; MARKER_PANELS
+##   PCA all-genes/unit-scaled; GENES_OF_INTEREST; MARKER_PANELS (7 panels)
 ##   All pipeline scripts should carry the SAME version date. run_all.R prints
 ##   them at pre-flight -- a date that differs from the rest means that file is
 ##   a stale copy and should be re-downloaded before you trust its output.
@@ -92,6 +92,34 @@ MARKER_PANELS <- list(
                              "Scd1", "Pck1", "Cpt1b", "Lipe", "Pnpla2")
     )
   ),
+  ## ---- RECONSTRUCTED PANELS -------------------------------------------
+  ## The May run (RUN_TISSUE_PANELS_20260515_163857) produced figures named
+  ## A_identity / B_effectors / C_hypoxia. That script was pasted into the
+  ## console rather than saved, so no copy of it survives -- the figures do,
+  ## the code does not. "A_identity" is reproduced above as "Adipogenic
+  ## program"; the two below are RECONSTRUCTIONS from standard marker sets,
+  ## not the original lists. Check them against the old PNGs and edit freely.
+  "Metabolic effectors" = list(
+    subtitle = "What the adipocyte actually does: lipolysis, lipogenesis, glucose, mitochondria",
+    groups = list(
+      "Lipolysis"   = c("Pnpla2", "Lipe", "Mgll", "Abhd5", "Plin5"),
+      "Lipogenesis" = c("Fasn", "Acaca", "Scd1", "Elovl6", "Dgat1", "Dgat2", "Gpd1"),
+      "Glucose"     = c("Slc2a1", "Slc2a4", "Hk2", "Pfkl", "Pdk4"),
+      "Mitochondrial" = c("Ppargc1a", "Cox7a1", "Ndufa9", "Sdhb", "Atp5f1b", "Cpt1a")
+    )
+  ),
+  ## Hypertrophic fat outgrows its blood supply and becomes hypoxic, which is
+  ## the standard mechanistic bridge from expansion to inflammation and
+  ## fibrosis -- directly relevant to a non-cell-autonomous phenotype.
+  "Hypoxia" = list(
+    subtitle = "HIF1a and its canonical targets",
+    groups = list(
+      "HIF subunits"   = c("Hif1a", "Epas1", "Arnt"),
+      "HIF targets"    = c("Vegfa", "Slc2a1", "Ldha", "Pgk1", "Aldoa", "Eno1",
+                           "Pdk1", "Adm", "Bnip3", "Ankrd37", "Car9"),
+      "O2 sensing"     = c("Egln1", "Egln3", "Vhl")
+    )
+  ),
   "Inflammation and remodelling" = list(
     subtitle = "Immune infiltration and ECM -- the non-cell-autonomous candidates",
     groups = list(
@@ -107,6 +135,18 @@ MARKER_PANELS <- list(
       "Catalytic"  = c("Kat8"),
       "MSL"        = c("Msl1", "Msl2", "Msl3"),
       "NSL / KANSL" = c("Kansl1", "Kansl2", "Kansl3", "Mcrs1", "Phf20")
+    )
+  ),
+  ## The old "combined_identity_vs_effectors" figure was simply two blocks on
+  ## one axis. That needs no special code -- a panel is already a list of
+  ## groups, so putting both sets of groups in one entry reproduces it.
+  "Adipogenic program vs effectors" = list(
+    subtitle = "Is the program intact but the output lost, or is the program itself gone?",
+    groups = list(
+      "Master TFs"   = c("Pparg", "Cebpa", "Cebpb", "Cebpd", "Klf15", "Srebf1"),
+      "Pparg targets" = c("Adipoq", "Lep", "Fabp4", "Plin1", "Cd36", "Lpl",
+                          "Slc2a4", "Angptl4"),
+      "Effectors"    = c("Pnpla2", "Lipe", "Fasn", "Acaca", "Scd1", "Pck1", "Cpt1a")
     )
   )
 )
