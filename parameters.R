@@ -47,9 +47,13 @@ default_fdr_cut   <- 0.05
 ## expected to stay FLAT under siRNA (which depletes KAT8 protein, not partner
 ## transcripts), so they act as a built-in negative control on the plots.
 GENES_OF_INTEREST <- c(
-  "Kat8",                                        ## catalytic subunit
-  "Msl1", "Msl2", "Msl3",                        ## MSL complex
-  "Kansl1", "Kansl2", "Kansl3", "Mcrs1", "Phf20" ## NSL/KANSL complex
+  "Kat8",                                         ## catalytic subunit
+  "Msl1", "Msl2", "Msl3",                         ## MSL complex
+  "Kansl1", "Kansl2", "Kansl3", "Mcrs1", "Phf20", ## NSL/KANSL complex
+  ## Medium-chain acyl-CoA synthetases: among the strongest tissue effects
+  ## (Acsm3 iWAT log2FC -5.8, gWAT -3.1) and NOT expressed in 3T3-L1, so they
+  ## are tissue-only and cannot be assessed for cell-autonomy.
+  "Acsm3", "Acsm5"
 )
 
 ## ============================================================
@@ -216,6 +220,12 @@ enrichment_colors <- list(
 ## with DEGs, then ranked by a composite score:
 ##   score = z(pathway_count) + z(|logFC|) + z(-log10(FDR))
 
+## Fraction of EXTRA labels reserved for the largest fold changes, on top of
+## the composite-ranked ones. Guarantees the volcano labels both the most
+## significant genes AND the biggest effects, instead of clustering them all
+## at the top. 0 disables (composite ranking only).
+volcano_fc_label_fraction <- 0.5
+
 volcano_gene_selection <- list(
   ## >>> CHANGE THIS to control how many genes are labeled per direction <<<
   top_n_per_direction = 20,
@@ -252,6 +262,17 @@ volcano_colors <- list(
 ## Used by: part1_main_analysis.R, part4_visualizations.R
 
 qc_plot_params <- list(
+  ## --- PCA construction (these change how the plot LOOKS) ---
+  ## pca_ntop  : number of most-variable genes to use. 500 = DESeq2::plotPCA
+  ##             default. Set to Inf to use every gene (the original setting).
+  ## pca_scale : unit-scale each gene before PCA? FALSE = DESeq2 default.
+  ##             TRUE gives every gene equal weight, so low-variance noise
+  ##             contributes heavily and PC1/PC2 explain much less variance.
+  ## The sign of a principal component is arbitrary -- a mirrored plot between
+  ## runs is not an error.
+  pca_ntop  = 500,
+  pca_scale = FALSE,
+
   ## Palette for DepotSex colors: any viridis option or "manual"
   depot_sex_palette = "manual",
   ## Manual colors (named vector by DepotSex). Used when palette = "manual".

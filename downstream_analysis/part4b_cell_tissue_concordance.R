@@ -60,6 +60,29 @@ analyse_pair <- function(cell_tbl, tis_tbl, tis_label) {
   ) %>% dplyr::filter(!is.na(stat_cell), !is.na(stat_tis))
   cat("[INFO] shared genes:", nrow(m), "\n")
 
+  ## THIRD CATEGORY: tissue DEGs that are NOT EXPRESSED in the cells at all.
+  ## Every concordance statistic below is computed only over genes measured in
+  ## BOTH datasets, which is unavoidable -- but it means these genes are not
+  ## evidence of anything. They are "not testable for cell-autonomy", NOT
+  ## "non-cell-autonomous", and must not be lumped in with the tissue-only set.
+  ## Some of the largest tissue effects live here (e.g. Ucp1, Acsm3, Elovl3),
+  ## so the count is reported and the genes are written out.
+  tis_deg_all <- tis_tbl %>% dplyr::filter(!is.na(padj), padj < cp$tissue_fdr)
+  not_testable <- tis_deg_all %>% dplyr::filter(!gene %in% cell_tbl$gene) %>%
+    dplyr::arrange(dplyr::desc(abs(log2FC)))
+  cat(sprintf("[NOTE] %d of %d %s DEGs (%.0f%%) are NOT expressed in the cells ->\n",
+              nrow(not_testable), nrow(tis_deg_all), tis_label,
+              100 * nrow(not_testable) / max(nrow(tis_deg_all), 1)))
+  cat("       excluded from every concordance statistic; NOT testable for cell-autonomy.\n")
+  if (nrow(not_testable) > 0) {
+    cat("       largest: ",
+        paste(utils::head(sprintf("%s(%+.1f)", not_testable$gene, not_testable$log2FC), 8),
+              collapse = ", "), "\n", sep = "")
+    write.csv(not_testable,
+              file.path(OUTDIR, paste0("concordance_NOT_testable_", tis_label, "_", RUN_TAG, ".csv")),
+              row.names = FALSE)
+  }
+
   ## ---- (a) genome-wide rank concordance of Wald stats ----
   rho_all <- suppressWarnings(cor(m$stat_cell, m$stat_tis, method = cp$cor_method))
   ## restricted to the well-powered tissue DEGs

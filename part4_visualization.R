@@ -182,11 +182,23 @@ if (generate_pca_plot || generate_mds_plot || generate_density_plot) {
     ## A.1) PCA Plot
     if (generate_pca_plot && !is.null(vst_mat)) {
       cat("--- Creating PCA plot ---\n")
-      ## DESeq2 convention: top-variable genes, no unit-scaling (scale.=TRUE
-      ## upweights noisy low-variance genes). Mirrors DESeq2::plotPCA.
+      ## PCA gene selection + scaling are configurable in parameters.R
+      ## (qc_plot_params$pca_ntop / $pca_scale) because the two conventions
+      ## give visibly DIFFERENT plots and neither is wrong:
+      ##   ntop=500,  scale=FALSE -> DESeq2::plotPCA default. Driven by the most
+      ##              variable genes; usually the cleanest group separation.
+      ##   ntop=Inf,  scale=TRUE  -> the original setting here. Every gene gets
+      ##              equal weight, so low-variance noise contributes heavily
+      ##              and the % variance on PC1/PC2 is much lower.
+      ## NOTE: the SIGN of a principal component is arbitrary, so a plot can
+      ## appear mirrored between runs without anything being wrong.
+      .ntop  <- if (!is.null(qc_plot_params$pca_ntop))  qc_plot_params$pca_ntop  else 500
+      .scale <- if (!is.null(qc_plot_params$pca_scale)) qc_plot_params$pca_scale else FALSE
       rv <- apply(vst_mat, 1, stats::var)
-      top_var_idx <- order(rv, decreasing = TRUE)[seq_len(min(500, length(rv)))]
-      pca_result <- prcomp(t(vst_mat[top_var_idx, , drop = FALSE]), scale. = FALSE)
+      keep_n <- if (is.infinite(.ntop)) length(rv) else min(.ntop, length(rv))
+      top_var_idx <- order(rv, decreasing = TRUE)[seq_len(keep_n)]
+      cat("[INFO] PCA on ", keep_n, " genes, scale = ", .scale, "\n", sep = "")
+      pca_result <- prcomp(t(vst_mat[top_var_idx, , drop = FALSE]), scale. = .scale)
       pca_var <- summary(pca_result)$importance[2, 1:2] * 100
       
       pca_df <- data.frame(
@@ -361,25 +373,44 @@ select_genes_one_direction <- function(de_dir, ora_counts_dir, top_n,
   if (nrow(ora_supported) < 3 && fallback_to_de) {
     ## Fallback: rank by DE evidence alone
     cat("    [INFO] <3 ORA-supported genes; using DE-only ranking\n")
-    return(
-      de_dir %>%
-        dplyr::arrange(padj, dplyr::desc(abs(logFC))) %>%
-        dplyr::slice_head(n = top_n)
-    )
+    ## Balanced fallback: half by significance, half by fold change, so the
+    ## labels are not all clustered at the top of the volcano.
+    n_half <- max(1, floor(top_n / 2))
+    return(dplyr::bind_rows(
+        de_dir %>% dplyr::arrange(padj) %>% dplyr::slice_head(n = n_half),
+        de_dir %>% dplyr::arrange(dplyr::desc(abs(logFC))) %>% dplyr::slice_head(n = top_n - n_half)
+      ) %>% dplyr::distinct(gene_name, .keep_all = TRUE))
   }
   
-  ## Compute composite score (z-scored components)
+  ## Compute composite score.
+  ## PREVIOUSLY z-scored: scale(-log10(padj)) has an enormous right tail here
+  ## (padj reaches 1e-27), so z_sig dwarfed z_fc and z_pw and the labels
+  ## collapsed onto the most-significant genes at the top of the volcano --
+  ## large fold-change genes were never labelled. Percentile RANKS put the
+  ## three criteria on the same 0-1 footing so no single one can dominate.
+  n <- nrow(ora_supported)
   scored <- ora_supported %>%
     dplyr::mutate(
-      z_pw   = as.numeric(scale(pathway_count)),
-      z_fc   = as.numeric(scale(abs(logFC))),
-      z_sig  = as.numeric(scale(-log10(padj))),
-      composite_score = z_pw + z_fc + z_sig
+      r_pw   = rank(pathway_count,  ties.method = "average") / n,
+      r_fc   = rank(abs(logFC),     ties.method = "average") / n,
+      r_sig  = rank(-log10(padj),   ties.method = "average") / n,
+      composite_score = r_pw + r_fc + r_sig
     ) %>%
-    dplyr::arrange(dplyr::desc(composite_score)) %>%
-    dplyr::slice_head(n = top_n)
-  
-  return(scored)
+    dplyr::arrange(dplyr::desc(composite_score))
+
+  ## GUARANTEE BOTH EXTREMES ARE REPRESENTED. Even a balanced score can drift,
+  ## so reserve a share of the labels for the largest fold changes outright --
+  ## this is the behaviour of the older volcanoes (top-N by FDR + top-N by FC).
+  .fcfrac <- if (exists("volcano_fc_label_fraction")) volcano_fc_label_fraction else 0.5
+  n_fc   <- max(1, floor(top_n * .fcfrac))
+  by_fc  <- ora_supported %>% dplyr::arrange(dplyr::desc(abs(logFC))) %>%
+    dplyr::slice_head(n = n_fc)
+  by_comp <- scored %>% dplyr::slice_head(n = top_n)
+  out <- dplyr::bind_rows(by_comp, by_fc) %>%
+    dplyr::distinct(gene_name, .keep_all = TRUE) %>%
+    dplyr::slice_head(n = top_n + n_fc)
+
+  return(out)
 }
 
 
