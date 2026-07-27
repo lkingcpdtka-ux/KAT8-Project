@@ -172,6 +172,10 @@ genes_of_interest <- c(
   ## Matrix remodeling
   "Fn1", "Mmp3", "Timp4", "Mmp12", "Mmp14", "Mmp16"
 )
+## Fold in the project-wide list from parameters.R so a gene added there is
+## labelled here too, without having to edit this curated ECM/metabolism set.
+if (exists("GENES_OF_INTEREST"))
+  genes_of_interest <- unique(c(genes_of_interest, GENES_OF_INTEREST))
 cat("[INFO] Genes of interest for focused plots: ", length(genes_of_interest), "\n")
 
 ## -----------------------------

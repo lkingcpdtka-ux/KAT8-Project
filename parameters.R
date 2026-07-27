@@ -32,6 +32,27 @@ default_logFC_cut <- 1.0
 default_fdr_cut   <- 0.05
 
 ## ============================================================
+## GENES OF INTEREST  <<< ADD YOUR GENES HERE, ONCE >>>
+## ============================================================
+## One list, honoured by every plot that labels individual genes:
+##   part1  - genes-of-interest heatmap + EnhancedVolcano
+##   part4  - volcano plots (always labelled if they pass DE thresholds)
+##   part4b - cell-vs-tissue concordance quadrant plot
+##
+## These do NOT need to be transcription factors. The only TF-restricted
+## analyses are part5b layers 1 and 3, which are limited to TFs by definition
+## (GO:0003700 / TF target sets) -- everything else labels any gene you list.
+##
+## Seeded with KAT8 itself and its MSL / NSL complex partners: their mRNA is
+## expected to stay FLAT under siRNA (which depletes KAT8 protein, not partner
+## transcripts), so they act as a built-in negative control on the plots.
+GENES_OF_INTEREST <- c(
+  "Kat8",                                        ## catalytic subunit
+  "Msl1", "Msl2", "Msl3",                        ## MSL complex
+  "Kansl1", "Kansl2", "Kansl3", "Mcrs1", "Phf20" ## NSL/KANSL complex
+)
+
+## ============================================================
 ## CELL (3T3-L1) PARAMETERS
 ## ============================================================
 ## Used by: KAT8_bulk_cells_comprehensive.R, downstream_analysis/*
@@ -205,8 +226,9 @@ volcano_gene_selection <- list(
   ## Minimum pathway count for a gene to be considered ORA-supported
   min_pathway_count   = 1,
   
-  ## Genes always labeled if they pass DE thresholds (biological anchors)
-  mandatory_genes     = c("Kat8"),
+  ## Genes always labeled if they pass DE thresholds (biological anchors).
+  ## Inherits the single GENES_OF_INTEREST list defined above.
+  mandatory_genes     = GENES_OF_INTEREST,
   
   ## Fallback: when no ORA pathways exist for a direction, use DE-only ranking
   ## (top genes by padj, then by |logFC|)

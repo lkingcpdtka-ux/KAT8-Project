@@ -13,6 +13,19 @@
 ## =========================================================
 
 ## ---------------------------------------------------------
+## 0) INHERIT THE PROJECT-WIDE PARAMETERS
+## ---------------------------------------------------------
+## Pull in parameters.R so these scripts honour the same GENES_OF_INTEREST list
+## as the main pipeline. Sourced only if not already loaded, and silently
+## skipped when these scripts are run somewhere without it (the marker list
+## then falls back to Kat8 alone).
+if (!exists("GENES_OF_INTEREST")) {
+  for (.p in c("parameters.R", file.path("..", "parameters.R"))) {
+    if (file.exists(.p)) { suppressWarnings(try(source(.p), silent = TRUE)); break }
+  }
+}
+
+## ---------------------------------------------------------
 ## 1) INPUT DE TABLES  (<<< EDIT THESE PATHS >>>)
 ## ---------------------------------------------------------
 ## Point each to the DESeq2 CSV your pipeline produced. Columns
@@ -141,8 +154,10 @@ concordance_params <- list(
   marker_immune = c("Ccl2", "Ccl8", "Cxcl2", "Cxcl10", "Il1b",
                     "Il12b", "Itgax", "Ctss", "Cd44", "Gdf15"),
 
-  ## Always keep Kat8 itself labelled.
-  marker_anchor = c("Kat8"),
+  ## Always-labelled anchors. Inherits GENES_OF_INTEREST from parameters.R when
+  ## that has been sourced (the usual case via run_all.R); falls back to Kat8
+  ## alone if these scripts are run without the main pipeline's parameters.
+  marker_anchor = if (exists("GENES_OF_INTEREST")) GENES_OF_INTEREST else c("Kat8"),
 
   plot_width  = 7.5,
   plot_height = 7.0
