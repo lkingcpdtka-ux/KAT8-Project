@@ -2,7 +2,7 @@
 
 ## -------------------------------------------------------------------------
 ## SCRIPT VERSION: 2026-07-27
-##   pipeline driver; downstream staging scoped to the current run folder
+##   pipeline driver; one-shot RUN_* flags; run-scoped staging
 ##   All pipeline scripts should carry the SAME version date. run_all.R prints
 ##   them at pre-flight -- a date that differs from the rest means that file is
 ##   a stale copy and should be re-downloaded before you trust its output.
@@ -60,10 +60,40 @@ run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
   force <- if (is.null(force)) character(0) else tolower(as.character(force))
   target <- tolower(target)
 
+  ## RUN_FRESH / RUN_FORCE / RUN_TARGET are ONE-SHOT.
+  ##
+  ## They live in the global environment and used to persist there for the
+  ## whole R session. Setting RUN_FRESH <- TRUE for one run and then asking
+  ## for RUN_FORCE <- "part4" later did NOT do what it looks like: RUN_FRESH
+  ## was still set, so fresh mode won, a new folder was created, no step had
+  ## a completion marker, and the ENTIRE pipeline re-ran instead of just
+  ## Part 4. Reading them here and clearing them immediately makes each flag
+  ## apply to exactly the run you set it for.
+  used <- intersect(c("RUN_FRESH", "RUN_FORCE", "RUN_TARGET"), ls(globalenv()))
+  if (length(used)) {
+    rm(list = used, envir = globalenv())
+    cat("[INFO] applied and cleared: ", paste(used, collapse = ", "),
+        "  (these are one-shot; set again for the next run)\n", sep = "")
+  }
+
   cat("Project root : ", project_root, "\n", sep = "")
   cat("Target       : ", target, "\n", sep = "")
   cat("Mode         : ", if (fresh) "FRESH (new run folder)" else "RESUME (reuse latest)", "\n", sep = "")
   if (length(force)) cat("Force re-run : ", paste(force, collapse = ", "), "\n", sep = "")
+
+  ## A fresh run costs ~30-40 minutes. If that was not the intention it should
+  ## be obvious BEFORE the first slow step, not thirty minutes in.
+  if (fresh) {
+    cat("\n**********************************************************\n")
+    cat("FRESH RUN: every step will be recomputed (~30-40 min).\n")
+    cat("Completed work in previous run folders is IGNORED, not reused.\n")
+    if (length(force))
+      cat("NOTE: RUN_FORCE (", paste(force, collapse = ", "),
+          ") has no effect here -- a fresh folder has nothing to skip.\n", sep = "")
+    cat("To run only some steps instead: press Esc now, then use\n")
+    cat("  RUN_FORCE <- \"part4\"   (without RUN_FRESH)\n")
+    cat("**********************************************************\n")
+  }
 
   ## ---- step definitions -------------------------------------------------
   ## Completion is recorded ONLY by a marker the driver writes after a step
@@ -315,6 +345,8 @@ run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
   print(results, row.names = FALSE)
   cat("\nRun folder: ", KAT8_RUN_DIR, "\n", sep = "")
   cat("To redo work:  RUN_FORCE <- \"all\" (same folder)  |  RUN_FRESH <- TRUE (new folder)\n")
+  cat("               one step only:  RUN_FORCE <- \"part4\"  then run_pipeline()\n")
+  cat("               (these flags are one-shot -- they do not carry over)\n")
   cat("\nCheck the SANITY / VALIDATION blocks above before interpreting anything.\n")
   invisible(results)
 }
