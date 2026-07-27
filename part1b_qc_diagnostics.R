@@ -59,6 +59,18 @@ dir.create(plots_dir, recursive = TRUE, showWarnings = FALSE)
 cat("[INFO] QC diagnostics for: ", outdir, "\n", sep = "")
 
 FLAGS <- list()
+## A diagnostic script must never take the pipeline down with it. Each section
+## runs inside this wrapper: a failure is recorded as a WARN flag and the rest
+## of the QC still runs.
+safely <- function(label, expr) {
+  tryCatch(force(expr), error = function(e) {
+    FLAGS[[length(FLAGS) + 1]] <<- data.frame(check = paste0(label, " [section failed]"),
+      value = conditionMessage(e), status = "WARN",
+      action = "this QC section did not run; others still did",
+      stringsAsFactors = FALSE)
+    cat(sprintf("  [WARN] %-44s %s\n", paste0(label, " failed"), conditionMessage(e)))
+    NULL })
+}
 flag <- function(check, value, status = "OK", action = "") {
   FLAGS[[length(FLAGS) + 1]] <<- data.frame(check = check, value = as.character(value),
                                             status = status, action = action,
@@ -79,6 +91,7 @@ cat("\n=== A. p-value histograms ===\n")
 de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
 if (!length(de_files)) stop("No DE_tissue_*.csv found in ", tables_dir, call. = FALSE)
 
+safely("A. p-value histograms", {
 pv_list <- list()
 for (f in de_files) {
   cn <- gsub("^DE_tissue_(.+)_[0-9]{8}_[0-9]{6}\\.csv$", "\\1", basename(f))
@@ -108,11 +121,13 @@ p <- ggplot(pv_all, aes(pvalue)) +
   theme_bw(base_size = 11) + theme(panel.grid.minor = element_blank())
 ggsave(file.path(plots_dir, paste0("QC_pvalue_histograms_", run_tag, ".png")),
        p, width = 9, height = 4.2, dpi = 300, bg = "white")
+})
 
 ## =========================================================
 ## B. INDEPENDENT FILTERING
 ## =========================================================
 cat("\n=== B. independent filtering ===\n")
+safely("B. independent filtering", {
 for (f in de_files) {
   cn <- gsub("^DE_tissue_(.+)_[0-9]{8}_[0-9]{6}\\.csv$", "\\1", basename(f))
   d  <- read.csv(f, stringsAsFactors = FALSE)
@@ -122,6 +137,7 @@ for (f in de_files) {
        ifelse(n_na / nrow(d) > 0.5, "WARN", "OK"),
        ifelse(n_na / nrow(d) > 0.5, "most genes filtered out - check prefilter", ""))
 }
+})
 
 ## =========================================================
 ## C. UNSTABLE ESTIMATES  -- log2FC driven by very few samples
@@ -131,6 +147,7 @@ for (f in de_files) {
 ## the other. These dominate volcano plots and look impressive but are usually
 ## contamination or a single outlier library.
 cat("\n=== C. unstable log2FC estimates ===\n")
+safely("C. unstable log2FC estimates", {
 unstable_all <- list()
 for (f in de_files) {
   cn <- gsub("^DE_tissue_(.+)_[0-9]{8}_[0-9]{6}\\.csv$", "\\1", basename(f))
@@ -150,6 +167,7 @@ unstable <- dplyr::bind_rows(unstable_all)
 if (nrow(unstable))
   write.csv(unstable, file.path(tables_dir, paste0("QC_unstable_estimates_", run_tag, ".csv")),
             row.names = FALSE)
+})
 
 ## =========================================================
 ## D. CONTAMINATION SCREEN  -- per sample
@@ -166,9 +184,19 @@ if (!length(qc_files)) {
        "re-run Part 1 to regenerate")
 } else {
   qc <- readRDS(qc_files[order(basename(qc_files), decreasing = TRUE)][1])
-  vst <- qc$vst_mat_before; if (is.null(vst)) vst <- qc$vst_mat_qc
+  ## TWO different matrices, used for different jobs:
+  ##   vst_screen   pre-filter (~78k genes) -- best for CONTAMINATION, because a
+  ##                marker for a foreign tissue may be removed by the prefilter.
+  ##   vst_analysis post-filter -- the correct set for PCA/correlation. It also
+  ##                excludes all-zero genes, which have ZERO VARIANCE and make
+  ##                prcomp(scale. = TRUE) fail outright.
+  vst_screen   <- qc$vst_mat_before; if (is.null(vst_screen))   vst_screen   <- qc$vst_mat_qc
+  vst_analysis <- qc$vst_mat_qc;     if (is.null(vst_analysis)) vst_analysis <- vst_screen
+  vst <- vst_analysis
   si  <- qc$sample_info
   si  <- si[match(colnames(vst), si$Sample), , drop = FALSE]
+  flag("QC matrices", sprintf("screen %d genes / analysis %d genes",
+                              nrow(vst_screen), nrow(vst_analysis)), "OK")
 
   PANELS <- list(
     Sperm_testis = c("Prm1","Prm2","Tnp1","Tnp2","Smcp","Oaz3","Odf1","Akap4","Spata19","Izumo1"),
@@ -178,10 +206,11 @@ if (!length(qc_files)) {
     LymphNode    = c("Cd19","Ms4a1","Cd3e","Ccl21a","Ccl19"))
 
   score_rows <- list()
+  safely("D. contamination screen", {
   for (nm in names(PANELS)) {
-    g <- intersect(PANELS[[nm]], rownames(vst))
+    g <- intersect(PANELS[[nm]], rownames(vst_screen))
     if (length(g) < 2) { flag(paste0(nm, " panel"), "too few genes measured", "INFO"); next }
-    sc <- colMeans(vst[g, , drop = FALSE])
+    sc <- colMeans(vst_screen[g, colnames(vst), drop = FALSE])
     z  <- (sc - median(sc)) / (mad(sc) + 1e-9)          ## robust z, outlier-resistant
     score_rows[[nm]] <- data.frame(panel = nm, Sample = names(sc), score = as.numeric(sc),
                                    robust_z = as.numeric(z),
@@ -194,12 +223,46 @@ if (!length(qc_files)) {
          ifelse(length(hot), "inspect these libraries", ""))
 
     ## The dangerous case: contamination tracking with genotype.
+    ##
+    ## This is tested TWICE, and the second test is the one that matters.
+    ## Pooling iWAT and gWAT together confounds the comparison with depot: if
+    ## one depot simply carries more of a marker, a pooled test can report a
+    ## genotype effect that is really a depot effect (Simpson's paradox). DE is
+    ## run within depot, so the within-depot test is what actually predicts
+    ## whether contamination can generate false DEGs.
+    wtest <- function(x, grp) {
+      grp <- factor(grp)
+      if (nlevels(grp) != 2 || any(table(grp) < 2)) return(NA_real_)
+      tryCatch(suppressWarnings(
+        wilcox.test(x[grp == levels(grp)[1]], x[grp == levels(grp)[2]])$p.value),
+        error = function(e) NA_real_)
+    }
     if (length(unique(si$Genotype)) == 2) {
-      pv <- tryCatch(suppressWarnings(wilcox.test(sc ~ si$Genotype)$p.value), error = function(e) NA)
-      flag(paste0(nm, ": contamination vs GENOTYPE"), sprintf("p = %.3g", pv),
-           ifelse(!is.na(pv) && pv < 0.05, "WARN", "OK"),
+      pv <- wtest(sc, si$Genotype)
+      flag(paste0(nm, ": contamination vs GENOTYPE (pooled)"), sprintf("p = %.3g", pv),
+           ifelse(!is.na(pv) && pv < 0.05, "INFO", "OK"),
            ifelse(!is.na(pv) && pv < 0.05,
-                  "CONFOUNDED with genotype -> will create false DEGs", ""))
+                  "pooled across depots - check the within-depot test below", ""))
+
+      ## Within each depot, which is how the DE model is actually fitted.
+      for (dp in unique(si$Depot)) {
+        k   <- si$Depot == dp
+        pvd <- wtest(sc[k], si$Genotype[k])
+        if (is.na(pvd)) next
+        flag(sprintf("%s: contamination vs GENOTYPE within %s", nm, dp),
+             sprintf("p = %.3g", pvd),
+             ifelse(pvd < 0.05, "WARN", "OK"),
+             ifelse(pvd < 0.05,
+                    "CONFOUNDED with genotype in this depot -> can create false DEGs",
+                    ""))
+      }
+
+      ## And the benign explanation, reported so the pooled result can be read
+      ## correctly rather than guessed at.
+      pvdep <- tryCatch(suppressWarnings(
+        kruskal.test(sc ~ factor(si$Depot))$p.value), error = function(e) NA_real_)
+      flag(paste0(nm, ": marker score vs DEPOT"), sprintf("p = %.3g", pvdep), "INFO",
+           "a strong depot effect explains a pooled genotype signal")
     }
   }
   cont <- dplyr::bind_rows(score_rows)
@@ -219,6 +282,7 @@ if (!length(qc_files)) {
     ggsave(file.path(plots_dir, paste0("QC_contamination_", run_tag, ".png")),
            p, width = 11, height = 12, dpi = 300, bg = "white")
   }
+  })
 
   ## =========================================================
   ## E. PCA SCREE + WHAT DRIVES EACH COMPONENT
@@ -227,8 +291,13 @@ if (!length(qc_files)) {
   ## the known covariates, so "PC1 is depot" or "PC2 is library size" becomes a
   ## number rather than an impression.
   cat("\n=== E. PCA scree + PC-covariate association ===\n")
-  rv <- apply(vst, 1, stats::var)
+  ## idx (the top-500-variable genes) is shared by E, F and G, so it is built
+  ## once out here -- a failure inside any one section then cannot starve the
+  ## next one of its input.
+  rv  <- apply(vst, 1, stats::var)
   idx <- order(rv, decreasing = TRUE)[seq_len(min(500, length(rv)))]
+
+  safely("E. PCA scree / PC-covariate", {
   pca <- prcomp(t(vst[idx, , drop = FALSE]), scale. = FALSE)
   ve  <- summary(pca)$importance[2, ] * 100
   scree <- data.frame(PC = factor(paste0("PC", 1:min(10, length(ve))),
@@ -260,11 +329,13 @@ if (!length(qc_files)) {
   if (is.null(libsize))
     flag("PC ~ LibrarySize", "lib_sizes not saved by Part 1", "INFO",
          "re-run Part 1 to enable this test")
+  })
 
   ## =========================================================
   ## F. SAMPLE-SAMPLE CORRELATION  -- outliers PCA can miss
   ## =========================================================
   cat("\n=== F. sample-sample correlation ===\n")
+  safely("F. sample-sample correlation", {
   cm <- cor(vst[idx, , drop = FALSE], method = "spearman")
   ann <- data.frame(Genotype = si$Genotype, Depot = si$Depot, row.names = si$Sample)
   png(file.path(plots_dir, paste0("QC_sample_correlation_", run_tag, ".png")),
@@ -281,6 +352,7 @@ if (!length(qc_files)) {
        ifelse(length(low), paste(low, collapse = ", "), "none"),
        ifelse(length(low), "WARN", "OK"),
        ifelse(length(low), "candidate outlier libraries", ""))
+  })
 
   ## =========================================================
   ## G. PCA CONVENTION COMPARISON
@@ -288,7 +360,14 @@ if (!length(qc_files)) {
   ## The two conventions genuinely look different and neither is wrong, so
   ## both are drawn side by side rather than one being chosen silently.
   cat("\n=== G. PCA convention comparison ===\n")
+  safely("G. PCA convention comparison", {
   mk <- function(mat, scale_it, label) {
+    ## prcomp(scale. = TRUE) errors on any constant column, and an unfiltered
+    ## matrix is full of all-zero genes. Drop zero-variance rows first.
+    if (isTRUE(scale_it)) {
+      v <- apply(mat, 1, stats::var)
+      mat <- mat[is.finite(v) & v > 0, , drop = FALSE]
+    }
     pr <- prcomp(t(mat), scale. = scale_it)
     v  <- summary(pr)$importance[2, 1:2] * 100
     data.frame(Sample = colnames(mat), PC1 = pr$x[, 1], PC2 = pr$x[, 2],
@@ -296,7 +375,7 @@ if (!length(qc_files)) {
                panel = sprintf("%s  (PC1 %.1f%%, PC2 %.1f%%)", label, v[1], v[2]))
   }
   cmp <- rbind(mk(vst[idx, , drop = FALSE], FALSE, "top 500 var, unscaled (DESeq2 default)"),
-               mk(vst,                      TRUE,  "all genes, unit-scaled (original)"))
+               mk(vst_analysis,             TRUE,  "all filtered genes, unit-scaled (original)"))
   p <- ggplot(cmp, aes(PC1, PC2, colour = Depot, shape = Genotype)) +
     geom_point(size = 2.6) + facet_wrap(~ panel, scales = "free") +
     labs(title = "PCA: the two conventions compared",
@@ -304,6 +383,7 @@ if (!length(qc_files)) {
     theme_bw(base_size = 11) + theme(panel.grid.minor = element_blank())
   ggsave(file.path(plots_dir, paste0("QC_PCA_convention_comparison_", run_tag, ".png")),
          p, width = 11, height = 4.6, dpi = 300, bg = "white")
+  })
 }
 
 ## ---- summary ----

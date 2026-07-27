@@ -300,36 +300,67 @@ if (generate_pca_plot || generate_mds_plot || generate_density_plot) {
 ## where pathway_count = number of significant ORA KEGG pathways
 ## that contain the gene, counted separately per direction (Up / Down).
 
-build_ora_gene_counts <- function(tables_dir, tissue, ora_padj_cutoff) {
+## Matched on the CONTRAST, not on a tissue prefix.
+##
+## This previously took a `tissue` string built by sub("_KD_vs_CTL$", "", contrast).
+## Contrasts are named "iWAT_KAT8KD_vs_CTL", where the character before "KD" is
+## "8" rather than "_", so that sub() never matched, `tissue` came through as the
+## full contrast, and the filename pattern (which still demanded a "_<something>_"
+## between tissue and direction) matched nothing. Every volcano then silently
+## fell back to DE-only labelling and reported "0 ORA-supported".
+##
+## Part 2 writes `contrast` and `direction` as COLUMNS in each ORA table, so
+## those are used directly and no filename has to be parsed. Filename parsing
+## is kept only as a fallback for tables written by older versions.
+build_ora_gene_counts <- function(tables_dir, contrast, ora_padj_cutoff) {
   ora_gene_list <- list()
-  
-  ## Collect KEGG ORA files for this tissue (use geneID_symbols column)
-  kegg_files <- list.files(
-    tables_dir,
-    pattern = paste0("^ORA_kegg_", tissue, "_.*_(Up|Down)_[0-9]+_[0-9]+\\.csv$"),
-    full.names = TRUE
+
+  ## Both KEGG and GO:BP are used. KEGG alone yields very few significant
+  ## pathways in adipose, so most DEGs had no pathway support even when the
+  ## matching worked; GO:BP is where the adipogenic/metabolic terms are.
+  ora_files <- c(
+    list.files(tables_dir, pattern = "^ORA_kegg_.*\\.csv$", full.names = TRUE),
+    list.files(tables_dir, pattern = "^ORA_gobp_.*\\.csv$", full.names = TRUE)
   )
-  
-  for (f in kegg_files) {
-    direction <- str_match(basename(f), "_(Up|Down)_[0-9]+")[2]
+  ora_files <- ora_files[!grepl("ORA_RELAXED", basename(ora_files))]
+
+  for (f in ora_files) {
     ora <- read.csv(f, stringsAsFactors = FALSE)
     if (nrow(ora) == 0) next
-    ora <- ora[ora$p.adjust < ora_padj_cutoff, , drop = FALSE]
+
+    ## Keep only rows belonging to THIS contrast.
+    if ("contrast" %in% colnames(ora)) {
+      ora <- ora[ora$contrast == contrast, , drop = FALSE]
+    } else {
+      fn_contrast <- str_match(basename(f),
+                               "^ORA_(?:kegg|gobp)_(.+)_(?:Up|Down)_[0-9]{8}_[0-9]{6}\\.csv$")[2]
+      if (is.na(fn_contrast) || fn_contrast != contrast) next
+    }
     if (nrow(ora) == 0) next
-    
-    ## KEGG stores Entrez IDs in geneID; symbols are in geneID_symbols
+
+    ora <- ora[is.finite(ora$p.adjust) & ora$p.adjust < ora_padj_cutoff, , drop = FALSE]
+    if (nrow(ora) == 0) next
+
+    ## Direction: column first, filename second.
+    if ("direction" %in% colnames(ora)) {
+      dirs <- as.character(ora$direction)
+    } else {
+      dirs <- rep(str_match(basename(f), "_(Up|Down)_[0-9]{8}_[0-9]{6}\\.csv$")[2], nrow(ora))
+    }
+
+    ## KEGG stores Entrez IDs in geneID; symbols are in geneID_symbols.
+    ## enrichGO was run with readable = TRUE, so GO:BP geneID is already symbols.
     sym_col <- if ("geneID_symbols" %in% colnames(ora)) "geneID_symbols" else "geneID"
     for (i in seq_len(nrow(ora))) {
-      genes <- trimws(unlist(strsplit(ora[[sym_col]][i], ",")))
+      genes <- trimws(unlist(strsplit(ora[[sym_col]][i], "[,/]")))
       genes <- genes[nzchar(genes)]
-      for (g in genes) {
-        ora_gene_list[[length(ora_gene_list) + 1]] <- data.frame(
-          gene_name = g, direction = direction, stringsAsFactors = FALSE
-        )
-      }
+      if (!length(genes)) next
+      ora_gene_list[[length(ora_gene_list) + 1]] <- data.frame(
+        gene_name = genes, direction = dirs[i], stringsAsFactors = FALSE
+      )
     }
   }
-  
+
   if (length(ora_gene_list) == 0) {
     return(data.frame(gene_name = character(), pathway_count = integer(),
                       direction = character(), stringsAsFactors = FALSE))
@@ -427,9 +458,12 @@ if (generate_volcano_plots) {
     
     cat("--- Volcano: ", contrast, " ---\n", sep = "")
     
-    ## Extract tissue name (e.g., "gWAT_KD_vs_CTL" -> "gWAT")
-    tissue <- sub("_KD_vs_CTL$", "", contrast)
-    
+    ## Tissue label for plot titles only. Read the depot off the front of the
+    ## contrast rather than trying to strip a suffix -- suffixes vary
+    ## ("_KAT8KD_vs_CTL", "_KD_vs_CTL") and a failed strip used to leak the whole
+    ## contrast into downstream file matching.
+    tissue <- sub("_.*$", "", contrast)
+
     tt <- read.csv(de_file, stringsAsFactors = FALSE)
     
     ## Get thresholds
@@ -450,7 +484,10 @@ if (generate_volcano_plots) {
       )
     
     ## ----- ORA-informed gene selection -----
-    ora_counts <- build_ora_gene_counts(tables_dir, tissue, vs$ora_padj_cutoff)
+    ora_counts <- build_ora_gene_counts(tables_dir, contrast, vs$ora_padj_cutoff)
+    if (nrow(ora_counts) == 0)
+      cat("  [WARN] no ORA tables matched contrast '", contrast,
+          "' - labels will use DE evidence only\n", sep = "")
     
     tt_sig <- tt_plot %>% dplyr::filter(sig_cat != "NS")
     

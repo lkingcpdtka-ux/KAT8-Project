@@ -67,12 +67,14 @@ run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
   ## Part 4 look finished because old .png files were sitting in plots/, so the
   ## PCA / MDS / density / volcano / heatmap figures were never regenerated.
   ## Markers are unambiguous -- they mean "this driver ran this step here".
-  st <- function(key, label, path)
-    list(key = key, label = label, path = path)
+  ## fatal = FALSE marks an ADVISORY step (diagnostics): if it fails the
+  ## pipeline records it and carries on, rather than blocking the analysis.
+  st <- function(key, label, path, fatal = TRUE)
+    list(key = key, label = label, path = path, fatal = fatal)
 
   TISSUE <- list(
     st("part1", "Part 1  DE / QC / DEG lists", "part1_main_analysis.R"),
-    st("qc",    "Part 1b QC diagnostics",       "part1b_qc_diagnostics.R"),
+    st("qc",    "Part 1b QC diagnostics",       "part1b_qc_diagnostics.R", fatal = FALSE),
     st("part2", "Part 2  ORA  (slow)",         "part2_ora.R"),
     st("part3", "Part 3  GSEA (slow)",         "part3_fgsea.R"),
     st("part4", "Part 4  Visualisation",       "part4_visualization.R"))
@@ -229,6 +231,10 @@ run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
     el <- round(as.numeric(difftime(Sys.time(), t0, units = "secs")), 1)
     results <- rbind(results, data.frame(step = s$label,
                                          status = ifelse(ok, "OK", "FAILED"), seconds = el))
+    if (!ok && isFALSE(s$fatal)) {
+      cat("[WARN] ", s$label, " failed but is ADVISORY - continuing.\n", sep = "")
+      next
+    }
     if (!ok) {
       cat("\n==========================================================\n")
       cat("PIPELINE HALTED at: ", s$label, "\n", sep = "")
