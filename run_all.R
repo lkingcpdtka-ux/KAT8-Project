@@ -2,7 +2,7 @@
 
 ## -------------------------------------------------------------------------
 ## SCRIPT VERSION: 2026-07-27
-##   pipeline driver; advisory steps, resume markers, shared run folder
+##   pipeline driver; downstream staging scoped to the current run folder
 ##   All pipeline scripts should carry the SAME version date. run_all.R prints
 ##   them at pre-flight -- a date that differs from the rest means that file is
 ##   a stale copy and should be re-downloaded before you trust its output.
@@ -214,10 +214,31 @@ run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
   stage_downstream_inputs <- function() {
     dest <- file.path(project_root, "downstream_analysis", "data")
     dir.create(dest, recursive = TRUE, showWarnings = FALSE)
+
+    ## Search THIS RUN'S folder only.
+    ##
+    ## This used to search all of savepoints/ and take the "newest" file by
+    ## sorting basenames in reverse. That is not a date sort. A file named
+    ## DE_tissue_iWAT_KD_vs_CTL_TISSUE_PANELS_20260515_163857.csv sorts ABOVE
+    ## DE_tissue_iWAT_KD_vs_CTL_20260727_152755.csv, because "T" beats "2"
+    ## before either timestamp is reached -- so a brand-new run silently fed
+    ## MONTHS-OLD DE tables to every downstream step.
+    ##
+    ## A run must be self-contained: the only correct source is the run folder
+    ## the rest of this pipeline just wrote into. If a file is not there, that
+    ## is a real failure and downstream is skipped rather than quietly reaching
+    ## into another run.
     newest <- function(pat) {
-      hits <- list.files(sp, pattern = pat, recursive = TRUE, full.names = TRUE)
+      hits <- list.files(KAT8_RUN_DIR, pattern = pat, recursive = TRUE, full.names = TRUE)
+      hits <- hits[!grepl("[/\\\\](data|_superseded_[0-9]+)[/\\\\]", hits)]
       if (length(hits) == 0) return(NA_character_)
-      hits[order(basename(hits), decreasing = TRUE)][1]
+      if (length(hits) > 1) {
+        ## Several candidates within one run: take the most recently written.
+        hits <- hits[order(file.info(hits)$mtime, decreasing = TRUE)]
+        cat("[INFO] ", length(hits), " matches for ", pat, "; using ",
+            basename(hits[1]), "\n", sep = "")
+      }
+      hits[1]
     }
     wanted <- list(
       c("^DE_cells_KAT8KD_vs_CTL_.*\\.csv$",   "DE_cells_KAT8KD_vs_CTL.csv"),
@@ -227,7 +248,10 @@ run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
     ok <- TRUE
     for (w in wanted) {
       src <- newest(w[1])
-      if (is.na(src)) { cat("[MISS] ", w[2], "\n", sep = ""); ok <- FALSE; next }
+      if (is.na(src)) {
+        cat("[MISS] ", w[2], "  (not found in this run folder)\n", sep = "")
+        ok <- FALSE; next
+      }
       file.copy(src, file.path(dest, w[2]), overwrite = TRUE)
       rd <- file.path(KAT8_RUN_DIR, "data"); dir.create(rd, showWarnings = FALSE)
       file.copy(src, file.path(rd, w[2]), overwrite = TRUE)

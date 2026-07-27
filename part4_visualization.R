@@ -2,7 +2,7 @@
 
 ## -------------------------------------------------------------------------
 ## SCRIPT VERSION: 2026-07-27
-##   volcano ORA matching on contrast column; PCA convention
+##   adds Section E gene-of-interest box plots; ORA-matched volcano labels
 ##   All pipeline scripts should carry the SAME version date. run_all.R prints
 ##   them at pre-flight -- a date that differs from the rest means that file is
 ##   a stale copy and should be re-downloaded before you trust its output.
@@ -82,6 +82,9 @@ generate_ora_dotplots   <- TRUE
 generate_top_deg_heatmaps     <- TRUE   ## Simple top DEGs (no pathway sections)
 generate_individual_heatmaps  <- TRUE   ## Individual samples with pathway groups
 generate_avg4col_heatmaps     <- TRUE   ## Averaged per genotype x sex (4-column summary)
+
+## Per-gene expression box plots for GENES_OF_INTEREST (Section E)
+generate_gene_boxplots        <- TRUE
 
 ## ============================================================
 
@@ -1267,6 +1270,114 @@ if (!is.null(vst_data)) {
         dev.off()
         cat("[OK] Saved: ", plot_file, "\n", sep = "")
       }
+    }
+  }
+}
+
+## ============================================================
+## SECTION E: GENE EXPRESSION BOX PLOTS
+## ============================================================
+## Per-gene expression for GENES_OF_INTEREST, one panel per gene, CTL vs
+## KAT8KD within each depot.
+##
+## Heatmaps and volcanoes show a gene's effect relative to everything else.
+## A box plot shows the actual numbers: where each sample sits, how much the
+## groups overlap, and whether one animal is carrying the result. That is what
+## you need to look at before putting a gene in a figure or a talk, and it is
+## the plot that translates directly to a qPCR follow-up.
+##
+## Individual sample points are drawn ON TOP of the box, always. With n = 9-10
+## per group a box plot alone hides exactly the thing worth seeing -- a
+## "difference" produced by one outlier animal.
+
+if (generate_gene_boxplots) {
+  cat("\n=== SECTION E: GENE EXPRESSION BOX PLOTS ===\n")
+
+  goi <- if (exists("GENES_OF_INTEREST")) unique(GENES_OF_INTEREST) else character(0)
+  if (!length(goi)) {
+    cat("[SKIP] GENES_OF_INTEREST is empty (set it in parameters.R)\n")
+  } else if (is.null(vst_data)) {
+    cat("[SKIP] no VST matrix loaded\n")
+  } else {
+    vst_mat     <- vst_data$vst_mat
+    sample_info <- vst_data$sample_info
+    de_files    <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
+
+    present <- intersect(goi, rownames(vst_mat))
+    missing <- setdiff(goi, rownames(vst_mat))
+    cat("[INFO] ", length(present), " of ", length(goi),
+        " genes of interest are in the filtered matrix\n", sep = "")
+    if (length(missing))
+      cat("[INFO] not measured / filtered out: ", paste(missing, collapse = ", "), "\n", sep = "")
+
+    for (de_file in de_files) {
+      contrast <- str_match(basename(de_file), "DE_tissue_(.+)_[0-9]+_[0-9]+\\.csv")[2]
+      if (is.na(contrast)) next
+      tissue <- sub("_.*$", "", contrast)
+
+      if ("Depot" %in% colnames(sample_info)) {
+        keep <- rownames(sample_info)[sample_info$Depot == tissue]
+      } else {
+        keep <- colnames(vst_mat)[grepl(tissue, colnames(vst_mat), ignore.case = TRUE)]
+      }
+      keep <- intersect(keep, colnames(vst_mat))
+      if (!length(keep) || !length(present)) next
+
+      si_t <- sample_info[keep, , drop = FALSE]
+      if (!"Genotype" %in% colnames(si_t)) {
+        cat("[SKIP] ", contrast, ": no Genotype column\n", sep = ""); next
+      }
+
+      ## Long format: one row per gene per sample.
+      bx <- do.call(rbind, lapply(present, function(g) {
+        data.frame(gene     = g,
+                   Sample   = keep,
+                   expr     = as.numeric(vst_mat[g, keep]),
+                   Genotype = si_t$Genotype,
+                   Sex      = if ("Sex" %in% colnames(si_t)) si_t$Sex else NA_character_,
+                   stringsAsFactors = FALSE)
+      }))
+
+      ## Annotate each panel with this gene's DE result for THIS depot, so the
+      ## picture and the statistic can never disagree.
+      tt <- read.csv(de_file, stringsAsFactors = FALSE)
+      gcol <- if ("gene_name" %in% names(tt)) "gene_name" else names(tt)[1]
+      lab <- vapply(present, function(g) {
+        r <- tt[tt[[gcol]] == g, , drop = FALSE]
+        if (!nrow(r) || !is.finite(r$padj[1])) return(paste0(g, "  (not tested)"))
+        sprintf("%s  (log2FC %+.2f, FDR %s)", g, r$logFC[1],
+                ifelse(r$padj[1] < 0.001, format(r$padj[1], digits = 2, scientific = TRUE),
+                       sprintf("%.3f", r$padj[1])))
+      }, character(1))
+      bx$panel <- factor(lab[bx$gene], levels = lab[present])
+
+      gt_levels <- c("CTL", "KAT8KD")
+      bx$Genotype <- factor(bx$Genotype, levels = intersect(gt_levels, unique(bx$Genotype)))
+
+      p_box <- ggplot(bx, aes(x = Genotype, y = expr, fill = Genotype)) +
+        geom_boxplot(outlier.shape = NA, alpha = 0.55, linewidth = 0.3, colour = "black") +
+        geom_jitter(aes(shape = Sex), width = 0.16, height = 0, size = 1.5,
+                    alpha = 0.9, colour = "grey20") +
+        facet_wrap(~ panel, scales = "free_y",
+                   ncol = min(5, max(1, ceiling(sqrt(length(present)))))) +
+        scale_fill_manual(values = c(CTL = "#0072B2", KAT8KD = "#D55E00")) +
+        labs(title = paste0(tissue, ": genes of interest, CTL vs KAT8KD"),
+             subtitle = "VST-normalised expression; every sample is plotted. FDR is this depot's DESeq2 result.",
+             x = NULL, y = "VST expression") +
+        theme_bw(base_size = 10) +
+        theme(panel.grid.minor = element_blank(),
+              strip.text = element_text(size = 7.5, face = "bold"),
+              legend.position = "bottom")
+
+      ncol_used <- min(5, max(1, ceiling(sqrt(length(present)))))
+      nrow_used <- ceiling(length(present) / ncol_used)
+      box_file  <- paste0("Boxplot_GOI_", contrast, "_", run_tag, ".png")
+      ggsave(file.path(plots_dir, box_file), p_box,
+             width  = max(6, 2.3 * ncol_used),
+             height = max(4, 2.1 * nrow_used),
+             dpi = 300, bg = "white", limitsize = FALSE)
+      cat("[OK] Saved: ", box_file, " (", length(present), " genes, ",
+          length(keep), " samples)\n", sep = "")
     }
   }
 }
