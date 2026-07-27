@@ -182,23 +182,30 @@ if (generate_pca_plot || generate_mds_plot || generate_density_plot) {
     ## A.1) PCA Plot
     if (generate_pca_plot && !is.null(vst_mat)) {
       cat("--- Creating PCA plot ---\n")
-      ## PCA gene selection + scaling are configurable in parameters.R
-      ## (qc_plot_params$pca_ntop / $pca_scale) because the two conventions
-      ## give visibly DIFFERENT plots and neither is wrong:
-      ##   ntop=500,  scale=FALSE -> DESeq2::plotPCA default. Driven by the most
-      ##              variable genes; usually the cleanest group separation.
-      ##   ntop=Inf,  scale=TRUE  -> the original setting here. Every gene gets
-      ##              equal weight, so low-variance noise contributes heavily
-      ##              and the % variance on PC1/PC2 is much lower.
+      ## PCA gene selection + scaling are set in parameters.R
+      ## (qc_plot_params$pca_ntop / $pca_scale). This pipeline uses
+      ## ntop = Inf, scale = TRUE -- every filtered gene, unit-scaled. See the
+      ## note in parameters.R for why that convention is appropriate here.
       ## NOTE: the SIGN of a principal component is arbitrary, so a plot can
       ## appear mirrored between runs without anything being wrong.
-      .ntop  <- if (!is.null(qc_plot_params$pca_ntop))  qc_plot_params$pca_ntop  else 500
-      .scale <- if (!is.null(qc_plot_params$pca_scale)) qc_plot_params$pca_scale else FALSE
+      .ntop  <- if (!is.null(qc_plot_params$pca_ntop))  qc_plot_params$pca_ntop  else Inf
+      .scale <- if (!is.null(qc_plot_params$pca_scale)) qc_plot_params$pca_scale else TRUE
       rv <- apply(vst_mat, 1, stats::var)
+      ## scale. = TRUE errors on a constant column, so zero-variance genes must
+      ## go first. They carry no information under either convention.
+      pca_mat <- vst_mat
+      if (isTRUE(.scale)) {
+        keep_var <- is.finite(rv) & rv > 0
+        if (any(!keep_var)) {
+          cat("[INFO] dropped ", sum(!keep_var), " zero-variance genes before scaling\n", sep = "")
+          pca_mat <- pca_mat[keep_var, , drop = FALSE]
+          rv <- rv[keep_var]
+        }
+      }
       keep_n <- if (is.infinite(.ntop)) length(rv) else min(.ntop, length(rv))
       top_var_idx <- order(rv, decreasing = TRUE)[seq_len(keep_n)]
       cat("[INFO] PCA on ", keep_n, " genes, scale = ", .scale, "\n", sep = "")
-      pca_result <- prcomp(t(vst_mat[top_var_idx, , drop = FALSE]), scale. = .scale)
+      pca_result <- prcomp(t(pca_mat[top_var_idx, , drop = FALSE]), scale. = .scale)
       pca_var <- summary(pca_result)$importance[2, 1:2] * 100
       
       pca_df <- data.frame(

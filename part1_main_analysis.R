@@ -812,7 +812,34 @@ tryCatch({
   
   ## Ensure contrasts are processed in order (iWAT must be first for reference)
   contrast_names <- c("iWAT_KD_vs_CTL", "gWAT_KD_vs_CTL")
-  
+
+  ## ---- Retire superseded DE tables before writing new ones ----------------
+  ## A run folder must hold ONE generation of DE tables. When an older version
+  ## of this script wrote tables under a different naming scheme, those files
+  ## stayed behind and every downstream step that globs "DE_tissue_*.csv"
+  ## picked them up as EXTRA CONTRASTS -- Part 4 drew four volcanoes and four
+  ## sets of heatmaps for two real comparisons, half of them from stale data.
+  ##
+  ## Superseded files are MOVED, never deleted, so nothing is lost.
+  .expected_de <- file.path(outdir, "tables",
+                            paste0("DE_tissue_", contrast_names, "_", run_tag, ".csv"))
+  .stale <- setdiff(
+    list.files(file.path(outdir, "tables"), pattern = "^DE_tissue_.*\\.csv$",
+               full.names = TRUE),
+    .expected_de)
+  if (length(.stale)) {
+    .arch <- file.path(outdir, "tables",
+                       paste0("_superseded_", format(Sys.time(), "%Y%m%d_%H%M%S")))
+    dir.create(.arch, recursive = TRUE, showWarnings = FALSE)
+    cat("\n[CLEANUP] ", length(.stale),
+        " DE table(s) from an earlier run are being moved aside so downstream\n",
+        "          steps do not read them as additional contrasts:\n", sep = "")
+    for (f in .stale) cat("            ", basename(f), "\n", sep = "")
+    ok_mv <- file.rename(.stale, file.path(.arch, basename(.stale)))
+    cat("          moved to tables/", basename(.arch), " (",
+        sum(ok_mv), "/", length(.stale), " succeeded)\n", sep = "")
+  }
+
   for (cn in contrast_names) {
     
     cat("\n=== Contrast: ", cn, " ===\n", sep = "")

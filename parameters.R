@@ -263,15 +263,29 @@ volcano_colors <- list(
 
 qc_plot_params <- list(
   ## --- PCA construction (these change how the plot LOOKS) ---
-  ## pca_ntop  : number of most-variable genes to use. 500 = DESeq2::plotPCA
-  ##             default. Set to Inf to use every gene (the original setting).
-  ## pca_scale : unit-scale each gene before PCA? FALSE = DESeq2 default.
-  ##             TRUE gives every gene equal weight, so low-variance noise
-  ##             contributes heavily and PC1/PC2 explain much less variance.
+  ## pca_ntop  : number of most-variable genes to use. Inf = every filtered
+  ##             gene (the setting used here). 500 = DESeq2::plotPCA default.
+  ## pca_scale : unit-scale each gene before PCA? TRUE = every gene gets equal
+  ##             weight. FALSE = DESeq2 default, where high-variance genes
+  ##             dominate.
+  ##
+  ## THIS PIPELINE USES ntop = Inf, scale = TRUE, and that is a legitimate,
+  ## commonly used convention -- not a workaround. Unit-scaling asks "which
+  ## samples differ in their overall expression PATTERN", giving a gene that
+  ## moves 2-fold the same say as one that moves 20-fold. The DESeq2 default
+  ## instead asks "which samples differ most in the genes that vary most".
+  ## Both answer real questions; they simply answer different ones.
+  ##
+  ## The usual objection to unit-scaling -- that it amplifies low-expression
+  ## noise -- is handled upstream: PCA runs on the POST-FILTER matrix, so
+  ## every gene included is expressed (>=10 counts in >=4 samples). Genes with
+  ## zero variance are dropped before scaling, since scale. = TRUE cannot
+  ## rescale a constant column.
+  ##
   ## The sign of a principal component is arbitrary -- a mirrored plot between
   ## runs is not an error.
-  pca_ntop  = 500,
-  pca_scale = FALSE,
+  pca_ntop  = Inf,
+  pca_scale = TRUE,
 
   ## Palette for DepotSex colors: any viridis option or "manual"
   depot_sex_palette = "manual",

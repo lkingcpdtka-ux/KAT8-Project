@@ -337,14 +337,30 @@ if (!length(qc_files)) {
   ## the known covariates, so "PC1 is depot" or "PC2 is library size" becomes a
   ## number rather than an impression.
   cat("\n=== E. PCA scree + PC-covariate association ===\n")
-  ## idx (the top-500-variable genes) is shared by E, F and G, so it is built
-  ## once out here -- a failure inside any one section then cannot starve the
-  ## next one of its input.
+  ## idx (the top-500-variable genes) drives the sample-correlation heatmap in
+  ## section F. It is built out here so a failure in E cannot starve F of it.
   rv  <- apply(vst, 1, stats::var)
   idx <- order(rv, decreasing = TRUE)[seq_len(min(500, length(rv)))]
 
   safely("E. PCA scree / PC-covariate", {
-  pca <- prcomp(t(vst[idx, , drop = FALSE]), scale. = FALSE)
+  ## The scree and the PC-covariate tests MUST describe the same PCA that
+  ## Part 4 plots, otherwise "PC3 tracks genotype" refers to a component the
+  ## figure does not show. So the convention comes from parameters.R rather
+  ## than being hard-coded here.
+  .ntop  <- if (!is.null(qc_plot_params$pca_ntop))  qc_plot_params$pca_ntop  else Inf
+  .scale <- if (!is.null(qc_plot_params$pca_scale)) qc_plot_params$pca_scale else TRUE
+  pmat <- vst
+  rv_p <- rv
+  if (isTRUE(.scale)) {                       ## scale. = TRUE cannot rescale a
+    kv   <- is.finite(rv_p) & rv_p > 0        ## constant column
+    pmat <- pmat[kv, , drop = FALSE]; rv_p <- rv_p[kv]
+  }
+  keep_n <- if (is.infinite(.ntop)) length(rv_p) else min(.ntop, length(rv_p))
+  pidx   <- order(rv_p, decreasing = TRUE)[seq_len(keep_n)]
+  cat("  PCA on ", keep_n, " genes, scale = ", .scale, "\n", sep = "")
+  flag("PCA convention", sprintf("%d genes, scale = %s", keep_n, .scale), "OK",
+       "matches the PCA drawn by Part 4")
+  pca <- prcomp(t(pmat[pidx, , drop = FALSE]), scale. = .scale)
   ve  <- summary(pca)$importance[2, ] * 100
   scree <- data.frame(PC = factor(paste0("PC", 1:min(10, length(ve))),
                                   levels = paste0("PC", 1:min(10, length(ve)))),
@@ -400,36 +416,10 @@ if (!length(qc_files)) {
        ifelse(length(low), "candidate outlier libraries", ""))
   })
 
-  ## =========================================================
-  ## G. PCA CONVENTION COMPARISON
-  ## =========================================================
-  ## The two conventions genuinely look different and neither is wrong, so
-  ## both are drawn side by side rather than one being chosen silently.
-  cat("\n=== G. PCA convention comparison ===\n")
-  safely("G. PCA convention comparison", {
-  mk <- function(mat, scale_it, label) {
-    ## prcomp(scale. = TRUE) errors on any constant column, and an unfiltered
-    ## matrix is full of all-zero genes. Drop zero-variance rows first.
-    if (isTRUE(scale_it)) {
-      v <- apply(mat, 1, stats::var)
-      mat <- mat[is.finite(v) & v > 0, , drop = FALSE]
-    }
-    pr <- prcomp(t(mat), scale. = scale_it)
-    v  <- summary(pr)$importance[2, 1:2] * 100
-    data.frame(Sample = colnames(mat), PC1 = pr$x[, 1], PC2 = pr$x[, 2],
-               Genotype = si$Genotype, Depot = si$Depot,
-               panel = sprintf("%s  (PC1 %.1f%%, PC2 %.1f%%)", label, v[1], v[2]))
-  }
-  cmp <- rbind(mk(vst[idx, , drop = FALSE], FALSE, "top 500 var, unscaled (DESeq2 default)"),
-               mk(vst_analysis,             TRUE,  "all filtered genes, unit-scaled (original)"))
-  p <- ggplot(cmp, aes(PC1, PC2, colour = Depot, shape = Genotype)) +
-    geom_point(size = 2.6) + facet_wrap(~ panel, scales = "free") +
-    labs(title = "PCA: the two conventions compared",
-         subtitle = "same data, different gene selection/scaling. PC sign is arbitrary; a mirrored panel is not an error.") +
-    theme_bw(base_size = 11) + theme(panel.grid.minor = element_blank())
-  ggsave(file.path(plots_dir, paste0("QC_PCA_convention_comparison_", run_tag, ".png")),
-         p, width = 11, height = 4.6, dpi = 300, bg = "white")
-  })
+  ## The PCA convention comparison that used to sit here has been REMOVED.
+  ## The convention is now settled (all filtered genes, unit-scaled -- set in
+  ## parameters.R) and drawing the rejected alternative beside it every run
+  ## only invited second-guessing a decision that has been made.
 }
 
 ## ---- summary ----
