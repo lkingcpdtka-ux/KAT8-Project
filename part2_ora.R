@@ -108,7 +108,19 @@ if (is.null(outdir)) {
 }
 
 ## Extract run tag from directory name
-run_tag <- gsub("^RUN_", "", basename(outdir))
+## Derive a clean run tag: the run folder may be nested (RUN_<tag>/tissue) and
+## its name may carry a label (RUN_TISSUE_PANELS_20260515_163857). Both broke
+## downstream filename parsing -- run_tag became "tissue", and contrast names
+## picked up "_TISSUE_PANELS", which stopped the authoritative DEG lists from
+## matching. Take the trailing YYYYMMDD_HHMMSS when present.
+.clean_run_tag <- function(dir) {
+  b <- basename(dir)
+  if (b %in% c("tissue", "cells")) b <- basename(dirname(dir))
+  b <- sub("^RUN_", "", b)
+  m <- regmatches(b, regexpr("[0-9]{8}_[0-9]{6}$", b))
+  if (length(m) == 1 && nzchar(m)) m else b
+}
+run_tag <- .clean_run_tag(outdir)
 
 cat("[INFO] Using Part 1 results from: ", outdir, "\n", sep = "")
 cat("[INFO] Run tag: ", run_tag, "\n", sep = "")
@@ -877,6 +889,7 @@ tryCatch({
     cat("[INFO] Loaded DEG_summary from: ", basename(deg_summary_file), "\n\n", sep = "")
     
     all_pass <- TRUE
+    cmp_up_vals <- c(); cmp_dn_vals <- c()
     for (cn in unique(pathway_sanity_tracker$Contrast)) {
       ora_up <- pathway_sanity_tracker %>%
         dplyr::filter(Contrast == cn, Direction == "Up", Database == "GO:BP") %>%
@@ -903,13 +916,22 @@ tryCatch({
                            ifelse(ora_down == deg_down, "PASS", "FAIL"))
       
       if (up_match == "FAIL" || down_match == "FAIL") all_pass <- FALSE
+      cmp_up_vals <- c(cmp_up_vals, if (up_match == "SKIP") NA else 1)
+      cmp_dn_vals <- c(cmp_dn_vals, if (down_match == "SKIP") NA else 1)
       
       cat("  ", cn, ":\n", sep = "")
       cat("    Up genes:   ORA=", ora_up, " vs DEG_summary=", deg_up, " [", up_match, "]\n", sep = "")
       cat("    Down genes: ORA=", ora_down, " vs DEG_summary=", deg_down, " [", down_match, "]\n", sep = "")
     }
     cat("\n")
-    if (all_pass) {
+    ## Only claim PASS if at least one real comparison happened. Previously a
+    ## run where every contrast was SKIPped (e.g. contrast names not matching
+    ## DEG_summary) still printed PASS, which is the opposite of a sanity check.
+    n_compared <- sum(!is.na(cmp_up_vals) & !is.na(cmp_dn_vals))
+    if (n_compared == 0) {
+      cat("VALIDATION RESULT: INCONCLUSIVE - no contrast could be compared\n")
+      cat("  -> ORA contrast names did not match DEG_summary; check the run tag\n")
+    } else if (all_pass) {
       cat("VALIDATION RESULT: PASS - ORA input genes match DEG_summary\n")
       cat("  -> No drift in DEG membership between Part 1 and Part 2\n")
     } else {

@@ -116,7 +116,19 @@ if (is.null(outdir)) {
   outdir <- run_dirs_sorted[1]
   cat("[INFO] Using newest RUN_ folder by name: ", outdir, "\n", sep = "")
 }
-run_tag <- gsub("^RUN_", "", basename(outdir))
+## Derive a clean run tag: the run folder may be nested (RUN_<tag>/tissue) and
+## its name may carry a label (RUN_TISSUE_PANELS_20260515_163857). Both broke
+## downstream filename parsing -- run_tag became "tissue", and contrast names
+## picked up "_TISSUE_PANELS", which stopped the authoritative DEG lists from
+## matching. Take the trailing YYYYMMDD_HHMMSS when present.
+.clean_run_tag <- function(dir) {
+  b <- basename(dir)
+  if (b %in% c("tissue", "cells")) b <- basename(dirname(dir))
+  b <- sub("^RUN_", "", b)
+  m <- regmatches(b, regexpr("[0-9]{8}_[0-9]{6}$", b))
+  if (length(m) == 1 && nzchar(m)) m else b
+}
+run_tag <- .clean_run_tag(outdir)
 
 cat("[INFO] Using results from: ", outdir, "\n", sep = "")
 cat("[INFO] Run tag: ", run_tag, "\n", sep = "")

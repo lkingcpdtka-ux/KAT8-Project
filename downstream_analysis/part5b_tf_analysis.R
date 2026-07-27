@@ -200,7 +200,7 @@ if (!is.null(net) && all(c("source","target","mor") %in% colnames(net))) {
         width = 1400, height = 2100, res = 220)
     pheatmap(hm, color = colorRampPalette(c(col_down, "#4393C3", "grey97", "#D6604D", col_up))(100),
              breaks = seq(-lim, lim, length.out = 101), cluster_cols = FALSE,
-             display_numbers = TRUE, number_format = "%.1f", fontsize_number = 7, angle_col = 0,
+             display_numbers = TRUE, number_format = "%.1f", fontsize_number = 7, angle_col = "0",   ## must be a STRING: pheatmap match.arg()s it
              main = "TF activity by contrast (cells column = cell-autonomous)")
     dev.off()
     log_sanity("cross-contrast heatmap TFs", nrow(hm), "OK")

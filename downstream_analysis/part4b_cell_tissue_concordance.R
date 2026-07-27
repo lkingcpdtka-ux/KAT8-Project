@@ -103,8 +103,12 @@ analyse_pair <- function(cell_tbl, tis_tbl, tis_label) {
   sets <- sets[vapply(sets, length, integer(1)) >= 5]
   gsea <- NULL
   if (length(sets) > 0) {
+    ## maxSize must exceed the tissue signature size. It was 2000, but the
+    ## tissue DEG sets here are ~3000-4500 genes, so BOTH were silently dropped
+    ## and the signature-GSEA returned zero rows (NES/padj came out NA). Size
+    ## the cap to the ranking itself so a large signature is never excluded.
     gsea <- fgsea::fgsea(pathways = sets, stats = rank_vec,
-                         minSize = 5, maxSize = 2000, eps = 0) %>%
+                         minSize = 5, maxSize = length(rank_vec), eps = 0) %>%
       as.data.frame() %>%
       dplyr::mutate(comparison = paste0("cells_vs_", tis_label)) %>%
       dplyr::select(comparison, pathway, NES, pval, padj, size)

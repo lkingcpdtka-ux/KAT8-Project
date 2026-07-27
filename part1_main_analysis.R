@@ -132,7 +132,12 @@ run_tag <- run_ctx$run_tag
 if (exists("KAT8_RUN_DIR", envir = globalenv())) {
   shared  <- get("KAT8_RUN_DIR", envir = globalenv())
   outdir  <- file.path(shared, "tissue")
-  run_tag <- sub("^RUN_", "", basename(shared))
+  ## Timestamp only -- a labelled folder (RUN_TISSUE_PANELS_20260515_163857)
+  ## would otherwise put "TISSUE_PANELS" into every output filename, which
+  ## breaks the contrast-name parsing in Parts 2/3/4.
+  .rt <- sub("^RUN_", "", basename(shared))
+  .m  <- regmatches(.rt, regexpr("[0-9]{8}_[0-9]{6}$", .rt))
+  run_tag <- if (length(.m) == 1 && nzchar(.m)) .m else .rt
   for (d in c("tables", "plots", "logs"))
     dir.create(file.path(outdir, d), recursive = TRUE, showWarnings = FALSE)
   cat("[INFO] Shared run folder (from run_all.R): ", outdir, "\n", sep = "")
@@ -358,7 +363,12 @@ tryCatch({
     ## ---- SEX CHECK ----
     xist <- getg("Xist")
     ygenes <- c("Ddx3y", "Uty", "Eif2s3y", "Kdm5d")
-    ymat <- do.call(rbind, Filter(Negate(is.null), lapply(ygenes, getg)))
+    ## Keep the gene names: rbind() of plain vectors produces a matrix with NO
+    ## rownames, so the "Y-gene score used" line printed empty and you could not
+    ## tell which genes the check actually relied on.
+    yfound <- ygenes[!vapply(lapply(ygenes, getg), is.null, logical(1))]
+    ymat <- do.call(rbind, lapply(yfound, getg))
+    if (!is.null(ymat) && length(yfound) > 0) rownames(ymat) <- yfound
     cat("\n--- Sex check (Xist vs Y-linked genes) ---\n")
     if (is.null(xist) || is.null(ymat) || nrow(ymat) == 0) {
       cat("[WARN] Xist and/or Y genes not found in counts; SEX CHECK SKIPPED.\n")
