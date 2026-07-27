@@ -2,7 +2,7 @@
 
 ## -------------------------------------------------------------------------
 ## SCRIPT VERSION: 2026-07-27
-##   adds Section E gene-of-interest box plots; ORA-matched volcano labels
+##   adds Section E box plots + Section F marker forest plots
 ##   All pipeline scripts should carry the SAME version date. run_all.R prints
 ##   them at pre-flight -- a date that differs from the rest means that file is
 ##   a stale copy and should be re-downloaded before you trust its output.
@@ -85,6 +85,9 @@ generate_avg4col_heatmaps     <- TRUE   ## Averaged per genotype x sex (4-column
 
 ## Per-gene expression box plots for GENES_OF_INTEREST (Section E)
 generate_gene_boxplots        <- TRUE
+
+## Marker-panel forest plots: log2FC + CI per gene (Section F)
+generate_marker_forest_plots  <- TRUE
 
 ## ============================================================
 
@@ -1378,6 +1381,144 @@ if (generate_gene_boxplots) {
              dpi = 300, bg = "white", limitsize = FALSE)
       cat("[OK] Saved: ", box_file, " (", length(present), " genes, ",
           length(keep), " samples)\n", sep = "")
+    }
+  }
+}
+
+## ============================================================
+## SECTION F: MARKER PANEL FOREST PLOTS
+## ============================================================
+## log2 fold change with a confidence interval, one row per gene, grouped into
+## labelled blocks (e.g. "Master TFs" above "Pparg target genes").
+##
+## This is the plot that answers "how big is the effect, and how sure are we"
+## in a single glance. A volcano ranks thousands of genes and a heatmap shows
+## relative patterns; neither tells you that Pparg fell by 0.4 with a CI that
+## just clears zero while Slc2a4 fell by 0.67 with room to spare. The CI is
+## the point: a wide bar crossing zero says "not resolved by this experiment",
+## which is a different statement from "no effect".
+##
+## Panels and gene order are defined in parameters.R (MARKER_PANELS) so the
+## figure can be re-cut without touching this script.
+
+if (generate_marker_forest_plots) {
+  cat("\n=== SECTION F: MARKER PANEL FOREST PLOTS ===\n")
+
+  panels <- if (exists("MARKER_PANELS")) MARKER_PANELS else list()
+  conf   <- if (exists("marker_panel_conf_level")) marker_panel_conf_level else 0.95
+  zmult  <- stats::qnorm(1 - (1 - conf) / 2)
+
+  if (!length(panels)) {
+    cat("[SKIP] MARKER_PANELS not defined in parameters.R\n")
+  } else {
+    de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
+
+    for (de_file in de_files) {
+      contrast <- str_match(basename(de_file), "DE_tissue_(.+)_[0-9]+_[0-9]+\\.csv")[2]
+      if (is.na(contrast)) next
+      tissue <- sub("_.*$", "", contrast)
+
+      tt <- read.csv(de_file, stringsAsFactors = FALSE)
+      gcol <- if ("gene_name" %in% names(tt)) "gene_name" else names(tt)[1]
+      if (!"lfcSE" %in% names(tt)) {
+        cat("[SKIP] ", contrast, ": DE table has no lfcSE column, cannot draw CIs\n", sep = "")
+        next
+      }
+      thr <- get_tissue_thresholds(contrast)
+
+      for (pname in names(panels)) {
+        spec   <- panels[[pname]]
+        groups <- spec$groups
+
+        ## Build the plotting frame, keeping the gene order given in
+        ## parameters.R and recording which genes were not measured.
+        rows <- list(); absent <- character(0)
+        for (gname in names(groups)) {
+          for (g in groups[[gname]]) {
+            r <- tt[tt[[gcol]] == g, , drop = FALSE]
+            if (!nrow(r) || !is.finite(r$logFC[1]) || !is.finite(r$lfcSE[1])) {
+              absent <- c(absent, g); next
+            }
+            rows[[length(rows) + 1]] <- data.frame(
+              gene = g, group = gname,
+              logFC = r$logFC[1], lfcSE = r$lfcSE[1],
+              padj  = ifelse(is.finite(r$padj[1]), r$padj[1], NA_real_),
+              stringsAsFactors = FALSE)
+          }
+        }
+        if (!length(rows)) { cat("[SKIP] ", tissue, " / ", pname, ": no genes measured\n", sep = ""); next }
+        fp <- do.call(rbind, rows)
+
+        fp$lo <- fp$logFC - zmult * fp$lfcSE
+        fp$hi <- fp$logFC + zmult * fp$lfcSE
+        fp$negLogFDR <- ifelse(is.na(fp$padj), 0, -log10(pmax(fp$padj, .Machine$double.xmin)))
+        fp$stars <- dplyr::case_when(
+          is.na(fp$padj)   ~ "",
+          fp$padj < 0.001  ~ "***",
+          fp$padj < 0.01   ~ "**",
+          fp$padj < 0.05   ~ "*",
+          TRUE             ~ "")
+
+        ## Rows are drawn top-to-bottom in the order given, so the factor
+        ## levels are reversed (ggplot builds the y axis from the bottom up).
+        fp$gene  <- factor(fp$gene,  levels = rev(unique(fp$gene)))
+        fp$group <- factor(fp$group, levels = names(groups))
+
+        ## Significance counted on FDR alone. The |log2FC| gate is a DEG-list
+        ## rule for genome-wide lists; on a hand-picked marker panel it would
+        ## hide real, modest effects, which is precisely what this plot exists
+        ## to show. The gate is still DRAWN (dotted) so both are visible.
+        n_sig  <- sum(!is.na(fp$padj) & fp$padj < thr$fdr_cut)
+        n_up   <- sum(!is.na(fp$padj) & fp$padj < thr$fdr_cut & fp$logFC > 0)
+        n_down <- n_sig - n_up
+        cap <- sprintf(
+          "%s thresholds: FDR<%s, |log2FC|>%s (dotted) | n=%d | Up: %d | Down: %d | ns: %d\n* FDR<0.05   ** <0.01   *** <0.001   |   bars = %d%% CI (log2FC +/- %.2f x lfcSE)",
+          tissue, thr$fdr_cut, thr$logFC_cut, nrow(fp), n_up, n_down, nrow(fp) - n_sig,
+          round(100 * conf), zmult)
+        if (length(absent))
+          cap <- paste0(cap, "\nnot measured in ", tissue, ": ", paste(absent, collapse = ", "))
+
+        rng  <- max(abs(c(fp$lo, fp$hi, thr$logFC_cut)), na.rm = TRUE) * 1.08
+        nudge <- rng * 0.035
+
+        p_f <- ggplot(fp, aes(x = logFC, y = gene)) +
+          geom_vline(xintercept = 0, colour = "grey35", linewidth = 0.4) +
+          geom_vline(xintercept = c(-thr$logFC_cut, thr$logFC_cut),
+                     colour = "grey75", linetype = "dotted", linewidth = 0.4) +
+          geom_errorbarh(aes(xmin = lo, xmax = hi, colour = negLogFDR),
+                         height = 0, linewidth = 0.7) +
+          geom_point(aes(colour = negLogFDR), size = 3.2) +
+          geom_text(aes(x = hi + nudge, label = stars), hjust = 0, vjust = 0.78,
+                    size = 4.2, fontface = "bold", na.rm = TRUE) +
+          scale_colour_gradientn(
+            colours = c("grey78", "#F5E3C8", "#FDBB6E", "#E8850C", "#B33000"),
+            name = expression(-log[10]~FDR), limits = c(0, NA)) +
+          facet_grid(group ~ ., scales = "free_y", space = "free_y", switch = "y") +
+          scale_x_continuous(limits = c(-rng, rng * 1.1)) +
+          labs(title = paste0(tissue, ": ", pname),
+               subtitle = spec$subtitle,
+               x = expression(log[2]~"Fold Change (KAT8KD/CTL)"), y = NULL,
+               caption = cap) +
+          theme_bw(base_size = 12) +
+          theme(panel.grid.major.y = element_blank(),
+                panel.grid.minor   = element_blank(),
+                axis.text.y  = element_text(face = "italic", size = 11),
+                strip.placement = "outside",
+                strip.text.y.left = element_text(angle = 0, face = "bold"),
+                strip.background = element_rect(fill = "grey95", colour = "grey70"),
+                plot.title    = element_text(face = "bold", hjust = 0.5),
+                plot.subtitle = element_text(hjust = 0.5, colour = "grey35"),
+                plot.caption  = element_text(hjust = 0.5, colour = "grey45", size = 8))
+
+        safe <- gsub("[^A-Za-z0-9]+", "_", pname)
+        fp_file <- paste0("Forest_", safe, "_", contrast, "_", run_tag, ".png")
+        ggsave(file.path(plots_dir, fp_file), p_f,
+               width = 9, height = max(4, 0.42 * nrow(fp) + 2.4),
+               dpi = 300, bg = "white", limitsize = FALSE)
+        cat("[OK] Saved: ", fp_file, "  (", nrow(fp), " genes, ",
+            n_sig, " significant", if (length(absent))
+              paste0(", ", length(absent), " not measured") else "", ")\n", sep = "")
+      }
     }
   }
 }

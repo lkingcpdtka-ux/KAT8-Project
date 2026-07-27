@@ -1,6 +1,6 @@
 ## -------------------------------------------------------------------------
 ## SCRIPT VERSION: 2026-07-27
-##   PCA convention now all-genes/unit-scaled; GENES_OF_INTEREST
+##   PCA all-genes/unit-scaled; GENES_OF_INTEREST; MARKER_PANELS
 ##   All pipeline scripts should carry the SAME version date. run_all.R prints
 ##   them at pre-flight -- a date that differs from the rest means that file is
 ##   a stale copy and should be re-downloaded before you trust its output.
@@ -62,6 +62,58 @@ GENES_OF_INTEREST <- c(
   ## are tissue-only and cannot be assessed for cell-autonomy.
   "Acsm3", "Acsm5"
 )
+
+## ============================================================
+## MARKER PANELS  -- for the forest (effect-size) plots
+## ============================================================
+## Used by: part4_visualization.R Section F
+##
+## Each entry becomes ONE figure per depot. The names inside each entry are
+## the facet rows, and gene order is preserved exactly as written here (the
+## plot draws them top-to-bottom in this order), so keep related genes
+## adjacent and put the gene you most want seen first.
+##
+## Any gene not measured in a depot is dropped from that panel with a note in
+## the log -- it is never silently blanked.
+MARKER_PANELS <- list(
+  "Adipogenic program" = list(
+    subtitle = "Master TFs and Pparg targets",
+    groups = list(
+      "Master TFs" = c("Pparg", "Cebpa", "Cebpb", "Cebpd", "Klf15", "Srebf1"),
+      "Pparg target genes" = c("Adipoq", "Lep", "Fabp4", "Plin1", "Cd36",
+                               "Lpl", "Slc2a4", "Angptl4")
+    )
+  ),
+  "Thermogenic and lipid handling" = list(
+    subtitle = "Browning markers and lipid metabolism",
+    groups = list(
+      "Thermogenic" = c("Ucp1", "Cidea", "Ppargc1a", "Dio2", "Elovl3", "Prdm16"),
+      "Lipid metabolism" = c("Ppara", "Acox1", "Acaca", "Acacb", "Fasn",
+                             "Scd1", "Pck1", "Cpt1b", "Lipe", "Pnpla2")
+    )
+  ),
+  "Inflammation and remodelling" = list(
+    subtitle = "Immune infiltration and ECM -- the non-cell-autonomous candidates",
+    groups = list(
+      "Inflammatory" = c("Ccl2", "Ccl8", "Cxcl2", "Cxcl10", "Il1b", "Tnf",
+                         "Adgre1", "Cd68", "Itgax", "Ctss"),
+      "ECM / fibrosis" = c("Col1a1", "Col1a2", "Col3a1", "Col6a1", "Fn1",
+                           "Sparc", "Timp1", "Lox")
+    )
+  ),
+  "KAT8 complex" = list(
+    subtitle = "Catalytic subunit and its MSL / NSL partners (partners expected flat)",
+    groups = list(
+      "Catalytic"  = c("Kat8"),
+      "MSL"        = c("Msl1", "Msl2", "Msl3"),
+      "NSL / KANSL" = c("Kansl1", "Kansl2", "Kansl3", "Mcrs1", "Phf20")
+    )
+  )
+)
+
+## Confidence level for the error bars on those plots. 0.95 gives the
+## conventional +/- 1.96 x lfcSE interval.
+marker_panel_conf_level <- 0.95
 
 ## ============================================================
 ## CELL (3T3-L1) PARAMETERS
