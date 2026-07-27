@@ -106,9 +106,31 @@ run_pipeline <- function(target = NULL, project_root = getwd()) {
   }
   cat("[OK] all ", length(steps), " scripts found\n", sep = "")
 
+  ## ---- ONE run folder for the whole pipeline ---------------------------
+  ## Without this, part1 creates savepoints/RUN_<a>/, the cells script creates a
+  ## SEPARATE savepoints/RUN_<b>/, and the downstream scripts write to
+  ## downstream_analysis/results/ -- three places for one run. Setting
+  ## KAT8_RUN_DIR makes every script write into the same timestamped folder:
+  ##
+  ##   savepoints/RUN_<tag>/
+  ##       tissue/     tables, plots, logs   (parts 1-4)
+  ##       cells/      tables, plots, logs   (cells script)
+  ##       downstream/ tables, plots         (parts 4b, 5a, 5b, 5c)
+  ##       data/       the staged DE tables used by downstream
+  ##
+  ## Scripts run standalone ignore this and behave exactly as before.
+  RUN_TAG_SHARED <- format(Sys.time(), "%Y%m%d_%H%M%S")
+  KAT8_RUN_DIR   <- file.path(project_root, "savepoints", paste0("RUN_", RUN_TAG_SHARED))
+  dir.create(KAT8_RUN_DIR, recursive = TRUE, showWarnings = FALSE)
+  assign("KAT8_RUN_DIR", KAT8_RUN_DIR, envir = globalenv())
+  on.exit(suppressWarnings(rm("KAT8_RUN_DIR", envir = globalenv())), add = TRUE)
+  cat("Run folder   : ", KAT8_RUN_DIR, "\n", sep = "")
+
   ## ---- staging helper --------------------------------------------------
   stage_downstream_inputs <- function() {
     sp   <- file.path(project_root, "savepoints")
+    ## Stage into the run folder AND the conventional location, so the
+    ## downstream scripts find the tables however they are invoked.
     dest <- file.path(project_root, "downstream_analysis", "data")
     if (!dir.exists(sp)) { cat("[WARN] no savepoints/ yet - nothing to stage\n"); return(FALSE) }
     dir.create(dest, recursive = TRUE, showWarnings = FALSE)
@@ -127,6 +149,11 @@ run_pipeline <- function(target = NULL, project_root = getwd()) {
       src <- newest(w[1])
       if (is.na(src)) { cat("[MISS] ", w[2], "\n", sep = ""); ok <- FALSE; next }
       file.copy(src, file.path(dest, w[2]), overwrite = TRUE)
+      if (exists("KAT8_RUN_DIR", envir = globalenv())) {
+        rd <- file.path(get("KAT8_RUN_DIR", envir = globalenv()), "data")
+        dir.create(rd, recursive = TRUE, showWarnings = FALSE)
+        file.copy(src, file.path(rd, w[2]), overwrite = TRUE)
+      }
       cat("[OK]   ", w[2], "  <- ", basename(src), "\n", sep = "")
     }
     if (!ok) cat("[WARN] some DE tables not found; downstream steps will be skipped.\n")

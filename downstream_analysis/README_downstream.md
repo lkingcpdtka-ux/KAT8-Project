@@ -19,9 +19,9 @@ Put the three DE tables in `downstream_analysis/data/` (or point `DE_PATHS` at t
 
 | Contrast | Rename your pipeline's output to |
 |---|---|
-| Cells | `data/DE_cells_KAT8KD_vs_CTL.csv` |
-| iWAT | `data/DE_tissue_iWAT_KD_vs_CTL.csv` |
-| gWAT | `data/DE_tissue_gWAT_KD_vs_CTL.csv` |
+| Cells | `downstream_analysis/data/DE_cells_KAT8KD_vs_CTL.csv` |
+| iWAT | `downstream_analysis/data/DE_tissue_iWAT_KD_vs_CTL.csv` |
+| gWAT | `downstream_analysis/data/DE_tissue_gWAT_KD_vs_CTL.csv` |
 
 Each needs `gene_name`, `log2FoldChange`, `stat`, `padj` — your current outputs already have them.
 
@@ -47,8 +47,19 @@ so you don't have to move files by hand. (The tissue and cells scripts each crea
 timestamped run folder, which is why this staging step exists.) If a table can't be found the
 downstream steps are **skipped with a message** rather than failing halfway.
 
-Everything lands in `downstream_analysis/results/`, and each script writes a
-`SANITY_*.csv` listing every check it performed.
+**Where output goes.** Run via `run_all.R`, the whole pipeline writes into **one**
+timestamped folder:
+
+```
+savepoints/RUN_<tag>/
+    tissue/      tables, plots, logs     (parts 1-4)
+    cells/       tables, plots, logs     (cells script)
+    downstream/  tables, plots           (parts 4b, 5a, 5b, 5c)
+    data/        the staged DE tables downstream used
+```
+
+Run standalone, the downstream scripts fall back to `downstream_analysis/results/`.
+Either way each script writes a `SANITY_*.csv` listing every check it performed.
 
 **Offline by design.** The TF regulon is bundled (`regulon_dorothea_mm_ABC.csv`,
 mouse DoRothEA confidence A–C) so nothing depends on the OmniPath server, which

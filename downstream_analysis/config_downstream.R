@@ -19,10 +19,14 @@
 ## expected (any order): gene_name, log2FoldChange, stat, pvalue, padj.
 ## The first (unnamed) column of your CSVs is the gene name and is
 ## read as the row name automatically.
+## Paths are relative to the PROJECT ROOT (the folder holding parameters.R),
+## because that is the working directory the scripts are sourced from.
+## BUGFIX: these previously read "data/..." , which resolves to <root>/data/ --
+## a folder that does not exist. The files live in downstream_analysis/data/.
 DE_PATHS <- list(
-  cells = "data/DE_cells_KAT8KD_vs_CTL.csv",
-  iWAT  = "data/DE_tissue_iWAT_KD_vs_CTL.csv",
-  gWAT  = "data/DE_tissue_gWAT_KD_vs_CTL.csv"
+  cells = "downstream_analysis/data/DE_cells_KAT8KD_vs_CTL.csv",
+  iWAT  = "downstream_analysis/data/DE_tissue_iWAT_KD_vs_CTL.csv",
+  gWAT  = "downstream_analysis/data/DE_tissue_gWAT_KD_vs_CTL.csv"
 )
 
 ## Which contrast is the clean, cell-autonomous reference?
@@ -32,7 +36,14 @@ TISSUE_KEYS <- c("iWAT", "gWAT")
 ## ---------------------------------------------------------
 ## 2) OUTPUT
 ## ---------------------------------------------------------
-OUTDIR <- file.path("downstream_analysis", "results")
+## When run_all.R drives the pipeline everything lands in ONE run folder
+## (savepoints/RUN_<tag>/downstream). Run standalone, results go to
+## downstream_analysis/results as before.
+OUTDIR <- if (exists("KAT8_RUN_DIR", envir = globalenv())) {
+  file.path(get("KAT8_RUN_DIR", envir = globalenv()), "downstream")
+} else {
+  file.path("downstream_analysis", "results")
+}
 RUN_TAG <- format(Sys.time(), "%Y%m%d_%H%M%S")
 
 ## ---------------------------------------------------------
@@ -144,9 +155,25 @@ concordance_params <- list(
 ## Read one DESeq2 CSV into a standard tibble:
 ##   gene, stat, log2FC, pvalue, padj
 load_de_table <- function(path) {
+  ## Be forgiving about the working directory: try the configured path, then
+  ## the same file under downstream_analysis/data/ and ./data/. This means the
+  ## scripts work whether they are sourced from the project root or from
+  ## inside downstream_analysis/.
   if (!file.exists(path)) {
-    stop("DE table not found: ", path,
-         "\n  -> edit DE_PATHS in config_downstream.R", call. = FALSE)
+    alt <- c(file.path("downstream_analysis", "data", basename(path)),
+             file.path("data", basename(path)),
+             file.path("..", "downstream_analysis", "data", basename(path)))
+    hit <- alt[file.exists(alt)]
+    if (length(hit) > 0) {
+      path <- hit[1]
+    } else {
+      stop("DE table not found: ", path,
+           "\n  Looked in:\n   - ", paste(alt, collapse = "\n   - "),
+           "\n  Working directory: ", getwd(),
+           "\n  -> put the three DE CSVs in downstream_analysis/data/ (run_all.R",
+           " stages them automatically), or edit DE_PATHS in config_downstream.R",
+           call. = FALSE)
+    }
   }
   df <- utils::read.csv(path, row.names = 1, check.names = FALSE,
                         stringsAsFactors = FALSE)

@@ -141,6 +141,18 @@ run_ctx <- init_run(
 
 outdir  <- run_ctx$outdir
 run_tag <- run_ctx$run_tag
+
+## Shared run folder: when launched by run_all.R, write into the SAME
+## timestamped folder as the tissue pipeline (under cells/), rather than
+## creating a separate run. Standalone behaviour is unchanged.
+if (exists("KAT8_RUN_DIR", envir = globalenv())) {
+  shared  <- get("KAT8_RUN_DIR", envir = globalenv())
+  outdir  <- file.path(shared, "cells")
+  run_tag <- sub("^RUN_", "", basename(shared))
+  for (d in c("tables", "plots", "logs"))
+    dir.create(file.path(outdir, d), recursive = TRUE, showWarnings = FALSE)
+  cat("[INFO] Shared run folder (from run_all.R): ", outdir, "\n", sep = "")
+}
 cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
 
 ## =======================================================

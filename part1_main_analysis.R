@@ -123,6 +123,20 @@ run_ctx <- init_run(
 
 outdir  <- run_ctx$outdir
 run_tag <- run_ctx$run_tag
+
+## 3.0) Shared run folder ------------------------------------
+## When launched by run_all.R, every part of the pipeline writes into ONE
+## timestamped run folder (tissue/ cells/ downstream/ side by side) instead of
+## each script creating its own. Run standalone, this block does nothing and
+## the original init_run() folder is used, so behaviour is unchanged.
+if (exists("KAT8_RUN_DIR", envir = globalenv())) {
+  shared  <- get("KAT8_RUN_DIR", envir = globalenv())
+  outdir  <- file.path(shared, "tissue")
+  run_tag <- sub("^RUN_", "", basename(shared))
+  for (d in c("tables", "plots", "logs"))
+    dir.create(file.path(outdir, d), recursive = TRUE, showWarnings = FALSE)
+  cat("[INFO] Shared run folder (from run_all.R): ", outdir, "\n", sep = "")
+}
 cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
 
 ## 3.1) Write an explicit pointer to THIS run -----------------
@@ -131,7 +145,10 @@ cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
 ## sync updates mtimes, which can silently promote a STALE run folder so the
 ## downstream scripts read and write the wrong results. An explicit pointer
 ## (plus a name-sort fallback) removes that failure mode entirely.
-savepoint_root <- dirname(outdir)
+## Always savepoints/ itself -- with a shared run folder outdir is
+## savepoints/RUN_<tag>/tissue, so dirname(outdir) would be one level too deep
+## and Parts 2/3/4 would not find the pointer.
+savepoint_root <- file.path(getwd(), "savepoints")
 dir.create(savepoint_root, recursive = TRUE, showWarnings = FALSE)
 writeLines(normalizePath(outdir, winslash = "/", mustWork = FALSE),
            con = file.path(savepoint_root, "LATEST_RUN.txt"))
