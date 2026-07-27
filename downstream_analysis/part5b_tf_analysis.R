@@ -48,6 +48,7 @@ suppressPackageStartupMessages({
 source(file.path("downstream_analysis", "config_downstream.R"))
 set.seed(MASTER_SEED)
 init_sanity("part5b_tf")
+`%||%` <- function(a, b) if (is.null(a)) b else a
 tp <- tf_params
 
 de <- load_all_de()
@@ -207,20 +208,39 @@ if (!is.null(net) && all(c("source","target","mor") %in% colnames(net))) {
   }
 
   ## Optional permutation calibration at n = 4/group.
+  ##
+  ## PERFORMANCE: this used to call run_ulm once PER SHUFFLE (1000 separate
+  ## calls), each re-intersecting the network with ~13k genes -- 10-30 minutes.
+  ## decoupleR vectorises over the COLUMNS of the input matrix, so the whole
+  ## null is computed in a handful of calls instead. Shuffling gene labels is
+  ## equivalent to permuting the statistic vector with the gene names fixed,
+  ## which is what each column below is.
   if (isTRUE(tp$n_permutations > 0)) {
-    cat("  permutation calibration (", tp$n_permutations, " shuffles)...\n", sep = "")
-    nullmax <- numeric(tp$n_permutations)
-    for (i in seq_len(tp$n_permutations)) {
-      m <- matrix(v$stat, ncol = 1, dimnames = list(sample(v$gene), "perm"))
-      a <- decoupleR::run_ulm(m, net, .source = "source", .target = "target",
+    nperm <- tp$n_permutations
+    chunk <- max(1, min(tp$perm_chunk %||% 100, nperm))
+    cat("  permutation calibration: ", nperm, " shuffles in chunks of ", chunk, "\n", sep = "")
+    t0 <- Sys.time(); nullmax <- numeric(0); done <- 0
+    while (done < nperm) {
+      k <- min(chunk, nperm - done)
+      pm <- vapply(seq_len(k), function(i) sample(v$stat), numeric(nrow(v)))
+      dimnames(pm) <- list(v$gene, paste0("perm", done + seq_len(k)))
+      a <- decoupleR::run_ulm(pm, net, .source = "source", .target = "target",
                               .mor = "mor", minsize = tp$min_regulon_size)
-      nullmax[i] <- max(abs(a$score), na.rm = TRUE)
+      mx <- a %>% dplyr::group_by(condition) %>%
+        dplyr::summarise(m = max(abs(score), na.rm = TRUE), .groups = "drop")
+      nullmax <- c(nullmax, mx$m); done <- done + k
+      cat("    ", done, "/", nperm, "  (", round(as.numeric(difftime(Sys.time(), t0, units = "secs"))), "s)\n", sep = "")
     }
+    ## Empirical p against the null of the MAXIMUM |score| -> family-wise
+    ## control across TFs, deliberately stricter than the per-TF BH FDR.
     tf_act$emp_p <- vapply(abs(tf_act$activity),
-                           function(x) (1 + sum(nullmax >= x)) / (1 + tp$n_permutations), numeric(1))
+                           function(x) (1 + sum(nullmax >= x)) / (1 + length(nullmax)), numeric(1))
     write.csv(tf_act, file.path(OUTDIR, paste0("part5b_L2_TF_activity_cells_", RUN_TAG, ".csv")),
               row.names = FALSE)
-    log_sanity("TFs passing empirical p<0.05", sum(tf_act$emp_p < 0.05, na.rm = TRUE), "INFO")
+    log_sanity("permutation time (s)",
+               round(as.numeric(difftime(Sys.time(), t0, units = "secs"))), "INFO")
+    log_sanity("TFs passing empirical p<0.05 (family-wise)",
+               sum(tf_act$emp_p < 0.05, na.rm = TRUE), "INFO")
   }
 } else {
   log_sanity("Layer 2", "no usable regulon - layer skipped", "WARN")

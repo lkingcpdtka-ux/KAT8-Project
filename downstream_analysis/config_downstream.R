@@ -112,9 +112,13 @@ tf_params <- list(
   ## OmnipathR is fixed and OmniPath's server is up).
   network_csv = file.path("downstream_analysis", "regulon_dorothea_mm_ABC.csv"),
 
-  ## Empirical null: permute gene labels to confirm the analytic
-  ## p-values are calibrated (recommended at n = 4/group). 0 disables.
+  ## Empirical null: permute gene labels to confirm the analytic p-values are
+  ## calibrated (worth having at n = 4/group). Set to 0 to SKIP it entirely --
+  ## everything else in part5b is unaffected, only the emp_p column is dropped.
+  ## Permutations are run in batched columns, so 1000 takes ~1 min rather than
+  ## the 10-30 min a per-shuffle loop cost. 200-500 is plenty for a check.
   n_permutations = 1000,
+  perm_chunk     = 100,   ## columns per decoupleR call (memory vs speed)
 
   ## --- Biological highlight sets (for the cells read-out) ---
   ## Adipogenic / lipogenic master regulators. The concordance result
