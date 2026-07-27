@@ -1,5 +1,12 @@
 #!/usr/bin/env Rscript
 
+## -------------------------------------------------------------------------
+## SCRIPT VERSION: 2026-07-27
+##   pipeline driver; advisory steps, resume markers, shared run folder
+##   All pipeline scripts should carry the SAME version date. run_all.R prints
+##   them at pre-flight -- a date that differs from the rest means that file is
+##   a stale copy and should be re-downloaded before you trust its output.
+## -------------------------------------------------------------------------
 ## =========================================================
 ## KAT8 RNA-seq - PIPELINE DRIVER
 ## =========================================================
@@ -113,6 +120,35 @@ run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
     return(invisible(NULL))
   }
   cat("[OK] all ", length(steps), " scripts found\n", sep = "")
+
+  ## ---- version check ----------------------------------------------------
+  ## Every script carries a "## SCRIPT VERSION: YYYY-MM-DD" line in its header.
+  ## They are all updated together, so they should all read the same date. A
+  ## file with an older date is a leftover copy -- the exact situation that
+  ## produced duplicate contrasts and stale figures before. This reports the
+  ## dates BEFORE any analysis runs, so a bad copy is caught while it still
+  ## costs nothing to fix.
+  .script_version <- function(path) {
+    ln <- tryCatch(readLines(path, n = 25, warn = FALSE), error = function(e) character(0))
+    m  <- grep("^##\\s*SCRIPT VERSION:", ln, value = TRUE)
+    if (!length(m)) return(NA_character_)
+    trimws(sub("^##\\s*SCRIPT VERSION:", "", m[1]))
+  }
+  vfiles <- c("parameters.R", vapply(steps, function(s) s$path, character(1)))
+  vers   <- vapply(file.path(project_root, vfiles), .script_version, character(1))
+  names(vers) <- vfiles
+  newest <- if (all(is.na(vers))) NA_character_ else max(vers, na.rm = TRUE)
+  odd    <- names(vers)[is.na(vers) | vers != newest]
+  if (length(odd) == 0) {
+    cat("[OK] all scripts are version ", newest, "\n", sep = "")
+  } else {
+    cat("[WARN] script versions DISAGREE - newest is ", newest, "\n", sep = "")
+    for (f in names(vers))
+      cat(sprintf("   %-52s %s%s\n", f,
+                  ifelse(is.na(vers[[f]]), "(no version stamp)", vers[[f]]),
+                  ifelse(f %in% odd, "   <-- update this file", "")))
+    cat("  Re-download the flagged file(s) before trusting the output.\n")
+  }
 
   ## ---- pick the run folder: reuse newest, or make a fresh one ----------
   sp <- file.path(project_root, "savepoints")

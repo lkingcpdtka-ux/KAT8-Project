@@ -1,5 +1,12 @@
 #!/usr/bin/env Rscript
 
+## -------------------------------------------------------------------------
+## SCRIPT VERSION: 2026-07-27
+##   NSL program; head-to-head specificity test
+##   All pipeline scripts should carry the SAME version date. run_all.R prints
+##   them at pre-flight -- a date that differs from the rest means that file is
+##   a stale copy and should be re-downloaded before you trust its output.
+## -------------------------------------------------------------------------
 ## =========================================================
 ## PART 5c - KAT8 COMPLEX OUTPUT (MSL / NSL)
 ## Question: is the canonical KAT8 program engaged in the cells?

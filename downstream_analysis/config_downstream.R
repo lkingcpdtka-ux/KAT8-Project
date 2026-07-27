@@ -1,3 +1,10 @@
+## -------------------------------------------------------------------------
+## SCRIPT VERSION: 2026-07-27
+##   shared config, sanity helpers, FDR_CUT
+##   All pipeline scripts should carry the SAME version date. run_all.R prints
+##   them at pre-flight -- a date that differs from the rest means that file is
+##   a stale copy and should be re-downloaded before you trust its output.
+## -------------------------------------------------------------------------
 ## =========================================================
 ## KAT8 downstream analysis - SHARED CONFIG
 ## =========================================================

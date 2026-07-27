@@ -1,5 +1,12 @@
 #!/usr/bin/env Rscript
 
+## -------------------------------------------------------------------------
+## SCRIPT VERSION: 2026-07-27
+##   3T3-L1 cells: DE / ORA / GSEA
+##   All pipeline scripts should carry the SAME version date. run_all.R prints
+##   them at pre-flight -- a date that differs from the rest means that file is
+##   a stale copy and should be re-downloaded before you trust its output.
+## -------------------------------------------------------------------------
 ## =========================================================
 ## KAT8 bulk RNA-seq - COMPREHENSIVE ANALYSIS (CELLS)
 ## =========================================================
