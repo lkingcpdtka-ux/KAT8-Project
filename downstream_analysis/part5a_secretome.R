@@ -6,14 +6,15 @@
 ## =========================================================
 ## Why this matters
 ##   Part 4b showed the dominant tissue signature is NOT cell-autonomous: in
-##   KAT8-KD 3T3-L1 the adipocyte-identity / lipid / thermogenic programs are
+##   KAT8-KD 3T3-L1 the adipocyte-marker / lipid / thermogenic programs are
 ##   flat with tight confidence intervals, even though the knockdown is
 ##   stronger than in the tissue. The published result -- KAT8 is required only
 ##   when lost BEFORE differentiation -- explains it: these cells are a
-##   MAINTENANCE experiment, and mature adipocyte identity does not need
+##   MAINTENANCE experiment, and the mature adipocyte programme does not need
 ##   ongoing KAT8.
 ##
-##   So if the KAT8-null adipocyte keeps its identity, how does the tissue end
+##   So if the KAT8-null adipocyte still looks and behaves like an adipocyte,
+##   how does the tissue end
 ##   up inflamed and fibrotic? The obvious candidate is what the cell SENDS to
 ##   its neighbours. This script finds the secreted/surface genes that change
 ##   in the cells and tests whether each one reproduces in vivo.

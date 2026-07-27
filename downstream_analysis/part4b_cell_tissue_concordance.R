@@ -192,10 +192,10 @@ cat("\n=== CONCORDANCE SUMMARY ===\n"); print(summ)
 ## Each program gets a COMPETITIVE test (Wilcoxon of its genes' Wald statistics
 ## against all other genes in that dataset), so "the program moved" is a
 ## statistical claim, not just a mean. This is what shows -- in one figure --
-## that the adipocyte-identity / thermogenic / lipid programs collapse in iWAT
+## that the adipocyte-marker / thermogenic / lipid programs collapse in iWAT
 ## but are FLAT in the cells, while ECM is the program that reproduces.
 PROGRAMS <- list(
-  "Adipocyte identity" = c("Pparg","Adipoq","Plin1","Cd36","Fabp4","Lep","Cfd","Lipe",
+  "Adipocyte markers" = c("Pparg","Adipoq","Plin1","Cd36","Fabp4","Lep","Cfd","Lipe",
                            "Pnpla2","Cav1","Retn"),
   "Thermogenic"        = c("Ucp1","Cidea","Ppargc1a","Cox7a1","Elovl3","Dio2","Cox8b","Prdm16"),
   "Lipid metabolism"   = c("Ppara","Acox1","Acacb","Pck1","Scd1","Fasn","Acaca","Cpt1b","Lpl"),

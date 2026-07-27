@@ -8,12 +8,13 @@
 ## RESUME BEHAVIOUR (the default)
 ##   The driver reuses the most recent savepoints/RUN_* folder and SKIPS any
 ##   step that already completed, so a failure late in the pipeline no longer
-##   costs you another full ORA + GSEA run. A step counts as complete if
-##   either
-##      (a) the driver recorded it finishing  -> RUN_<tag>/.done/<key>.done
-##      (b) its signature output file is present in the run folder
-##   (b) means runs made before this feature existed, or scripts you ran by
-##   hand, are still detected.
+##   costs you another full ORA + GSEA run.
+##
+##   A step counts as complete ONLY if this driver recorded it finishing, in
+##   RUN_<tag>/.done/<key>.done. Existing output files are deliberately NOT
+##   treated as proof: reusing an old completed run folder would then skip
+##   steps whose figures are stale. The plan printed at the start shows the
+##   completion time of every step it intends to skip.
 ##
 ## HOW TO RUN  (sourcing is SAFE - it will not close your R session)
 ##
@@ -58,32 +59,29 @@ run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
   if (length(force)) cat("Force re-run : ", paste(force, collapse = ", "), "\n", sep = "")
 
   ## ---- step definitions -------------------------------------------------
-  ## done = c(subfolder, regex) : if a file matching regex exists in that
-  ## subfolder of the run directory, the step is treated as already complete.
-  st <- function(key, label, path, done_dir, done_pat)
-    list(key = key, label = label, path = path, done_dir = done_dir, done_pat = done_pat)
+  ## Completion is recorded ONLY by a marker the driver writes after a step
+  ## actually succeeds (RUN_<tag>/.done/<key>.done).
+  ##
+  ## An earlier version also treated "a matching output file exists" as done.
+  ## That silently mis-fired: reusing a months-old COMPLETED run folder made
+  ## Part 4 look finished because old .png files were sitting in plots/, so the
+  ## PCA / MDS / density / volcano / heatmap figures were never regenerated.
+  ## Markers are unambiguous -- they mean "this driver ran this step here".
+  st <- function(key, label, path)
+    list(key = key, label = label, path = path)
 
   TISSUE <- list(
-    st("part1", "Part 1  DE / QC / DEG lists", "part1_main_analysis.R",
-       "tissue/tables", "^DEG_lists_authoritative_.*\\.rds$"),
-    st("part2", "Part 2  ORA  (slow)",         "part2_ora.R",
-       "tissue/tables", "^ORA_sanity_check_.*\\.csv$"),
-    st("part3", "Part 3  GSEA (slow)",         "part3_fgsea.R",
-       "tissue/tables", "^fgsea_sanity_check_.*\\.csv$"),
-    st("part4", "Part 4  Visualisation",       "part4_visualization.R",
-       "tissue/plots",  "\\.png$"))
+    st("part1", "Part 1  DE / QC / DEG lists", "part1_main_analysis.R"),
+    st("part2", "Part 2  ORA  (slow)",         "part2_ora.R"),
+    st("part3", "Part 3  GSEA (slow)",         "part3_fgsea.R"),
+    st("part4", "Part 4  Visualisation",       "part4_visualization.R"))
   CELLS <- list(
-    st("cells", "Cells   DE / ORA / GSEA (slow)", "KAT8_bulk_cells_comprehensive.R",
-       "cells/tables", "^DE_cells_KAT8KD_vs_CTL_.*\\.csv$"))
+    st("cells", "Cells   DE / ORA / GSEA (slow)", "KAT8_bulk_cells_comprehensive.R"))
   DOWNSTREAM <- list(
-    st("p4b", "Part 4b  Is it cell-autonomous?", "downstream_analysis/part4b_cell_tissue_concordance.R",
-       "downstream", "^concordance_SUMMARY_.*\\.csv$"),
-    st("p5a", "Part 5a  What does the cell broadcast?", "downstream_analysis/part5a_secretome.R",
-       "downstream", "^part5a_secretome_annotated_.*\\.csv$"),
-    st("p5b", "Part 5b  Which TF drives it?", "downstream_analysis/part5b_tf_analysis.R",
-       "downstream", "^part5b_L1_TF_genes_.*\\.csv$"),
-    st("p5c", "Part 5c  Is the KAT8/NSL program engaged?", "downstream_analysis/part5c_kat8_complex.R",
-       "downstream", "^part5c_complex_output_.*\\.csv$"))
+    st("p4b", "Part 4b  Is it cell-autonomous?", "downstream_analysis/part4b_cell_tissue_concordance.R"),
+    st("p5a", "Part 5a  What does the cell broadcast?", "downstream_analysis/part5a_secretome.R"),
+    st("p5b", "Part 5b  Which TF drives it?", "downstream_analysis/part5b_tf_analysis.R"),
+    st("p5c", "Part 5c  Is the KAT8/NSL program engaged?", "downstream_analysis/part5c_kat8_complex.R"))
 
   steps <- switch(target, "tissue" = TISSUE, "cells" = CELLS, "downstream" = DOWNSTREAM,
                   "all" = c(TISSUE, CELLS, DOWNSTREAM), NULL)
@@ -148,16 +146,12 @@ run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
   ## ---- completion test --------------------------------------------------
   is_done <- function(s) {
     if ("all" %in% force || s$key %in% force) return(FALSE)          ## forced re-run
-    if (file.exists(file.path(done_dir, paste0(s$key, ".done")))) return(TRUE)
-    ## Look in the nested layout (tissue/tables) AND the legacy flat layout
-    ## (tables/) used by run folders created before the shared-folder change,
-    ## so work you already finished is still recognised.
-    cand <- unique(c(s$done_dir, sub("^(tissue|cells)/", "", s$done_dir)))
-    for (cd in cand) {
-      d <- file.path(KAT8_RUN_DIR, cd)
-      if (dir.exists(d) && length(list.files(d, pattern = s$done_pat)) > 0) return(TRUE)
-    }
-    FALSE
+    file.exists(file.path(done_dir, paste0(s$key, ".done")))
+  }
+  done_when <- function(s) {
+    f <- file.path(done_dir, paste0(s$key, ".done"))
+    if (!file.exists(f)) return("")
+    paste0(" (", trimws(readLines(f, warn = FALSE))[1], ")")
   }
   mark_done <- function(s)
     writeLines(format(Sys.time()), file.path(done_dir, paste0(s$key, ".done")))
@@ -168,8 +162,8 @@ run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
   cat("PLAN  (", sum(todo), " to run, ", sum(!todo), " already complete)\n", sep = "")
   cat("==========================================================\n")
   for (i in seq_along(steps))
-    cat(sprintf("  %-4s %-46s %s\n", steps[[i]]$key, steps[[i]]$label,
-                if (todo[i]) "RUN" else "skip (done)"))
+    cat(sprintf("  %-6s %-46s %s\n", steps[[i]]$key, steps[[i]]$label,
+                if (todo[i]) "RUN" else paste0("skip - done", done_when(steps[[i]]))))
   if (!any(todo)) {
     cat("\nNothing to do. To redo work:\n")
     cat("   RUN_FORCE <- \"all\";  source(\"run_all.R\")   # same folder\n")

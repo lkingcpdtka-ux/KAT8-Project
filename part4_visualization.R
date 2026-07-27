@@ -153,6 +153,19 @@ if (generate_pca_plot || generate_mds_plot || generate_density_plot) {
     
     vst_mat <- qc_data$vst_mat_qc
     sample_info <- qc_data$sample_info
+    ## Align the annotation to the MATRIX COLUMNS explicitly. The QC plots read
+    ## Genotype/DepotSex positionally, so if the row order ever differed from
+    ## colnames(vst_mat) every point would be mislabelled without any error.
+    if (!is.null(vst_mat) && "Sample" %in% colnames(sample_info)) {
+      .ord <- match(colnames(vst_mat), sample_info$Sample)
+      if (anyNA(.ord)) {
+        stop("QC annotation does not cover every sample in the VST matrix: ",
+             paste(setdiff(colnames(vst_mat), sample_info$Sample), collapse = ", "),
+             call. = FALSE)
+      }
+      sample_info <- sample_info[.ord, , drop = FALSE]
+      cat("[OK] QC annotation aligned to ", ncol(vst_mat), " matrix columns\n", sep = "")
+    }
     depot_sex_levels <- unique(sample_info$DepotSex)
     if (!is.null(qc_plot_params$depot_sex_manual) &&
         qc_plot_params$depot_sex_palette == "manual") {

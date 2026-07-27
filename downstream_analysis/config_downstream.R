@@ -134,7 +134,7 @@ concordance_params <- list(
   cor_method = "spearman",
 
   ## Genes always labelled on the log2FC quadrant plot (from your slides).
-  ## Metabolic / adipocyte-identity = direct-candidate program.
+  ## Metabolic / adipocyte markers = direct-candidate program.
   marker_metabolic = c("Ucp1", "Cidea", "Ppara", "Pparg", "Adipoq",
                        "Acox1", "Pck1", "Acacb", "Cd36", "Plin1"),
   ## Inflammatory / immune = candidate non-cell-autonomous program.
