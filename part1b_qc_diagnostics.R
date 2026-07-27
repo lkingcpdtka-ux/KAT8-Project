@@ -206,6 +206,7 @@ if (!length(qc_files)) {
     LymphNode    = c("Cd19","Ms4a1","Cd3e","Ccl21a","Ccl19"))
 
   score_rows <- list()
+  per_gene   <- list()
   safely("D. contamination screen", {
   for (nm in names(PANELS)) {
     g <- intersect(PANELS[[nm]], rownames(vst_screen))
@@ -245,16 +246,29 @@ if (!length(qc_files)) {
                   "pooled across depots - check the within-depot test below", ""))
 
       ## Within each depot, which is how the DE model is actually fitted.
+      ##
+      ## A genotype association ALONE does not mean contamination. Dissection
+      ## carry-over is sporadic: it lands in a few libraries and shows up as
+      ## outlier samples. A panel that shifts smoothly with genotype while NO
+      ## sample stands out is far more likely to be genuine regulation of those
+      ## genes in adipose -- none of these panels is truly tissue-exclusive
+      ## (Apoa1, Ttr and Serpina1a are all expressed in fat). So the WARN
+      ## requires BOTH signals; without an outlier sample it is reported as a
+      ## biological observation instead of a QC failure.
+      any_outlier <- any(z > 3)
       for (dp in unique(si$Depot)) {
         k   <- si$Depot == dp
         pvd <- wtest(sc[k], si$Genotype[k])
         if (is.na(pvd)) next
-        flag(sprintf("%s: contamination vs GENOTYPE within %s", nm, dp),
+        hit <- pvd < 0.05
+        flag(sprintf("%s: marker score vs GENOTYPE within %s", nm, dp),
              sprintf("p = %.3g", pvd),
-             ifelse(pvd < 0.05, "WARN", "OK"),
-             ifelse(pvd < 0.05,
-                    "CONFOUNDED with genotype in this depot -> can create false DEGs",
-                    ""))
+             if (hit && any_outlier) "WARN" else if (hit) "INFO" else "OK",
+             if (hit && any_outlier)
+               "CONFOUNDED with genotype AND outlier samples present -> can create false DEGs"
+             else if (hit)
+               "shifts with genotype but NO outlier sample -> reads as regulation of these genes in fat, not carry-over"
+             else "")
       }
 
       ## And the benign explanation, reported so the pooled result can be read
@@ -263,8 +277,40 @@ if (!length(qc_files)) {
         kruskal.test(sc ~ factor(si$Depot))$p.value), error = function(e) NA_real_)
       flag(paste0(nm, ": marker score vs DEPOT"), sprintf("p = %.3g", pvdep), "INFO",
            "a strong depot effect explains a pooled genotype signal")
+
+      ## Per-gene breakdown for any panel that moved with genotype. A panel
+      ## score is a mean, and a mean hides which gene produced it. True
+      ## carry-over moves the WHOLE panel together, and above all it moves the
+      ## tissue-EXCLUSIVE member (Alb for liver; Prm1/Prm2 for sperm). One or
+      ## two shared genes moving while the exclusive marker sits still is
+      ## regulation, not contamination.
+      if (!is.na(pv) && pv < 0.05) {
+        per_gene[[nm]] <- do.call(rbind, lapply(g, function(gg) {
+          x <- vst_screen[gg, colnames(vst)]
+          do.call(rbind, lapply(unique(si$Depot), function(dp) {
+            k  <- si$Depot == dp
+            gt <- factor(si$Genotype[k])
+            if (nlevels(gt) != 2) return(NULL)
+            m  <- tapply(x[k], gt, mean)
+            data.frame(panel = nm, gene = gg, Depot = dp,
+                       mean_ctl = m[[1]], mean_kd = m[[2]],
+                       delta_vst = m[[2]] - m[[1]],
+                       p_genotype = wtest(x[k], si$Genotype[k]),
+                       stringsAsFactors = FALSE)
+          }))
+        }))
+      }
     }
   }
+  pg <- dplyr::bind_rows(per_gene)
+  if (nrow(pg)) {
+    write.csv(pg, file.path(tables_dir, paste0("QC_contamination_per_gene_", run_tag, ".csv")),
+              row.names = FALSE)
+    cat("  per-gene breakdown for flagged panels -> QC_contamination_per_gene_",
+        run_tag, ".csv\n", sep = "")
+    print(pg[order(pg$panel, pg$Depot, pg$p_genotype), ], row.names = FALSE, digits = 3)
+  }
+
   cont <- dplyr::bind_rows(score_rows)
   if (nrow(cont)) {
     write.csv(cont, file.path(tables_dir, paste0("QC_contamination_scores_", run_tag, ".csv")),

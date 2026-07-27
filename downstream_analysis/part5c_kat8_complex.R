@@ -96,26 +96,67 @@ out <- dplyr::bind_rows(rows)
 write.csv(out, file.path(OUTDIR, paste0("part5c_complex_output_", RUN_TAG, ".csv")), row.names = FALSE)
 cat("\n"); print(out, row.names = FALSE)
 
-## ---- 3) Data-driven verdict for the cells ----
-cc  <- out %>% dplyr::filter(dataset == CELL_KEY)
-nuc <- cc %>% dplyr::filter(grepl("^Nuclear", program))
-ctl <- cc %>% dplyr::filter(grepl("control",  program))
-verdict <- "inconclusive (nuclear-OXPHOS set not measurable here)"
-if (nrow(nuc) == 1) {
-  nuc_sig  <- isTRUE(nuc$p_vs_background < FDR_CUT)
-  ctl_flat <- nrow(ctl) == 0 || all(!is.finite(ctl$p_vs_background) | ctl$p_vs_background > FDR_CUT)
-  verdict <- if (nuc_sig && ctl_flat) {
-    sprintf("SPECIFIC: nuclear OXPHOS shifts (mean Wald %+.2f, p=%.1e) while controls stay flat",
-            nuc$mean_Wald, nuc$p_vs_background)
-  } else if (nuc_sig) {
-    "NOT specific: nuclear OXPHOS shifts BUT a control shifts too -- do not attribute to NSL"
-  } else {
-    "no nuclear-OXPHOS shift detected in the cells"
-  }
+## ---- 3) HEAD-TO-HEAD: is the OXPHOS shift BIGGER than the control shift? ----
+##
+## Requiring the controls to be flat is the wrong test. Each control set has
+## 88-101 genes, so a Wilcoxon against ~13,000 background genes will call a
+## mean Wald of +0.29 "significant" -- a shift far too small to matter, but
+## enough to veto the verdict on a technicality. What specificity actually
+## means is that the NSL target set moves MORE than the controls do, so that
+## is tested directly: nuclear-OXPHOS Wald statistics against each control
+## set's Wald statistics, head to head.
+head_to_head <- function(d, genes_a, genes_b, label_b, dataset) {
+  a <- intersect(genes_a, d$gene); b <- intersect(genes_b, d$gene)
+  if (length(a) < 4 || length(b) < 4) return(NULL)
+  sa <- d$stat[d$gene %in% a]; sb <- d$stat[d$gene %in% b]
+  pv <- tryCatch(suppressWarnings(wilcox.test(sa, sb)$p.value),
+                 error = function(e) NA_real_)
+  data.frame(dataset = dataset, comparison = paste0("nuclear OXPHOS vs ", label_b),
+             mean_Wald_oxphos = mean(sa, na.rm = TRUE),
+             mean_Wald_control = mean(sb, na.rm = TRUE),
+             fold_larger = abs(mean(sa, na.rm = TRUE)) / max(abs(mean(sb, na.rm = TRUE)), 1e-9),
+             p_head_to_head = pv, stringsAsFactors = FALSE)
 }
-log_sanity("NSL specificity verdict (cells)", verdict, "INFO")
+h2h <- dplyr::bind_rows(lapply(c(CELL_KEY, tissues), function(nm) {
+  d <- de[[nm]]
+  dplyr::bind_rows(
+    head_to_head(d, nuclear_oxphos, grep("^mt-", d$gene, value = TRUE),
+                 "mito-encoded control", nm),
+    head_to_head(d, nuclear_oxphos, grep("^Rp[sl][0-9]", d$gene, value = TRUE),
+                 "ribosomal control", nm))
+}))
+if (nrow(h2h)) {
+  write.csv(h2h, file.path(OUTDIR, paste0("part5c_specificity_head_to_head_", RUN_TAG, ".csv")),
+            row.names = FALSE)
+  cat("\n"); print(h2h, row.names = FALSE, digits = 3)
+}
 
-## ---- 4) Figure ----
+## ---- 4) Data-driven verdict, reported for every dataset ----
+verdict_for <- function(nm) {
+  nuc <- out %>% dplyr::filter(dataset == nm, grepl("^Nuclear", program))
+  hh  <- h2h %>% dplyr::filter(dataset == nm)
+  if (nrow(nuc) != 1) return("inconclusive (nuclear-OXPHOS set not measurable here)")
+  if (!isTRUE(nuc$p_vs_background < FDR_CUT))
+    return("no nuclear-OXPHOS shift detected")
+  if (!nrow(hh)) return("inconclusive (no control set measurable for comparison)")
+  ## Specific = beats EVERY control, both statistically and by a margin worth
+  ## caring about. The 2x margin stops a large-n significant-but-tiny
+  ## difference from being read as specificity.
+  beats <- all(is.finite(hh$p_head_to_head) & hh$p_head_to_head < FDR_CUT &
+               hh$fold_larger >= 2)
+  if (beats)
+    sprintf("SPECIFIC: nuclear OXPHOS %s (mean Wald %+.2f), %.1fx the nearest control and separated from every control (p<%.2g)",
+            ifelse(nuc$mean_Wald > 0, "UP", "DOWN"), nuc$mean_Wald,
+            min(hh$fold_larger), FDR_CUT)
+  else
+    sprintf("NOT specific: nuclear OXPHOS shifts (mean Wald %+.2f) but does not separate from the controls (smallest margin %.1fx, largest head-to-head p=%.2g)",
+            nuc$mean_Wald, min(hh$fold_larger), max(hh$p_head_to_head, na.rm = TRUE))
+}
+for (nm in c(CELL_KEY, tissues))
+  log_sanity(paste0("NSL specificity verdict (", nm, ")"), verdict_for(nm), "INFO")
+verdict <- verdict_for(CELL_KEY)
+
+## ---- 5) Figure ----
 pd <- out %>% dplyr::filter(is.finite(mean_Wald)) %>%
   dplyr::mutate(dataset = factor(dataset, levels = c(CELL_KEY, tissues)),
                 program = factor(program, levels = rev(unique(program))))
