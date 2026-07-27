@@ -32,7 +32,7 @@
 ##     Rscript run_all.R tissue          # parts 1-4 only
 ##
 ## STEP KEYS for RUN_FORCE:
-##   part1  part2  part3  part4  cells  p4b  p5a  p5b  p5c   (or "all")
+##   part1  qc  part2  part3  part4  cells  p4b  p5a  p5b  p5c   (or "all")
 ##
 ## TARGETS: all (default) | tissue | cells | downstream
 ##
@@ -72,6 +72,7 @@ run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
 
   TISSUE <- list(
     st("part1", "Part 1  DE / QC / DEG lists", "part1_main_analysis.R"),
+    st("qc",    "Part 1b QC diagnostics",       "part1b_qc_diagnostics.R"),
     st("part2", "Part 2  ORA  (slow)",         "part2_ora.R"),
     st("part3", "Part 3  GSEA (slow)",         "part3_fgsea.R"),
     st("part4", "Part 4  Visualisation",       "part4_visualization.R"))

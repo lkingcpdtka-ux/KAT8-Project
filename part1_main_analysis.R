@@ -619,6 +619,9 @@ tryCatch({
       vst_mat_qc = vst_mat,              ## After filtering (for PCA/MDS)
       vst_mat_before = vst_mat_before,   ## Before filtering (for density comparison)
       sample_info = sample_annot,
+      ## Library sizes let Part 1b test whether a principal component is
+      ## really being driven by sequencing depth rather than biology.
+      lib_sizes = colSums(count_matrix_tissue),
       genotype_colors = genotype_colors,
       depot_sex_fill = depot_sex_fill,
       depot_sex_levels = depot_sex_levels
