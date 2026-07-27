@@ -2,7 +2,7 @@
 
 ## -------------------------------------------------------------------------
 ## SCRIPT VERSION: 2026-07-27
-##   pipeline driver; one-shot RUN_* flags; run-scoped staging
+##   pipeline driver; GENES_OF_INTEREST lives here; run-scoped staging
 ##   All pipeline scripts should carry the SAME version date. run_all.R prints
 ##   them at pre-flight -- a date that differs from the rest means that file is
 ##   a stale copy and should be re-downloaded before you trust its output.
@@ -45,6 +45,38 @@
 ##
 ## OUTPUT: one timestamped folder holds the whole run --
 ##   savepoints/RUN_<tag>/{tissue,cells,downstream,data}
+## =========================================================
+
+## =========================================================
+##  >>>  YOUR GENE LIST  --  EDIT HERE  <<<
+## =========================================================
+## These are the genes labelled or plotted individually:
+##   part1   genes-of-interest heatmap + EnhancedVolcano
+##   part4   volcano labels (always shown if they pass DE thresholds)
+##           + Section E box plots, one panel per gene per depot
+##   part4b  cell-vs-tissue concordance quadrant plot
+##
+## It lives here, at the top of the file you actually run, rather than buried
+## in parameters.R. Whatever is set here WINS -- parameters.R only supplies a
+## default when this is absent (e.g. running a part on its own).
+##
+## They do NOT have to be transcription factors. Add or remove freely; a gene
+## that is not measured is reported by name rather than silently dropped.
+##
+## Seeded with KAT8 and its MSL / NSL partners: their mRNA should stay FLAT
+## under siRNA, which depletes KAT8 protein and not partner transcripts, so
+## they act as a built-in negative control on every plot they appear in.
+GENES_OF_INTEREST <- c(
+  "Kat8",                                          ## catalytic subunit
+  "Msl1", "Msl2", "Msl3",                          ## MSL complex
+  "Kansl1", "Kansl2", "Kansl3", "Mcrs1", "Phf20",  ## NSL / KANSL complex
+  ## Medium-chain acyl-CoA synthetases: among the strongest tissue effects
+  ## (Acsm3 iWAT log2FC -5.8, gWAT -3.1) and NOT expressed in 3T3-L1, so they
+  ## are tissue-only and cannot be assessed for cell-autonomy.
+  "Acsm3", "Acsm5"
+)
+## Gene PANELS for the forest plots (Master TFs, Pparg targets, Hypoxia axis,
+## ...) are a bigger structure and stay in parameters.R, under MARKER_PANELS.
 ## =========================================================
 
 run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,

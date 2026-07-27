@@ -2,7 +2,7 @@
 
 ## -------------------------------------------------------------------------
 ## SCRIPT VERSION: 2026-07-27
-##   Section E box plots; Section F forest plots + iWAT-vs-gWAT
+##   Sections E/F: box plots, forest panels, combined + cross-depot
 ##   All pipeline scripts should carry the SAME version date. run_all.R prints
 ##   them at pre-flight -- a date that differs from the rest means that file is
 ##   a stale copy and should be re-downloaded before you trust its output.
@@ -148,6 +148,66 @@ cat("[INFO] Run tag: ", run_tag, "\n", sep = "")
 
 tables_dir <- file.path(outdir, "tables")
 plots_dir <- file.path(outdir, "plots")
+
+## ---- ONE CONTRAST PER DEPOT ---------------------------------------------
+## Everything here globs "DE_tissue_*.csv". A run folder that also holds DE
+## tables written by an older version of Part 1 under a different naming
+## scheme therefore yielded TWO contrasts per depot -- iWAT_KD_vs_CTL and
+## iWAT_KD_vs_CTL_TISSUE_PANELS -- so every volcano, heatmap, box plot and
+## forest plot was produced TWICE, half of them from stale input.
+##
+## Part 1 now moves superseded tables aside, but that only helps on a run
+## where Part 1 actually executes. This is the backstop: keep one file per
+## depot, preferring the plainest contrast name (a decorated name is the
+## leftover), and say out loud what was ignored.
+.unique_de_files <- function(files) {
+  if (length(files) < 2) return(files)
+  cn  <- sub("^DE_tissue_(.+)_[0-9]{8}_[0-9]{6}\\.csv$", "\\1", basename(files))
+  dep <- sub("_.*$", "", cn)
+  keep <- logical(length(files))
+  for (d in unique(dep)) {
+    idx <- which(dep == d)
+    best <- idx[order(nchar(cn[idx]),
+                      -as.numeric(file.info(files[idx])$mtime))][1]
+    keep[best] <- TRUE
+    if (length(idx) > 1)
+      cat("[WARN] ", length(idx), " DE tables for ", d, "; using '", cn[best],
+          "', ignoring: ", paste(cn[setdiff(idx, best)], collapse = ", "), "\n", sep = "")
+  }
+  files[keep]
+}
+
+## ---- SIDE-BY-SIDE FIGURE LAYOUT -----------------------------------------
+## Two finished ggplots as one image, each KEEPING ITS OWN axis and colour
+## scale -- iWAT effects reach |log2FC| ~ 2 while gWAT sits under 1, and a
+## shared axis would squash the smaller panel into a stripe.
+## patchwork is preferred; gridExtra is the fallback; if neither is installed
+## the single-panel figures are still written and only this extra is skipped.
+.save_side_by_side <- function(plots, path, title = NULL, subtitle = NULL,
+                               width = 15, height = 8) {
+  if (requireNamespace("patchwork", quietly = TRUE)) {
+    comb <- Reduce(`|`, plots)
+    if (!is.null(title))
+      comb <- comb + patchwork::plot_annotation(
+        title = title, subtitle = subtitle,
+        theme = ggplot2::theme(
+          plot.title = ggplot2::element_text(face = "bold", hjust = 0.5, size = 15),
+          plot.subtitle = ggplot2::element_text(hjust = 0.5, colour = "grey35")))
+    ggsave(path, comb, width = width, height = height, dpi = 300,
+           bg = "white", limitsize = FALSE)
+    return(TRUE)
+  }
+  if (requireNamespace("gridExtra", quietly = TRUE)) {
+    png(path, width = width, height = height, units = "in", res = 300, bg = "white")
+    do.call(gridExtra::grid.arrange,
+            c(plots, list(ncol = length(plots), top = title)))
+    dev.off()
+    return(TRUE)
+  }
+  cat("[SKIP] side-by-side figure needs the 'patchwork' package:",
+      " install.packages(\"patchwork\")\n", sep = "")
+  FALSE
+}
 
 ## ============================================================
 ## SECTION A: QC PLOTS (PCA, MDS, Density)
@@ -467,7 +527,7 @@ select_genes_one_direction <- function(de_dir, ora_counts_dir, top_n,
 
 if (generate_volcano_plots) {
   cat("\n=== SECTION B: VOLCANO PLOTS (ORA-informed labeling) ===\n")
-  de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
+  de_files <- .unique_de_files(list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE))
   
   vs <- volcano_gene_selection  ## shorthand
   
@@ -839,7 +899,7 @@ if (!is.null(vst_data)) {
   if (generate_top_deg_heatmaps) {
     cat("\n--- Creating Top DEG Heatmaps ---\n")
     
-    de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
+    de_files <- .unique_de_files(list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE))
     
     for (de_file in de_files) {
       filename <- basename(de_file)
@@ -1009,7 +1069,7 @@ if (!is.null(vst_data)) {
       )
     }
     
-    de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
+    de_files <- .unique_de_files(list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE))
     
     for (de_file in de_files) {
       filename <- basename(de_file)
@@ -1132,9 +1192,9 @@ if (!is.null(vst_data)) {
       cat("[WARN] gene_categories not available, skipping avg4col heatmaps\n")
     } else {
       
-      de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$",
-                             full.names = TRUE)
-      
+      de_files <- .unique_de_files(
+        list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE))
+
       for (de_file in de_files) {
         filename <- basename(de_file)
         contrast <- str_match(filename,
@@ -1296,6 +1356,10 @@ if (!is.null(vst_data)) {
 if (generate_gene_boxplots) {
   cat("\n=== SECTION E: GENE EXPRESSION BOX PLOTS ===\n")
 
+  ## Box plots get their own folder inside the run, alongside plots/panels/.
+  box_dir <- file.path(plots_dir, "boxplots")
+  dir.create(box_dir, recursive = TRUE, showWarnings = FALSE)
+
   goi <- if (exists("GENES_OF_INTEREST")) unique(GENES_OF_INTEREST) else character(0)
   if (!length(goi)) {
     cat("[SKIP] GENES_OF_INTEREST is empty (set it in parameters.R)\n")
@@ -1304,7 +1368,7 @@ if (generate_gene_boxplots) {
   } else {
     vst_mat     <- vst_data$vst_mat
     sample_info <- vst_data$sample_info
-    de_files    <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
+    de_files    <- .unique_de_files(list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE))
 
     present <- intersect(goi, rownames(vst_mat))
     missing <- setdiff(goi, rownames(vst_mat))
@@ -1375,7 +1439,7 @@ if (generate_gene_boxplots) {
       ncol_used <- min(5, max(1, ceiling(sqrt(length(present)))))
       nrow_used <- ceiling(length(present) / ncol_used)
       box_file  <- paste0("Boxplot_GOI_", contrast, "_", run_tag, ".png")
-      ggsave(file.path(plots_dir, box_file), p_box,
+      ggsave(file.path(box_dir, box_file), p_box,
              width  = max(6, 2.3 * ncol_used),
              height = max(4, 2.1 * nrow_used),
              dpi = 300, bg = "white", limitsize = FALSE)
@@ -1389,17 +1453,19 @@ if (generate_gene_boxplots) {
 ## SECTION F: MARKER PANEL FOREST PLOTS
 ## ============================================================
 ## log2 fold change with a confidence interval, one row per gene, grouped into
-## labelled blocks (e.g. "Master TFs" above "Pparg target genes").
+## labelled blocks. Three figure types come out of the same builder:
+##   Forest_<panel>_<contrast>      one depot, one panel
+##   Combined_<name>_<depot>        two panels side by side, own axes each
+##   CrossDepot_<panel>             the same gene in both depots, one row
 ##
 ## This is the plot that answers "how big is the effect, and how sure are we"
-## in a single glance. A volcano ranks thousands of genes and a heatmap shows
-## relative patterns; neither tells you that Pparg fell by 0.4 with a CI that
-## just clears zero while Slc2a4 fell by 0.67 with room to spare. The CI is
-## the point: a wide bar crossing zero says "not resolved by this experiment",
-## which is a different statement from "no effect".
+## at a glance. A volcano ranks thousands of genes and a heatmap shows relative
+## pattern; neither says that Pparg fell 0.4 with an interval that just clears
+## zero while Slc2a4 fell 0.67 with room to spare. The interval is the point --
+## a wide bar crossing zero means "not resolved here", not "no effect".
 ##
-## Panels and gene order are defined in parameters.R (MARKER_PANELS) so the
-## figure can be re-cut without touching this script.
+## Panels, gene order, significance tiers and colours all come from
+## parameters.R, so the figures can be re-cut without touching this script.
 
 if (generate_marker_forest_plots) {
   cat("\n=== SECTION F: MARKER PANEL FOREST PLOTS ===\n")
@@ -1407,19 +1473,125 @@ if (generate_marker_forest_plots) {
   panels <- if (exists("MARKER_PANELS")) MARKER_PANELS else list()
   conf   <- if (exists("marker_panel_conf_level")) marker_panel_conf_level else 0.95
   zmult  <- stats::qnorm(1 - (1 - conf) / 2)
+  tiers  <- if (exists("marker_sig_tiers")) marker_sig_tiers else
+              list(list(cutoff = 0.001, label = "***"),
+                   list(cutoff = 0.01,  label = "**"),
+                   list(cutoff = 0.05,  label = "*"))
+  dep_col <- if (exists("marker_depot_colours")) marker_depot_colours else
+               c(iWAT = "#4FA5D8", gWAT = "#C4749E")
+
+  ## Panel figures get their own folder inside the run, so a plots/ directory
+  ## holding 40+ files stays navigable.
+  panels_dir <- file.path(plots_dir, "panels")
+  dir.create(panels_dir, recursive = TRUE, showWarnings = FALSE)
+
+  ## Stars from the configured tiers. Ordered most- to least-stringent, so the
+  ## first cutoff a gene clears is the one it gets.
+  .stars <- function(padj) {
+    out <- rep("", length(padj))
+    for (k in rev(seq_along(tiers))) {
+      tk <- tiers[[k]]
+      out[!is.na(padj) & padj < tk$cutoff] <- tk$label
+    }
+    out
+  }
+  .sig_key <- paste(vapply(rev(tiers), function(t)
+                      sprintf("%s FDR<%g", t$label, t$cutoff), character(1)),
+                    collapse = "   ")
+
+  ## Build the plotting frame for one panel in one depot.
+  .panel_data <- function(tt, gcol, spec) {
+    rows <- list(); absent <- character(0)
+    for (gname in names(spec$groups)) {
+      for (g in spec$groups[[gname]]) {
+        r <- tt[tt[[gcol]] == g, , drop = FALSE]
+        if (!nrow(r) || !is.finite(r$logFC[1]) || !is.finite(r$lfcSE[1])) {
+          absent <- c(absent, g); next
+        }
+        rows[[length(rows) + 1]] <- data.frame(
+          gene = g, group = gname, logFC = r$logFC[1], lfcSE = r$lfcSE[1],
+          padj = ifelse(is.finite(r$padj[1]), r$padj[1], NA_real_),
+          stringsAsFactors = FALSE)
+      }
+    }
+    if (!length(rows)) return(NULL)
+    fp <- do.call(rbind, rows)
+    fp$lo <- fp$logFC - zmult * fp$lfcSE
+    fp$hi <- fp$logFC + zmult * fp$lfcSE
+    fp$negLogFDR <- ifelse(is.na(fp$padj), 0, -log10(pmax(fp$padj, .Machine$double.xmin)))
+    fp$stars <- .stars(fp$padj)
+    attr(fp, "absent") <- absent
+    fp
+  }
+
+  ## One forest panel as a ggplot object, so single figures and the
+  ## side-by-side combined figures are guaranteed to look identical.
+  .forest_plot <- function(fp, spec, title, thr, compact = FALSE) {
+    absent <- attr(fp, "absent")
+    fp$gene  <- factor(fp$gene,  levels = rev(unique(fp$gene)))
+    fp$group <- factor(as.character(fp$group), levels = names(spec$groups))
+
+    ## Significance counted on FDR ALONE. The |log2FC| gate is a rule for
+    ## genome-wide DEG lists; on a hand-picked panel it would hide exactly the
+    ## modest real effects this plot exists to show. The gate is still DRAWN
+    ## (dotted) so both criteria stay visible.
+    n_sig  <- sum(!is.na(fp$padj) & fp$padj < thr$fdr_cut)
+    n_up   <- sum(!is.na(fp$padj) & fp$padj < thr$fdr_cut & fp$logFC > 0)
+    cap <- sprintf(
+      "Tissue thresholds: FDR<%s, |log2FC|>%s (dotted) | n=%d | Up: %d | Down: %d | ns: %d\n%s   |   bars = %d%% CI",
+      thr$fdr_cut, thr$logFC_cut, nrow(fp), n_up, n_sig - n_up, nrow(fp) - n_sig,
+      .sig_key, round(100 * conf))
+    if (length(absent))
+      cap <- paste0(cap, "\nnot measured: ", paste(absent, collapse = ", "))
+
+    rng   <- max(abs(c(fp$lo, fp$hi, thr$logFC_cut)), na.rm = TRUE) * 1.08
+    nudge <- rng * 0.035
+
+    ggplot(fp, aes(x = logFC, y = gene)) +
+      geom_vline(xintercept = 0, colour = "grey35", linewidth = 0.4) +
+      geom_vline(xintercept = c(-thr$logFC_cut, thr$logFC_cut),
+                 colour = "grey75", linetype = "dotted", linewidth = 0.4) +
+      geom_errorbar(aes(xmin = lo, xmax = hi, colour = negLogFDR),
+                    orientation = "y", width = 0, linewidth = 0.7) +
+      geom_point(aes(colour = negLogFDR), size = if (compact) 2.6 else 3.2) +
+      geom_text(aes(x = hi + nudge, label = stars), hjust = 0, vjust = 0.78,
+                size = if (compact) 3.6 else 4.2, fontface = "bold", na.rm = TRUE) +
+      scale_colour_gradientn(
+        colours = c("grey78", "#F5E3C8", "#FDBB6E", "#E8850C", "#B33000"),
+        name = expression(-log[10]~FDR), limits = c(0, NA)) +
+      facet_grid(group ~ ., scales = "free_y", space = "free_y", switch = "y") +
+      scale_x_continuous(limits = c(-rng, rng * 1.1)) +
+      labs(title = title, subtitle = spec$subtitle,
+           x = expression(log[2]~"Fold Change (KAT8KD/CTL)"), y = NULL,
+           caption = cap) +
+      theme_bw(base_size = if (compact) 10 else 12) +
+      theme(panel.grid.major.y = element_blank(),
+            panel.grid.minor   = element_blank(),
+            axis.text.y  = element_text(face = "italic", size = if (compact) 9 else 11),
+            strip.placement = "outside",
+            strip.text.y.left = element_text(angle = 0, face = "bold"),
+            strip.background = element_rect(fill = "grey95", colour = "grey70"),
+            plot.title    = element_text(face = "bold", hjust = 0.5),
+            plot.subtitle = element_text(hjust = 0.5, colour = "grey35"),
+            plot.caption  = element_text(hjust = 0.5, colour = "grey45",
+                                         size = if (compact) 7 else 8))
+  }
 
   if (!length(panels)) {
     cat("[SKIP] MARKER_PANELS not defined in parameters.R\n")
   } else {
-    de_files <- list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)
-    cross <- list()   ## accumulates every depot's rows for the iWAT-vs-gWAT figures
+    de_files <- .unique_de_files(
+      .unique_de_files(list.files(tables_dir, pattern = "^DE_tissue_.*\\.csv$", full.names = TRUE)))
+
+    cross <- list()            ## every depot's rows, for the cross-depot figures
+    built <- list()            ## panel plots per depot, for the combined figures
 
     for (de_file in de_files) {
       contrast <- str_match(basename(de_file), "DE_tissue_(.+)_[0-9]+_[0-9]+\\.csv")[2]
       if (is.na(contrast)) next
       tissue <- sub("_.*$", "", contrast)
 
-      tt <- read.csv(de_file, stringsAsFactors = FALSE)
+      tt   <- read.csv(de_file, stringsAsFactors = FALSE)
       gcol <- if ("gene_name" %in% names(tt)) "gene_name" else names(tt)[1]
       if (!"lfcSE" %in% names(tt)) {
         cat("[SKIP] ", contrast, ": DE table has no lfcSE column, cannot draw CIs\n", sep = "")
@@ -1428,173 +1600,114 @@ if (generate_marker_forest_plots) {
       thr <- get_tissue_thresholds(contrast)
 
       for (pname in names(panels)) {
-        spec   <- panels[[pname]]
-        groups <- spec$groups
-
-        ## Build the plotting frame, keeping the gene order given in
-        ## parameters.R and recording which genes were not measured.
-        rows <- list(); absent <- character(0)
-        for (gname in names(groups)) {
-          for (g in groups[[gname]]) {
-            r <- tt[tt[[gcol]] == g, , drop = FALSE]
-            if (!nrow(r) || !is.finite(r$logFC[1]) || !is.finite(r$lfcSE[1])) {
-              absent <- c(absent, g); next
-            }
-            rows[[length(rows) + 1]] <- data.frame(
-              gene = g, group = gname,
-              logFC = r$logFC[1], lfcSE = r$lfcSE[1],
-              padj  = ifelse(is.finite(r$padj[1]), r$padj[1], NA_real_),
-              stringsAsFactors = FALSE)
-          }
+        spec <- panels[[pname]]
+        fp   <- .panel_data(tt, gcol, spec)
+        if (is.null(fp)) {
+          cat("[SKIP] ", tissue, " / ", pname, ": no genes measured\n", sep = ""); next
         }
-        if (!length(rows)) { cat("[SKIP] ", tissue, " / ", pname, ": no genes measured\n", sep = ""); next }
-        fp <- do.call(rbind, rows)
 
-        fp$lo <- fp$logFC - zmult * fp$lfcSE
-        fp$hi <- fp$logFC + zmult * fp$lfcSE
-        fp$negLogFDR <- ifelse(is.na(fp$padj), 0, -log10(pmax(fp$padj, .Machine$double.xmin)))
-        fp$stars <- dplyr::case_when(
-          is.na(fp$padj)   ~ "",
-          fp$padj < 0.001  ~ "***",
-          fp$padj < 0.01   ~ "**",
-          fp$padj < 0.05   ~ "*",
-          TRUE             ~ "")
-
-        ## Rows are drawn top-to-bottom in the order given, so the factor
-        ## levels are reversed (ggplot builds the y axis from the bottom up).
-        fp$gene  <- factor(fp$gene,  levels = rev(unique(fp$gene)))
-        fp$group <- factor(fp$group, levels = names(groups))
-
-        ## Significance counted on FDR alone. The |log2FC| gate is a DEG-list
-        ## rule for genome-wide lists; on a hand-picked marker panel it would
-        ## hide real, modest effects, which is precisely what this plot exists
-        ## to show. The gate is still DRAWN (dotted) so both are visible.
-        n_sig  <- sum(!is.na(fp$padj) & fp$padj < thr$fdr_cut)
-        n_up   <- sum(!is.na(fp$padj) & fp$padj < thr$fdr_cut & fp$logFC > 0)
-        n_down <- n_sig - n_up
-        cap <- sprintf(
-          "%s thresholds: FDR<%s, |log2FC|>%s (dotted) | n=%d | Up: %d | Down: %d | ns: %d\n* FDR<0.05   ** <0.01   *** <0.001   |   bars = %d%% CI (log2FC +/- %.2f x lfcSE)",
-          tissue, thr$fdr_cut, thr$logFC_cut, nrow(fp), n_up, n_down, nrow(fp) - n_sig,
-          round(100 * conf), zmult)
-        if (length(absent))
-          cap <- paste0(cap, "\nnot measured in ", tissue, ": ", paste(absent, collapse = ", "))
-
-        rng  <- max(abs(c(fp$lo, fp$hi, thr$logFC_cut)), na.rm = TRUE) * 1.08
-        nudge <- rng * 0.035
-
-        p_f <- ggplot(fp, aes(x = logFC, y = gene)) +
-          geom_vline(xintercept = 0, colour = "grey35", linewidth = 0.4) +
-          geom_vline(xintercept = c(-thr$logFC_cut, thr$logFC_cut),
-                     colour = "grey75", linetype = "dotted", linewidth = 0.4) +
-          ## geom_errorbarh() was deprecated in ggplot2 4.0.0 (and its `height`
-          ## argument silently became `width`). geom_errorbar(orientation = "y")
-          ## is the supported way to draw a horizontal interval.
-          geom_errorbar(aes(xmin = lo, xmax = hi, colour = negLogFDR),
-                        orientation = "y", width = 0, linewidth = 0.7) +
-          geom_point(aes(colour = negLogFDR), size = 3.2) +
-          geom_text(aes(x = hi + nudge, label = stars), hjust = 0, vjust = 0.78,
-                    size = 4.2, fontface = "bold", na.rm = TRUE) +
-          scale_colour_gradientn(
-            colours = c("grey78", "#F5E3C8", "#FDBB6E", "#E8850C", "#B33000"),
-            name = expression(-log[10]~FDR), limits = c(0, NA)) +
-          facet_grid(group ~ ., scales = "free_y", space = "free_y", switch = "y") +
-          scale_x_continuous(limits = c(-rng, rng * 1.1)) +
-          labs(title = paste0(tissue, ": ", pname),
-               subtitle = spec$subtitle,
-               x = expression(log[2]~"Fold Change (KAT8KD/CTL)"), y = NULL,
-               caption = cap) +
-          theme_bw(base_size = 12) +
-          theme(panel.grid.major.y = element_blank(),
-                panel.grid.minor   = element_blank(),
-                axis.text.y  = element_text(face = "italic", size = 11),
-                strip.placement = "outside",
-                strip.text.y.left = element_text(angle = 0, face = "bold"),
-                strip.background = element_rect(fill = "grey95", colour = "grey70"),
-                plot.title    = element_text(face = "bold", hjust = 0.5),
-                plot.subtitle = element_text(hjust = 0.5, colour = "grey35"),
-                plot.caption  = element_text(hjust = 0.5, colour = "grey45", size = 8))
-
+        p_f <- .forest_plot(fp, spec, paste0(tissue, ": ", pname), thr)
         safe <- gsub("[^A-Za-z0-9]+", "_", pname)
         fp_file <- paste0("Forest_", safe, "_", contrast, "_", run_tag, ".png")
-        ggsave(file.path(plots_dir, fp_file), p_f,
+        ggsave(file.path(panels_dir, fp_file), p_f,
                width = 9, height = max(4, 0.42 * nrow(fp) + 2.4),
                dpi = 300, bg = "white", limitsize = FALSE)
-        cat("[OK] Saved: ", fp_file, "  (", nrow(fp), " genes, ",
-            n_sig, " significant", if (length(absent))
-              paste0(", ", length(absent), " not measured") else "", ")\n", sep = "")
+        n_sig <- sum(!is.na(fp$padj) & fp$padj < thr$fdr_cut)
+        cat("[OK] ", fp_file, "  (", nrow(fp), " genes, ", n_sig, " significant)\n", sep = "")
 
+        built[[paste(tissue, pname, sep = "||")]] <-
+          list(plot = .forest_plot(fp, spec, paste0(tissue, ": ", pname), thr,
+                                   compact = TRUE), n = nrow(fp))
         fp$Depot <- tissue
         cross[[length(cross) + 1]] <- transform(fp, panel_name = pname)
       }
+
+      ## ---- side-by-side combined figures, per depot --------------------
+      combos <- if (exists("COMBINED_PANELS")) COMBINED_PANELS else list()
+      for (cname in names(combos)) {
+        want <- combos[[cname]]
+        keys <- paste(tissue, want, sep = "||")
+        if (!all(keys %in% names(built))) next
+        pl <- lapply(keys, function(k) built[[k]]$plot)
+        nn <- max(vapply(keys, function(k) built[[k]]$n, numeric(1)))
+        cf <- paste0("Combined_", gsub("[^A-Za-z0-9]+", "_", cname),
+                     "_", contrast, "_", run_tag, ".png")
+        ok <- .save_side_by_side(
+          pl, file.path(panels_dir, cf),
+          title = paste0(tissue, ": ", cname),
+          subtitle = sprintf("KAT8KD vs CTL | tissue thresholds (FDR<%s, |logFC|>%s)",
+                             thr$fdr_cut, thr$logFC_cut),
+          width = 15, height = max(5.5, 0.40 * nn + 2.6))
+        if (ok) cat("[OK] ", cf, "\n", sep = "")
+      }
     }
 
-    ## ---- cross-depot version: both depots on one axis -------------------
-    ## The per-depot figures answer "did this program move in iWAT?". This one
-    ## answers the question that actually separates your depots: does the SAME
-    ## gene behave differently in iWAT and gWAT? Two figures side by side make
-    ## that comparison by eye and by memory; putting both intervals on one row
-    ## makes it a direct read -- overlapping intervals mean the depots are not
-    ## resolved apart, however different the two panels looked.
+    ## ---- cross-depot: the same gene in both depots, on one row ----------
+    ## Two figures side by side make that comparison from memory. One row makes
+    ## it a direct read: overlapping intervals mean the depots are NOT resolved
+    ## apart, however different the two panels looked.
+    want_cd <- if (exists("CROSS_DEPOT_PANELS")) CROSS_DEPOT_PANELS else names(panels)
     cd <- if (length(cross)) dplyr::bind_rows(cross) else NULL
-    if (!is.null(cd) && dplyr::n_distinct(cd$Depot) > 1) {
-      for (pname in unique(cd$panel_name)) {
+    if (!is.null(cd) && dplyr::n_distinct(cd$Depot) > 1 && length(want_cd)) {
+      for (pname in intersect(want_cd, unique(cd$panel_name))) {
         sub <- cd[cd$panel_name == pname, , drop = FALSE]
-        ## Keep only genes measured in EVERY depot, otherwise a missing row
-        ## reads as "no effect" rather than "not measured".
-        keep_g <- names(which(table(sub$gene) == dplyr::n_distinct(sub$Depot)))
+        ## Genes must be measured in EVERY depot: a missing row would read as
+        ## "no effect" rather than "not measured".
+        keep_g  <- names(which(table(sub$gene) == dplyr::n_distinct(sub$Depot)))
         dropped <- setdiff(as.character(unique(sub$gene)), keep_g)
         sub <- sub[sub$gene %in% keep_g, , drop = FALSE]
         if (!nrow(sub)) next
 
-        sub$Depot <- factor(sub$Depot, levels = c("iWAT", "gWAT"))
-        sub$group <- factor(as.character(sub$group), levels = names(panels[[pname]]$groups))
-        sub$gene  <- factor(as.character(sub$gene),
-                            levels = rev(unique(as.character(sub$gene))))
+        ord <- unlist(panels[[pname]]$groups, use.names = FALSE)
+        ord <- ord[ord %in% keep_g]
+        sub$gene  <- factor(as.character(sub$gene), levels = rev(ord))
+        sub$Depot <- factor(sub$Depot, levels = intersect(names(dep_col), unique(sub$Depot)))
 
-        rng2 <- max(abs(c(sub$lo, sub$hi)), na.rm = TRUE) * 1.08
+        lfc_cut <- get_tissue_thresholds("iWAT")$logFC_cut
+        rng2 <- max(abs(c(sub$lo, sub$hi, lfc_cut)), na.rm = TRUE) * 1.08
         dg   <- ggplot2::position_dodge(width = 0.62)
-        cap2 <- paste0(
-          "Same genes, both depots. Bars = ", round(100 * conf), "% CI.\n",
-          "* FDR<0.05   ** <0.01   *** <0.001   (per depot)",
-          if (length(dropped))
-            paste0("\nnot measured in both depots, so excluded: ",
-                   paste(dropped, collapse = ", ")) else "")
+        cap2 <- paste0(.sig_key, "   (per depot)   |   bars = ", round(100 * conf), "% CI",
+                       if (length(dropped))
+                         paste0("\nnot measured in both depots, so excluded: ",
+                                paste(dropped, collapse = ", ")) else "")
 
-        p_c <- ggplot(sub, aes(x = logFC, y = gene, colour = Depot, group = Depot)) +
+        p_c <- ggplot(sub, aes(x = logFC, y = gene, colour = Depot,
+                               shape = Depot, group = Depot)) +
           geom_vline(xintercept = 0, colour = "grey35", linewidth = 0.4) +
+          geom_vline(xintercept = c(-lfc_cut, lfc_cut), colour = "grey75",
+                     linetype = "dotted", linewidth = 0.4) +
           geom_errorbar(aes(xmin = lo, xmax = hi), orientation = "y",
                         width = 0, linewidth = 0.7, position = dg) +
           geom_point(size = 3, position = dg) +
           geom_text(aes(x = hi + rng2 * 0.03, label = stars), position = dg,
                     hjust = 0, vjust = 0.78, size = 3.8, fontface = "bold",
                     show.legend = FALSE, na.rm = TRUE) +
-          scale_colour_manual(values = c(iWAT = "#4575B4", gWAT = "#D73027")) +
-          facet_grid(group ~ ., scales = "free_y", space = "free_y", switch = "y") +
+          scale_colour_manual(values = dep_col) +
+          scale_shape_manual(values = c(iWAT = 16, gWAT = 17)) +
           scale_x_continuous(limits = c(-rng2, rng2 * 1.12)) +
-          labs(title = paste0("iWAT vs gWAT: ", pname),
-               subtitle = "the same gene in both depots -- non-overlapping intervals mean the depots differ",
+          labs(title = paste0(pname, ": iWAT vs gWAT KAT8KD"),
+               subtitle = sprintf("Cross-depot consistency check | tissue thresholds (FDR<%s, |logFC|>%s)",
+                                  get_tissue_thresholds("iWAT")$fdr_cut, lfc_cut),
                x = expression(log[2]~"Fold Change (KAT8KD/CTL)"), y = NULL,
                caption = cap2) +
           theme_bw(base_size = 12) +
-          theme(panel.grid.major.y = element_blank(),
+          theme(panel.grid.major.y = element_line(colour = "grey93"),
                 panel.grid.minor   = element_blank(),
                 axis.text.y  = element_text(face = "italic", size = 11),
-                strip.placement = "outside",
-                strip.text.y.left = element_text(angle = 0, face = "bold"),
-                strip.background = element_rect(fill = "grey95", colour = "grey70"),
                 plot.title    = element_text(face = "bold", hjust = 0.5),
                 plot.subtitle = element_text(hjust = 0.5, colour = "grey35"),
                 plot.caption  = element_text(hjust = 0.5, colour = "grey45", size = 8),
-                legend.position = "bottom")
+                legend.position = "right")
 
         safe <- gsub("[^A-Za-z0-9]+", "_", pname)
-        cf <- paste0("Forest_", safe, "_iWAT_vs_gWAT_", run_tag, ".png")
-        ggsave(file.path(plots_dir, cf), p_c,
-               width = 9.5, height = max(4.5, 0.5 * length(keep_g) + 2.6),
+        cf <- paste0("CrossDepot_", safe, "_iWAT_vs_gWAT_", run_tag, ".png")
+        ggsave(file.path(panels_dir, cf), p_c,
+               width = 9.5, height = max(4.5, 0.46 * length(keep_g) + 2.6),
                dpi = 300, bg = "white", limitsize = FALSE)
-        cat("[OK] Saved: ", cf, "  (", length(keep_g), " genes in both depots)\n", sep = "")
+        cat("[OK] ", cf, "  (", length(keep_g), " genes in both depots)\n", sep = "")
       }
     }
+    cat("[INFO] panel figures -> ", panels_dir, "\n", sep = "")
   }
 }
 

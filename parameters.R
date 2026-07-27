@@ -1,6 +1,6 @@
 ## -------------------------------------------------------------------------
 ## SCRIPT VERSION: 2026-07-27
-##   PCA all-genes/unit-scaled; GENES_OF_INTEREST; MARKER_PANELS (7 panels)
+##   PCA convention; MARKER_PANELS from the original figures
 ##   All pipeline scripts should carry the SAME version date. run_all.R prints
 ##   them at pre-flight -- a date that differs from the rest means that file is
 ##   a stale copy and should be re-downloaded before you trust its output.
@@ -46,22 +46,24 @@ default_fdr_cut   <- 0.05
 ##   part4  - volcano plots (always labelled if they pass DE thresholds)
 ##   part4b - cell-vs-tissue concordance quadrant plot
 ##
-## These do NOT need to be transcription factors. The only TF-restricted
-## analyses are part5b layers 1 and 3, which are limited to TFs by definition
-## (GO:0003700 / TF target sets) -- everything else labels any gene you list.
+## >>> THE EDITABLE COPY OF THIS LIST NOW LIVES AT THE TOP OF run_all.R <<<
 ##
-## Seeded with KAT8 itself and its MSL / NSL complex partners: their mRNA is
-## expected to stay FLAT under siRNA (which depletes KAT8 protein, not partner
-## transcripts), so they act as a built-in negative control on the plots.
-GENES_OF_INTEREST <- c(
-  "Kat8",                                         ## catalytic subunit
-  "Msl1", "Msl2", "Msl3",                         ## MSL complex
-  "Kansl1", "Kansl2", "Kansl3", "Mcrs1", "Phf20", ## NSL/KANSL complex
-  ## Medium-chain acyl-CoA synthetases: among the strongest tissue effects
-  ## (Acsm3 iWAT log2FC -5.8, gWAT -3.1) and NOT expressed in 3T3-L1, so they
-  ## are tissue-only and cannot be assessed for cell-autonomy.
-  "Acsm3", "Acsm5"
-)
+## Each part runs in its own environment, so a part sourcing this file would
+## shadow whatever run_all.R set. The global value therefore WINS, and what is
+## below is only the fallback for running a part on its own.
+if (exists("GENES_OF_INTEREST", envir = globalenv())) {
+  GENES_OF_INTEREST <- get("GENES_OF_INTEREST", envir = globalenv())
+} else {
+  GENES_OF_INTEREST <- c(
+    "Kat8",                                         ## catalytic subunit
+    "Msl1", "Msl2", "Msl3",                         ## MSL complex
+    "Kansl1", "Kansl2", "Kansl3", "Mcrs1", "Phf20", ## NSL/KANSL complex
+    ## Medium-chain acyl-CoA synthetases: among the strongest tissue effects
+    ## (Acsm3 iWAT log2FC -5.8, gWAT -3.1) and NOT expressed in 3T3-L1, so they
+    ## are tissue-only and cannot be assessed for cell-autonomy.
+    "Acsm3", "Acsm5"
+  )
+}
 
 ## ============================================================
 ## MARKER PANELS  -- for the forest (effect-size) plots
@@ -76,6 +78,8 @@ GENES_OF_INTEREST <- c(
 ## Any gene not measured in a depot is dropped from that panel with a note in
 ## the log -- it is never silently blanked.
 MARKER_PANELS <- list(
+
+  ## ---- 1. Adipogenic program  (was "Adipocyte identity") ----------------
   "Adipogenic program" = list(
     subtitle = "Master TFs and Pparg targets",
     groups = list(
@@ -84,40 +88,42 @@ MARKER_PANELS <- list(
                                "Lpl", "Slc2a4", "Angptl4")
     )
   ),
+
+  ## ---- 2. Metabolic effectors -------------------------------------------
+  "Metabolic effectors" = list(
+    subtitle = "Glycolysis, OXPHOS, Hypoxia, mTORC1",
+    groups = list(
+      "Glycolysis"   = c("Hk2", "Pfkl", "Pkm", "Eno1", "Ldha", "Gapdh"),
+      "OXPHOS"       = c("Cox4i1", "Cox5a", "Ndufa9", "Sdhb", "Uqcrc1"),
+      "Hypoxia / HIF" = c("Hif1a", "Vegfa", "Slc2a1", "Egln1", "Egln3", "Bnip3"),
+      "mTORC1"       = c("Mtor", "Rps6", "Eif4ebp1", "Hmgcs1", "Acaca")
+    )
+  ),
+
+  ## ---- 3. Hypoxia / HIF axis --------------------------------------------
+  ## Not a marker list -- a CASCADE. The same genes as the Hypoxia block
+  ## above, re-cut so the row order follows the pathway: the master TF, then
+  ## what it turns on, then the feedback that should shut it off, then the
+  ## downstream effectors. Reading top to bottom is reading the mechanism, so
+  ## a break in the chain (TF up, effectors down) is visible as a break.
+  "Hypoxia HIF axis" = list(
+    subtitle = "Mechanistic ordering: master TF -> uptake -> glycolysis -> feedback -> effectors",
+    groups = list(
+      "HIF master TF"            = c("Hif1a"),
+      "Glucose uptake"           = c("Slc2a1"),
+      "Glycolysis (HIF targets)" = c("Hk2", "Pfkl", "Pkm", "Ldha"),
+      "HIF feedback (PHDs)"      = c("Egln1", "Egln3"),
+      "Hypoxia effectors"        = c("Vegfa", "Bnip3")
+    )
+  ),
+
+  ## ---- 4-6. Additional panels -------------------------------------------
   "Thermogenic and lipid handling" = list(
     subtitle = "Browning markers and lipid metabolism",
     groups = list(
       "Thermogenic" = c("Ucp1", "Cidea", "Ppargc1a", "Dio2", "Elovl3", "Prdm16"),
       "Lipid metabolism" = c("Ppara", "Acox1", "Acaca", "Acacb", "Fasn",
                              "Scd1", "Pck1", "Cpt1b", "Lipe", "Pnpla2")
-    )
-  ),
-  ## ---- RECONSTRUCTED PANELS -------------------------------------------
-  ## The May run (RUN_TISSUE_PANELS_20260515_163857) produced figures named
-  ## A_identity / B_effectors / C_hypoxia. That script was pasted into the
-  ## console rather than saved, so no copy of it survives -- the figures do,
-  ## the code does not. "A_identity" is reproduced above as "Adipogenic
-  ## program"; the two below are RECONSTRUCTIONS from standard marker sets,
-  ## not the original lists. Check them against the old PNGs and edit freely.
-  "Metabolic effectors" = list(
-    subtitle = "What the adipocyte actually does: lipolysis, lipogenesis, glucose, mitochondria",
-    groups = list(
-      "Lipolysis"   = c("Pnpla2", "Lipe", "Mgll", "Abhd5", "Plin5"),
-      "Lipogenesis" = c("Fasn", "Acaca", "Scd1", "Elovl6", "Dgat1", "Dgat2", "Gpd1"),
-      "Glucose"     = c("Slc2a1", "Slc2a4", "Hk2", "Pfkl", "Pdk4"),
-      "Mitochondrial" = c("Ppargc1a", "Cox7a1", "Ndufa9", "Sdhb", "Atp5f1b", "Cpt1a")
-    )
-  ),
-  ## Hypertrophic fat outgrows its blood supply and becomes hypoxic, which is
-  ## the standard mechanistic bridge from expansion to inflammation and
-  ## fibrosis -- directly relevant to a non-cell-autonomous phenotype.
-  "Hypoxia" = list(
-    subtitle = "HIF1a and its canonical targets",
-    groups = list(
-      "HIF subunits"   = c("Hif1a", "Epas1", "Arnt"),
-      "HIF targets"    = c("Vegfa", "Slc2a1", "Ldha", "Pgk1", "Aldoa", "Eno1",
-                           "Pdk1", "Adm", "Bnip3", "Ankrd37", "Car9"),
-      "O2 sensing"     = c("Egln1", "Egln3", "Vhl")
     )
   ),
   "Inflammation and remodelling" = list(
@@ -132,27 +138,43 @@ MARKER_PANELS <- list(
   "KAT8 complex" = list(
     subtitle = "Catalytic subunit and its MSL / NSL partners (partners expected flat)",
     groups = list(
-      "Catalytic"  = c("Kat8"),
-      "MSL"        = c("Msl1", "Msl2", "Msl3"),
+      "Catalytic"   = c("Kat8"),
+      "MSL"         = c("Msl1", "Msl2", "Msl3"),
       "NSL / KANSL" = c("Kansl1", "Kansl2", "Kansl3", "Mcrs1", "Phf20")
-    )
-  ),
-  ## The old "combined_identity_vs_effectors" figure was simply two blocks on
-  ## one axis. That needs no special code -- a panel is already a list of
-  ## groups, so putting both sets of groups in one entry reproduces it.
-  "Adipogenic program vs effectors" = list(
-    subtitle = "Is the program intact but the output lost, or is the program itself gone?",
-    groups = list(
-      "Master TFs"   = c("Pparg", "Cebpa", "Cebpb", "Cebpd", "Klf15", "Srebf1"),
-      "Pparg targets" = c("Adipoq", "Lep", "Fabp4", "Plin1", "Cd36", "Lpl",
-                          "Slc2a4", "Angptl4"),
-      "Effectors"    = c("Pnpla2", "Lipe", "Fasn", "Acaca", "Scd1", "Pck1", "Cpt1a")
     )
   )
 )
 
-## Confidence level for the error bars on those plots. 0.95 gives the
-## conventional +/- 1.96 x lfcSE interval.
+## ---- SIDE-BY-SIDE COMBINED FIGURES --------------------------------------
+## Two panels drawn as one figure, each keeping its OWN x-axis and its own
+## colour scale. That matters: iWAT effect sizes reach |log2FC| ~ 2 while the
+## gWAT ones sit under 1, and forcing a shared axis would flatten the smaller
+## panel into a stripe. Each entry is c(left_panel, right_panel), naming
+## panels defined above.
+COMBINED_PANELS <- list(
+  "Adipogenic program vs effectors" = c("Adipogenic program", "Metabolic effectors")
+)
+
+## ---- CROSS-DEPOT (iWAT vs gWAT) FIGURES ---------------------------------
+## Panels to also draw with both depots on one row per gene. Set to
+## names(MARKER_PANELS) for all of them, or NULL to switch it off.
+CROSS_DEPOT_PANELS <- names(MARKER_PANELS)
+
+## ---- SIGNIFICANCE MARKERS ------------------------------------------------
+## ASCII ONLY, deliberately. The original figures used a middle dot for the
+## FDR<0.1 tier and it rendered as "A." on Windows -- the same mojibake hit
+## the arrows in the Hypoxia subtitle. Anything non-ASCII risks that on some
+## machine, so the markers stay in plain ASCII.
+marker_sig_tiers <- list(
+  list(cutoff = 0.001, label = "***"),
+  list(cutoff = 0.01,  label = "**"),
+  list(cutoff = 0.05,  label = "*"),
+  list(cutoff = 0.10,  label = ".")     ## trend
+)
+
+## Colours for the cross-depot figures.
+marker_depot_colours <- c(iWAT = "#4FA5D8", gWAT = "#C4749E")
+
 marker_panel_conf_level <- 0.95
 
 ## ============================================================
@@ -221,7 +243,7 @@ gsea_params <- list(
   rank_metric     = "DESeq2 Wald statistic",
   
   ## GO:BP simplification - reduces redundant GO terms using semantic similarity
-  ## WARNING: simplify() is O(n�) complexity - can hang with many terms!
+  ## WARNING: simplify() is O(n^2) complexity - can hang with many terms!
   ## Strategy: Only simplify the TOP N most significant terms (by p-value)
   simplify_go     = TRUE,    ## Enable GO:BP simplification
   simplify_cutoff = 0.5,     ## Semantic similarity threshold (lower = more aggressive merging)
