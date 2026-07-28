@@ -149,17 +149,29 @@ verdict_for <- function(nm, out_tbl = out, h2h_tbl = h2h) {
     return("no nuclear-OXPHOS shift detected")
   if (!nrow(hh)) return("inconclusive (no control set measurable for comparison)")
   ## Specific = beats EVERY control, both statistically and by a margin worth
-  ## caring about. The 2x margin stops a large-n significant-but-tiny
-  ## difference from being read as specificity.
-  beats <- all(is.finite(hh$p_head_to_head) & hh$p_head_to_head < FDR_CUT &
-               hh$fold_larger >= 2)
-  if (beats)
-    sprintf("SPECIFIC: nuclear OXPHOS %s (mean Wald %+.2f), %.1fx the nearest control and separated from every control (p<%.2g)",
-            ifelse(nuc$mean_Wald > 0, "UP", "DOWN"), nuc$mean_Wald,
-            min(hh$fold_larger), FDR_CUT)
+  ## caring about. The margin stops a large-n significant-but-tiny difference
+  ## from being read as specificity.
+  ##
+  ## BORDERLINE exists because the verdict is a word and the evidence is a
+  ## ratio. A hard cut makes 1.99 a negative and 2.01 a positive, and that is
+  ## not a distinction the data supports. Every verdict now carries its own
+  ## numbers so the reader can see which side of the line it sits on and by
+  ## how much.
+  .p  <- if (exists("nsl_specificity_params")) nsl_specificity_params else
+           list(margin = 2.0, borderline_margin = 1.5)
+  sig_all  <- all(is.finite(hh$p_head_to_head) & hh$p_head_to_head < FDR_CUT)
+  min_fold <- min(hh$fold_larger, na.rm = TRUE)
+  max_p    <- max(hh$p_head_to_head, na.rm = TRUE)
+  dir      <- ifelse(nuc$mean_Wald > 0, "UP", "DOWN")
+  if (sig_all && min_fold >= .p$margin)
+    sprintf("SPECIFIC: nuclear OXPHOS %s (mean Wald %+.2f); %.2fx the nearest control (threshold %.1fx), every control separated at p<=%.1e",
+            dir, nuc$mean_Wald, min_fold, .p$margin, max_p)
+  else if (sig_all && min_fold >= .p$borderline_margin)
+    sprintf("BORDERLINE: nuclear OXPHOS %s (mean Wald %+.2f); separated from every control (p<=%.1e) but the nearest margin is %.2fx, under the %.1fx threshold -- report the margins, not the label",
+            dir, nuc$mean_Wald, max_p, min_fold, .p$margin)
   else
-    sprintf("NOT specific: nuclear OXPHOS shifts (mean Wald %+.2f) but does not separate from the controls (smallest margin %.1fx, largest head-to-head p=%.2g)",
-            nuc$mean_Wald, min(hh$fold_larger), max(hh$p_head_to_head, na.rm = TRUE))
+    sprintf("NOT specific: nuclear OXPHOS shifts (mean Wald %+.2f) but does not separate from the controls (smallest margin %.2fx, largest head-to-head p=%.2g)",
+            nuc$mean_Wald, min_fold, max_p)
 }
 for (nm in c(CELL_KEY, tissues))
   log_sanity(paste0("NSL specificity verdict (", nm, ")"), verdict_for(nm), "INFO")
@@ -202,7 +214,7 @@ if (length(go_ox) < 10) {
     data.frame(dataset = nm,
                verdict_curated = vc, verdict_GO0006119 = vg,
                agree = !is.na(vg) &&
-                       identical(startsWith(vc, "SPECIFIC"), startsWith(vg, "SPECIFIC")),
+                       identical(sub(":.*$", "", vc), sub(":.*$", "", vg)),
                stringsAsFactors = FALSE)
   }))
   write.csv(sens, file.path(OUTDIR, paste0("part5c_geneset_sensitivity_", RUN_TAG, ".csv")),

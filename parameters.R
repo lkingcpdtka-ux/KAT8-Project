@@ -162,6 +162,32 @@ COMBINED_PANELS <- list(
 )
 
 ## ============================================================
+## NSL SPECIFICITY TEST  (part5c)
+## ============================================================
+## How much bigger must the nuclear-OXPHOS shift be than a control's before
+## the effect is called specific? Both numbers are conventions, not facts, so
+## they live here rather than being buried in the script.
+##
+## WHY A BORDERLINE BAND EXISTS: the verdict is a word, the evidence is a
+## ratio, and a hard cut turns 1.99 into "NOT specific" and 2.01 into
+## "SPECIFIC". That actually happened -- swapping the curated OXPHOS list for
+## GO:0006119 moved iWAT's margin against the mito-encoded control from 2.54
+## to 1.96 and flipped the verdict, while every p-value stayed below 4e-04.
+## Anything landing in the band is now labelled BORDERLINE instead of
+## silently falling to one side.
+##
+## A NOTE ON THE MITO-ENCODED CONTROL: it is the stricter of the two and it
+## is not fully independent. Mitochondrially encoded transcripts drop when
+## mitochondrial content drops, which in iWAT is plausibly downstream of the
+## same effect being measured. The ribosomal-protein control is the cleaner
+## comparison, and iWAT beats it by 7.3-9.4x at p < 1e-22 under BOTH gene
+## sets. Read the two controls separately; do not average them.
+nsl_specificity_params <- list(
+  margin            = 2.0,   ## SPECIFIC requires this fold or more vs every control
+  borderline_margin = 1.5    ## between the two = BORDERLINE, not a negative
+)
+
+## ============================================================
 ## CONTAMINATION EXCLUSIONS  -- kept in the tables, kept off the figures
 ## ============================================================
 ## Used by: part4_visualization.R (volcano labels, top-DEG heatmaps)
