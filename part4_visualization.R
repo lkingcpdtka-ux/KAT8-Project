@@ -472,6 +472,17 @@ select_genes_one_direction <- function(de_dir, ora_counts_dir, top_n,
   de_dir <- de_dir %>%
     dplyr::filter(!grepl("^Gm\\d+$", gene_name),
                   !grepl("Rik$", gene_name))
+
+  ## Contamination genes are not LABELLED. They stay in the DE table and in
+  ## every count; they simply do not get to occupy the largest-|log2FC| label
+  ## slots when their fold change comes from dissection carry-over.
+  if (exists("CONTAMINATION_EXCLUDE") && length(CONTAMINATION_EXCLUDE)) {
+    n_before <- nrow(de_dir)
+    de_dir <- de_dir %>% dplyr::filter(!gene_name %in% CONTAMINATION_EXCLUDE)
+    if (nrow(de_dir) < n_before)
+      cat("    [INFO] ", n_before - nrow(de_dir),
+          " contamination gene(s) not labelled (still in the DE table)\n", sep = "")
+  }
   
   ## Merge DE with ORA counts
   merged <- dplyr::left_join(de_dir, ora_counts_dir, by = "gene_name")
@@ -929,7 +940,10 @@ if (!is.null(vst_data)) {
       ## Get top DEGs by significance
       thresholds <- get_tissue_thresholds(contrast)
       top_degs <- tt %>%
-        dplyr::filter(padj < thresholds$fdr_cut, abs(logFC) >= thresholds$logFC_cut) %>%
+        dplyr::filter(padj < thresholds$fdr_cut, abs(logFC) >= thresholds$logFC_cut)
+      if (exists("CONTAMINATION_EXCLUDE") && length(CONTAMINATION_EXCLUDE))
+        top_degs <- top_degs %>% dplyr::filter(!gene_name %in% CONTAMINATION_EXCLUDE)
+      top_degs <- top_degs %>%
         dplyr::arrange(padj) %>%
         dplyr::slice_head(n = 100)
       

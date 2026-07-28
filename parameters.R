@@ -106,8 +106,14 @@ MARKER_PANELS <- list(
   ## what it turns on, then the feedback that should shut it off, then the
   ## downstream effectors. Reading top to bottom is reading the mechanism, so
   ## a break in the chain (TF up, effectors down) is visible as a break.
-  "Hypoxia HIF axis" = list(
-    subtitle = "Mechanistic ordering: master TF -> uptake -> glycolysis -> feedback -> effectors",
+  ## NOT called a "hypoxia axis". The data does not show one: Hif1a mRNA rises
+  ## in BOTH depots while its two canonical effectors, Vegfa and Bnip3, fall in
+  ## both -- and glycolysis goes opposite ways (down in iWAT, up in gWAT). A
+  ## title asserting an axis would claim a coherence the figure disproves. The
+  ## rows are still ordered as the cascade, because a break in the chain is
+  ## exactly what there is to see.
+  "HIF1a and its targets" = list(
+    subtitle = "Ordered as the cascade: master TF -> uptake -> glycolysis -> feedback -> effectors",
     groups = list(
       "HIF master TF"            = c("Hif1a"),
       "Glucose uptake"           = c("Slc2a1"),
@@ -155,6 +161,31 @@ COMBINED_PANELS <- list(
   "Adipogenic program vs effectors" = c("Adipogenic program", "Metabolic effectors")
 )
 
+## ============================================================
+## CONTAMINATION EXCLUSIONS  -- kept in the tables, kept off the figures
+## ============================================================
+## Used by: part4_visualization.R (volcano labels, top-DEG heatmaps)
+##
+## Part 1b found sperm/testis transcripts in eight gWAT MALE samples -- normal
+## epididymal carry-over when dissecting gonadal fat. It is NOT confounded with
+## genotype (p = 0.82 pooled; 0.41 iWAT, 0.57 gWAT), so it does not bias the
+## DE results. But these genes are near-zero in most libraries and huge in a
+## few, which is why all six of Part 1b's "unstable estimate" flags (lfcSE > 2)
+## are sperm genes. They then take the largest |log2FC| slots on the iWAT
+## volcano and the top-DEG heatmap, displacing real biology.
+##
+## They are NOT removed from the DE tables. Deleting a real measurement to
+## make a figure look better is not defensible, and the DEG counts, ORA and
+## GSEA inputs all stay exactly as computed. This list only stops them being
+## LABELLED or picked for a heatmap, and the exclusion is stated in the log.
+##
+## Set to character(0) to disable.
+CONTAMINATION_EXCLUDE <- c(
+  ## sperm / testis, from epididymal carry-over in gWAT males
+  "Prm1", "Prm2", "Tnp1", "Tnp2", "Smcp", "Oaz3", "Odf1", "Akap4",
+  "Spata19", "Izumo1", "Gm35439"
+)
+
 ## ---- WHICH PANEL FIGURES TO WRITE ---------------------------------------
 ## Four figure families can be produced from the same panels, and emitting
 ## every family for every panel gave 26 files -- more than anyone will look
@@ -175,7 +206,7 @@ COMBINED_PANELS <- list(
 PANEL_FIGURES <- list(
   single   = FALSE,
   depots   = TRUE,
-  cross    = c("Hypoxia HIF axis"),
+  cross    = c("HIF1a and its targets"),
   combined = TRUE
 )
 
