@@ -164,6 +164,22 @@ if (exists("KAT8_RUN_DIR", envir = globalenv())) {
   for (d in c("tables", "plots", "logs"))
     dir.create(file.path(outdir, d), recursive = TRUE, showWarnings = FALSE)
   cat("[INFO] Shared run folder (from run_all.R): ", outdir, "\n", sep = "")
+
+  ## init_run() already created its own savepoints/RUN_<tag> folder above,
+  ## before it could know a shared folder was in use. Left behind, those empty
+  ## folders accumulate AND carry later timestamps than the real run -- which
+  ## is how resume once selected one, found no completion markers, and re-ran
+  ## the entire pipeline. Remove it, but only when nothing was written into
+  ## it, so a real run folder can never be deleted by this.
+  .orphan <- run_ctx$outdir
+  if (!identical(normalizePath(.orphan, mustWork = FALSE),
+                 normalizePath(outdir,  mustWork = FALSE)) &&
+      dir.exists(.orphan) &&
+      length(list.files(.orphan, recursive = TRUE, all.files = TRUE,
+                        no.. = TRUE)) == 0) {
+    unlink(.orphan, recursive = TRUE)
+    cat("[INFO] removed the empty init_run() folder: ", basename(.orphan), "\n", sep = "")
+  }
 }
 cat("Run directory:", normalizePath(outdir, mustWork = FALSE), "\n")
 

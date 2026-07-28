@@ -190,6 +190,7 @@ verdict <- verdict_for(CELL_KEY)
 ## anyone's judgement about which genes count. If they disagree, that has to
 ## be known BEFORE the result is presented, not after a reviewer finds it.
 cat("\n---- Sensitivity: GO:0006119 instead of the curated list ----\n")
+`%||%` <- function(a, b) if (is.null(a) || is.na(a)) b else a
 go_ox <- tryCatch(go_genes("GO:0006119"), error = function(e) character(0))
 go_ox <- setdiff(go_ox, grep("^mt-", go_ox, value = TRUE))
 if (length(go_ox) < 10) {
@@ -221,12 +222,26 @@ if (length(go_ox) < 10) {
             row.names = FALSE)
   if (nrow(out_go)) { cat("\n"); print(out_go, row.names = FALSE) }
   if (nrow(h2h_go)) { cat("\n"); print(h2h_go, row.names = FALSE, digits = 3) }
-  for (i in seq_len(nrow(sens)))
+  ## Grade the disagreement. SPECIFIC vs BORDERLINE is one step apart and
+  ## usually means a margin sitting on the threshold; SPECIFIC vs NOT specific
+  ## is a real contradiction. Treating both as the same alarm would train the
+  ## reader to ignore the alarm.
+  .rank <- c("SPECIFIC" = 3, "BORDERLINE" = 2, "NOT specific" = 1)
+  for (i in seq_len(nrow(sens))) {
+    cls_c <- sub(":.*$", "", sens$verdict_curated[i])
+    cls_g <- sub(":.*$", "", sens$verdict_GO0006119[i])
+    gap   <- abs((.rank[cls_c] %||% 0) - (.rank[cls_g] %||% 0))
+    st    <- if (sens$agree[i]) "OK" else if (isTRUE(gap == 1)) "INFO" else "WARN"
     log_sanity(paste0("verdict agrees across gene sets (", sens$dataset[i], ")"),
-               ifelse(sens$agree[i], "YES", "NO - gene-set dependent"),
-               ifelse(sens$agree[i], "OK", "WARN"),
-               ifelse(sens$agree[i], "",
-                      "the call depends on which OXPHOS genes are used - report both"))
+               if (sens$agree[i]) paste0("YES (", cls_c, ")")
+               else paste0("NO: curated = ", cls_c, ", GO:0006119 = ", cls_g),
+               st,
+               if (sens$agree[i]) ""
+               else if (isTRUE(gap == 1))
+                 "adjacent classes - a margin near the threshold, not a contradiction; report both margins"
+               else
+                 "OPPOSITE calls - the conclusion depends on which OXPHOS genes are used")
+  }
 }
 
 ## ---- 5) Figure ----
