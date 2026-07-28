@@ -209,14 +209,32 @@ if (!is.null(net) && all(c("source","target","mor") %in% colnames(net))) {
       up <- e$mor > 0; dn <- e$mor < 0
       m_up <- if (any(up)) mean(e$stat[up]) else NA_real_
       m_dn <- if (any(dn)) mean(e$stat[dn]) else NA_real_
-      ## Cancelling = both classes moved the same way, so the repressing
-      ## targets push activity opposite to the activating ones.
-      cancel <- is.finite(m_up) && is.finite(m_dn) && sign(m_up) == sign(m_dn) &&
-                abs(m_dn) > 0.25 * abs(m_up)
+
+      ## Cancellation must be judged on SUMMED CONTRIBUTIONS, not on means.
+      ##
+      ## ULM sums mor * stat across the regulon, so what one class of edges
+      ## does to the score depends on how many of them there are. Comparing
+      ## means ignores that and flags meaningless cases: Cebpa in iWAT has 116
+      ## activating targets averaging +0.04 against ONE repressing target at
+      ## +3.27, which by means looks like total cancellation and in the actual
+      ## sum moves almost nothing.
+      ##
+      ## So: contribution of the activating edges is sum(stat); of the
+      ## repressing edges, -sum(stat). Cancelling means those two pull in
+      ## OPPOSITE directions and the opposing pull is worth at least a quarter
+      ## of the main one -- and only when there is real signal to cancel
+      ## (mean |stat| of the activating edges >= 0.5), since nothing can be
+      ## cancelled out of a regulon that never moved.
+      c_up <- if (any(up)) sum(e$stat[up]) else 0
+      c_dn <- if (any(dn)) -sum(e$stat[dn]) else 0
+      cancel <- any(up) && any(dn) && is.finite(m_up) && abs(m_up) >= 0.5 &&
+                sign(c_dn) != sign(c_up) && abs(c_dn) >= 0.25 * abs(c_up)
       aud[[length(aud) + 1]] <- data.frame(
         dataset = nm, TF = tf, n_targets = nrow(e),
         n_activating = sum(up), n_repressing = sum(dn),
         mean_stat_activating = m_up, mean_stat_repressing = m_dn,
+        contribution_activating = c_up, contribution_repressing = c_dn,
+        pct_cancelled = ifelse(abs(c_up) > 0, 100 * abs(c_dn) / abs(c_up), NA_real_),
         signal_cancelling = cancel, stringsAsFactors = FALSE)
     }
   }
@@ -232,7 +250,8 @@ if (!is.null(net) && all(c("source","target","mor") %in% colnames(net))) {
       cat("\n  Regulons whose activating and repressing targets moved the SAME way\n",
           "  (activity score is cancelled, NOT evidence of no effect):\n", sep = "")
       print(aud[aud$signal_cancelling, c("dataset", "TF", "n_activating", "n_repressing",
-                                         "mean_stat_activating", "mean_stat_repressing")],
+                                         "contribution_activating", "contribution_repressing",
+                                         "pct_cancelled")],
             row.names = FALSE, digits = 3)
     }
   }
