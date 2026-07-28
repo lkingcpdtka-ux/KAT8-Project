@@ -82,6 +82,15 @@ flag <- function(check, value, status = "OK", action = "") {
                                             status = status, action = action,
                                             stringsAsFactors = FALSE)
   cat(sprintf("  [%-4s] %-44s %s\n", status, check, value))
+  ## The REASONING is the product of this script, not the pass/fail letter.
+  ## `action` used to be stored and then surfaced only in the end-of-run table,
+  ## and that table lists only checks that need attention -- so a verdict like
+  ## "INCONCLUSIVE: Alb is the only restricted marker above background, so
+  ## 'do several move together' cannot be asked" was computed in full and then
+  ## thrown away, precisely because the check passed. The passing checks are
+  ## where the interpretation lives. Print it wherever there is one.
+  if (nzchar(action))
+    cat(strwrap(action, width = 96, prefix = "         "), sep = "\n")
 }
 
 ## =========================================================
@@ -234,6 +243,13 @@ if (!length(qc_files)) {
     Liver        = c("Alb","Apob","Tf","Ahsg","F2","Fga","Fgb","Apoa2"),
     LymphNode    = c("Cd19","Ms4a1","Cd3e"))
 
+  ## ONE background threshold for the whole section. A marker sitting at the
+  ## noise floor cannot testify either way, and both the panel-score test and
+  ## the per-gene verdict need to agree on where that floor is -- two copies of
+  ## "7.5" in two places is how the z > 3 / z > 5 contradiction happened.
+  ## Most of the liver panel reads VST ~6 in fat, which is background.
+  BACKGROUND_VST <- 7.5
+
   score_rows <- list()
   per_gene   <- list()
   panel_has_outlier <- list()
@@ -306,6 +322,75 @@ if (!length(qc_files)) {
              else if (hit)
                "shifts with genotype but NO sample above z > 3 -> reads as regulation of these genes in fat, not carry-over"
              else "")
+
+        ## WHICH GENE IS CARRYING IT?
+        ##
+        ## The test above is CIRCULAR for the question actually being asked.
+        ## `sc` is a plain mean of raw VST across the panel, so it is dominated
+        ## by whichever members are expressed highest -- for Liver in iWAT that
+        ## is Alb (8.2) and Cyp2e1 (9.8), while the other nine sit at ~6 and
+        ## contribute noise. Asking "is the liver score confounded with
+        ## genotype?" when Alb is the gene under suspicion returns "yes,
+        ## p = 0.002", which is just "Alb went down in the knockdown" restated.
+        ## It is not independent evidence that liver tissue is in the tube.
+        ##
+        ## So ask the question that can actually separate the two. Drop the
+        ## single strongest mover and re-test. Carry-over transfers a whole
+        ## tissue, so the association survives losing any one member; the
+        ## regulation of one gene does not survive losing that gene.
+        if (hit) {
+          smp    <- colnames(vst)[k]
+          gt     <- factor(si$Genotype[k])
+          mu     <- rowMeans(vst_screen[g, smp, drop = FALSE])
+          g_test <- g[is.finite(mu) & mu >= BACKGROUND_VST]
+          if (length(g_test) < 2) {
+            flag(sprintf("%s in %s: is it one gene?", nm, dp),
+                 sprintf("%d of %d above VST %.1f", length(g_test), length(g), BACKGROUND_VST),
+                 "INFO",
+                 sprintf(paste0("the panel mean here rests on %s -- every other member is at ",
+                                "background, so the p-value above is that one gene restated ",
+                                "rather than independent evidence of a whole tissue"),
+                         if (length(g_test)) paste(g_test, collapse = ", ") else "nothing"))
+          } else {
+            d_gene <- vapply(g_test, function(gg) {
+              m <- tapply(vst_screen[gg, smp], gt, mean); m[[2]] - m[[1]]
+            }, numeric(1))
+            drop_g <- g_test[which.max(abs(d_gene))]
+            keep   <- setdiff(g_test, drop_g)
+            p2     <- wtest(colMeans(vst_screen[keep, smp, drop = FALSE]), gt)
+            surv   <- !is.na(p2) && p2 < 0.05
+            ## Surviving is necessary but NOT sufficient. What survives has to
+            ## be tissue-RESTRICTED to mean anything: the shared members are
+            ## expressed in fat by definition, so a panel that keeps tracking
+            ## genotype only through Cyp2e1 or Apoa1 is still describing
+            ## adipose biology. Without this split the test would report
+            ## "keep carry-over on the table" for Liver/iWAT on the strength of
+            ## Cyp2e1 -- the highest-expressed gene of the panel in these pads,
+            ## and the one already excluded from EXCLUSIVE for that reason.
+            keep_restricted <- intersect(keep, EXCLUSIVE[[nm]])
+            real <- surv && length(keep_restricted) > 0
+            flag(sprintf("%s in %s: survives dropping %s?", nm, dp, drop_g),
+                 sprintf("p = %.3g -> %.3g", pvd, p2),
+                 if (real) "WARN" else "OK",
+                 if (real)
+                   sprintf(paste0("the association is NOT one gene: the tissue-restricted ",
+                                  "member(s) %s still track genotype after %s is removed. ",
+                                  "That is what a whole tissue looks like -- treat carry-over ",
+                                  "as live for this panel."),
+                           paste(keep_restricted, collapse = ", "), drop_g)
+                 else if (surv)
+                   sprintf(paste0("survives dropping %s, but only through %s -- shared ",
+                                  "member(s) that fat expresses in its own right. Nothing ",
+                                  "tissue-restricted is left carrying the signal, so this is ",
+                                  "not carry-over evidence."),
+                           drop_g, paste(keep, collapse = ", "))
+                 else
+                   sprintf(paste0("the whole association is %s. Remove that one gene and the ",
+                                  "panel stops tracking genotype (p = %.3g). Carry-over cannot ",
+                                  "show up in a single marker, so this is regulation of %s in ",
+                                  "fat, not foreign tissue in the tube."), drop_g, p2, drop_g))
+          }
+        }
       }
 
       ## And the benign explanation, reported so the pooled result can be read
@@ -360,7 +445,7 @@ if (!length(qc_files)) {
         ## Most of the liver panel reads VST ~6 in fat, which is background;
         ## counting those as "did not move" is as wrong as counting them as
         ## evidence, so they are excluded from the tally and reported apart.
-        floor_vst <- 7.5
+        floor_vst <- BACKGROUND_VST
         ex  <- q[q$exclusive & is.finite(q$mean_vst) & q$mean_vst >= floor_vst, , drop = FALSE]
         n_quiet <- sum(q$exclusive & (!is.finite(q$mean_vst) | q$mean_vst < floor_vst))
         if (!nrow(ex)) {
