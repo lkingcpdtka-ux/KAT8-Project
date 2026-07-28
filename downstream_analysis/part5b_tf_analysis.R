@@ -240,6 +240,38 @@ if (!is.null(net) && all(c("source","target","mor") %in% colnames(net))) {
   }
   if (length(aud)) {
     aud <- dplyr::bind_rows(aud)
+
+    ## THE OTHER WAY A SCORE MISLEADS: too few targets.
+    ##
+    ## ULM's statistic grows with regulon size, so a TF whose targets each move
+    ## hard can still miss significance simply because it has fewer of them.
+    ## In iWAT, Pparg's targets move -1.54 each -- a LARGER per-target effect
+    ## than Nfkb1 (+1.53) or Stat1 (+1.44) -- yet Pparg scores -1.81 (ns) while
+    ## those score +3.71 and +5.13. The difference is 29 targets versus 124 and
+    ## 187, not weaker biology.
+    ##
+    ## Pairing the score with the per-target effect makes "did not move" and
+    ## "moved hard, too few targets to prove it" distinguishable. The second
+    ## is not a negative result: go and read the target genes.
+    if (exists("all_act") && !is.null(all_act)) {
+      aud <- aud %>%
+        dplyr::left_join(all_act %>% dplyr::select(dataset = contrast, TF,
+                                                   activity, FDR_activity = FDR),
+                         by = c("dataset", "TF"))
+      aud$strong_effect_not_significant <-
+        abs(aud$mean_stat_activating) >= 1 &
+        !is.na(aud$FDR_activity) & aud$FDR_activity >= FDR_CUT &
+        !aud$signal_cancelling
+      nu <- sum(aud$strong_effect_not_significant, na.rm = TRUE)
+      log_sanity("regulon audit: strong per-target effect but NOT significant", nu,
+                 ifelse(nu > 0, "INFO", "OK"),
+                 "too few annotated targets to reach significance - not evidence of no effect")
+      if (nu > 0)
+        print(aud[which(aud$strong_effect_not_significant),
+                  c("dataset", "TF", "n_activating", "mean_stat_activating",
+                    "activity", "FDR_activity")], row.names = FALSE, digits = 3)
+    }
+
     write.csv(aud, file.path(OUTDIR, paste0("part5b_L2_regulon_audit_", RUN_TAG, ".csv")),
               row.names = FALSE)
     nc <- sum(aud$signal_cancelling, na.rm = TRUE)
