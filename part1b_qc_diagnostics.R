@@ -314,18 +314,11 @@ if (!length(qc_files)) {
         pvd <- wtest(sc[k], si$Genotype[k])
         if (is.na(pvd)) next
         hit <- pvd < 0.05
-        flag(sprintf("%s: marker score vs GENOTYPE within %s", nm, dp),
-             sprintf("p = %.3g", pvd),
-             if (hit && any_outlier) "WARN" else if (hit) "INFO" else "OK",
-             if (hit && any_outlier)
-               sprintf("CONFOUNDED with genotype AND %d sample(s) at z > 3 -> can create false DEGs", n_warm)
-             else if (hit)
-               "shifts with genotype but NO sample above z > 3 -> reads as regulation of these genes in fat, not carry-over"
-             else "")
 
-        ## WHICH GENE IS CARRYING IT?
+        ## WHICH GENE IS CARRYING IT?  Run BEFORE the verdict is printed,
+        ## because the verdict depends on the answer.
         ##
-        ## The test above is CIRCULAR for the question actually being asked.
+        ## `pvd` on its own is CIRCULAR for the question actually being asked.
         ## `sc` is a plain mean of raw VST across the panel, so it is dominated
         ## by whichever members are expressed highest -- for Liver in iWAT that
         ## is Alb (8.2) and Cyp2e1 (9.8), while the other nine sit at ~6 and
@@ -338,19 +331,21 @@ if (!length(qc_files)) {
         ## single strongest mover and re-test. Carry-over transfers a whole
         ## tissue, so the association survives losing any one member; the
         ## regulation of one gene does not survive losing that gene.
+        loo <- NULL
         if (hit) {
           smp    <- colnames(vst)[k]
           gt     <- factor(si$Genotype[k])
           mu     <- rowMeans(vst_screen[g, smp, drop = FALSE])
           g_test <- g[is.finite(mu) & mu >= BACKGROUND_VST]
           if (length(g_test) < 2) {
-            flag(sprintf("%s in %s: is it one gene?", nm, dp),
-                 sprintf("%d of %d above VST %.1f", length(g_test), length(g), BACKGROUND_VST),
-                 "INFO",
-                 sprintf(paste0("the panel mean here rests on %s -- every other member is at ",
-                                "background, so the p-value above is that one gene restated ",
-                                "rather than independent evidence of a whole tissue"),
-                         if (length(g_test)) paste(g_test, collapse = ", ") else "nothing"))
+            loo <- list(
+              real  = FALSE,
+              check = sprintf("%s in %s: is it one gene?", nm, dp),
+              value = sprintf("%d of %d above VST %.1f", length(g_test), length(g), BACKGROUND_VST),
+              note  = sprintf(paste0("the panel mean here rests on %s -- every other member is ",
+                                     "at background, so the p-value above is that one gene ",
+                                     "restated rather than independent evidence of a tissue"),
+                              if (length(g_test)) paste(g_test, collapse = ", ") else "nothing"))
           } else {
             d_gene <- vapply(g_test, function(gg) {
               m <- tapply(vst_screen[gg, smp], gt, mean); m[[2]] - m[[1]]
@@ -369,28 +364,50 @@ if (!length(qc_files)) {
             ## and the one already excluded from EXCLUSIVE for that reason.
             keep_restricted <- intersect(keep, EXCLUSIVE[[nm]])
             real <- surv && length(keep_restricted) > 0
-            flag(sprintf("%s in %s: survives dropping %s?", nm, dp, drop_g),
-                 sprintf("p = %.3g -> %.3g", pvd, p2),
-                 if (real) "WARN" else "OK",
-                 if (real)
-                   sprintf(paste0("the association is NOT one gene: the tissue-restricted ",
-                                  "member(s) %s still track genotype after %s is removed. ",
-                                  "That is what a whole tissue looks like -- treat carry-over ",
-                                  "as live for this panel."),
-                           paste(keep_restricted, collapse = ", "), drop_g)
-                 else if (surv)
-                   sprintf(paste0("survives dropping %s, but only through %s -- shared ",
-                                  "member(s) that fat expresses in its own right. Nothing ",
-                                  "tissue-restricted is left carrying the signal, so this is ",
-                                  "not carry-over evidence."),
-                           drop_g, paste(keep, collapse = ", "))
-                 else
-                   sprintf(paste0("the whole association is %s. Remove that one gene and the ",
-                                  "panel stops tracking genotype (p = %.3g). Carry-over cannot ",
-                                  "show up in a single marker, so this is regulation of %s in ",
-                                  "fat, not foreign tissue in the tube."), drop_g, p2, drop_g))
+            loo <- list(
+              real  = real,
+              check = sprintf("%s in %s: survives dropping %s?", nm, dp, drop_g),
+              value = sprintf("p = %.3g -> %.3g", pvd, p2),
+              note  = if (real)
+                sprintf(paste0("the association is NOT one gene: the tissue-restricted ",
+                               "member(s) %s still track genotype after %s is removed. That ",
+                               "is what a whole tissue looks like -- treat carry-over as live."),
+                        paste(keep_restricted, collapse = ", "), drop_g)
+              else if (surv)
+                sprintf(paste0("survives dropping %s, but only through %s -- shared member(s) ",
+                               "that fat expresses in its own right. Nothing tissue-restricted ",
+                               "is left carrying the signal, so this is not carry-over evidence."),
+                        drop_g, paste(keep, collapse = ", "))
+              else
+                sprintf(paste0("the whole association is %s. Remove that one gene and the panel ",
+                               "stops tracking genotype (p = %.3g). Carry-over cannot show up in ",
+                               "a single marker, so this is regulation of %s in fat, not foreign ",
+                               "tissue in the tube."), drop_g, p2, drop_g))
           }
         }
+
+        ## The verdict needs BOTH signals, so it is emitted only now that the
+        ## leave-one-out has run. A panel that tracks genotype through a single
+        ## gene is not a contaminated panel however many outlier libraries the
+        ## run has, and saying "CONFOUNDED -> can create false DEGs" here while
+        ## the next line says "not carry-over" is the contradiction this screen
+        ## keeps producing. One statement, built from both tests.
+        danger <- hit && any_outlier && isTRUE(loo$real)
+        flag(sprintf("%s: marker score vs GENOTYPE within %s", nm, dp),
+             sprintf("p = %.3g", pvd),
+             if (danger) "WARN" else if (hit) "INFO" else "OK",
+             if (danger)
+               sprintf(paste0("CONFOUNDED with genotype, %d sample(s) at z > 3, and more than ",
+                              "one restricted marker carries it -> can create false DEGs"), n_warm)
+             else if (hit && any_outlier)
+               sprintf(paste0("tracks genotype with %d sample(s) at z > 3, but the association ",
+                              "does not hold up as a tissue signal (next line) -> reads as ",
+                              "regulation of these genes in fat"), n_warm)
+             else if (hit)
+               "shifts with genotype but NO sample above z > 3 -> reads as regulation of these genes in fat, not carry-over"
+             else "")
+        if (!is.null(loo))
+          flag(loo$check, loo$value, if (isTRUE(loo$real)) "WARN" else "OK", loo$note)
       }
 
       ## And the benign explanation, reported so the pooled result can be read
