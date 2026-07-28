@@ -227,11 +227,16 @@ if (!length(qc_files)) {
     Sperm_testis = c("Prm1","Prm2","Tnp1","Tnp2","Smcp","Oaz3","Odf1","Akap4","Spata19","Izumo1"),
     Blood        = c("Hba-a1","Hba-a2","Hbb-bs","Hbb-bt","Alas2"),
     Muscle       = c("Acta1","Myh1","Myh2","Ckm","Tnnt3","Mylpf"),
-    Liver        = c("Alb","Apob","Tf","Ahsg","F2","Cyp2e1","Fga","Fgb","Apoa2"),
+    ## Cyp2e1 is deliberately NOT here. It sits at VST ~10.2 in these fat pads,
+    ## the highest of the whole panel and above Alb -- it is a genuine adipose
+    ## gene, not a hepatocyte-restricted one, and treating it as restricted
+    ## produced a false CARRY-OVER call.
+    Liver        = c("Alb","Apob","Tf","Ahsg","F2","Fga","Fgb","Apoa2"),
     LymphNode    = c("Cd19","Ms4a1","Cd3e"))
 
   score_rows <- list()
   per_gene   <- list()
+  panel_has_outlier <- list()
   safely("D. contamination screen", {
   for (nm in names(PANELS)) {
     g <- intersect(PANELS[[nm]], rownames(vst_screen))
@@ -243,6 +248,7 @@ if (!length(qc_files)) {
                                    Genotype = si$Genotype, Depot = si$Depot, Sex = si$Sex,
                                    stringsAsFactors = FALSE)
     hot <- names(sc)[z > 5]
+    panel_has_outlier[[nm]] <- length(hot) > 0
     flag(paste0(nm, ": samples with robust z > 5"),
          ifelse(length(hot), paste(hot, collapse = ", "), "none"),
          ifelse(length(hot), "WARN", "OK"),
@@ -319,6 +325,7 @@ if (!length(qc_files)) {
             m  <- tapply(x[k], gt, mean)
             data.frame(panel = nm, gene = gg, Depot = dp,
                        exclusive = gg %in% EXCLUSIVE[[nm]],
+                       mean_vst = mean(x[k]),
                        mean_ctl = m[[1]], mean_kd = m[[2]],
                        delta_vst = m[[2]] - m[[1]],
                        p_genotype = wtest(x[k], si$Genotype[k]),
@@ -343,21 +350,47 @@ if (!length(qc_files)) {
     for (nm in unique(pg$panel)) {
       for (dp in unique(pg$Depot[pg$panel == nm])) {
         q  <- pg[pg$panel == nm & pg$Depot == dp, , drop = FALSE]
-        ex <- q[q$exclusive, , drop = FALSE]
-        if (!nrow(ex)) next
-        n_ex_sig <- sum(ex$p_genotype < 0.05, na.rm = TRUE)
-        sh <- q[!q$exclusive, , drop = FALSE]
-        verdict <- if (n_ex_sig >= 2)
-          "CARRY-OVER: several tissue-restricted markers move together"
-        else if (n_ex_sig == 1 && nrow(ex) > 2)
-          paste0("NOT carry-over: only 1 of ", nrow(ex),
-                 " tissue-restricted markers moves - a single gene, not a tissue")
+        ## A marker sitting at the noise floor cannot testify either way.
+        ## Most of the liver panel reads VST ~6 in fat, which is background;
+        ## counting those as "did not move" is as wrong as counting them as
+        ## evidence, so they are excluded from the tally and reported apart.
+        floor_vst <- 7.5
+        ex  <- q[q$exclusive & is.finite(q$mean_vst) & q$mean_vst >= floor_vst, , drop = FALSE]
+        n_quiet <- sum(q$exclusive & (!is.finite(q$mean_vst) | q$mean_vst < floor_vst))
+        if (!nrow(ex)) {
+          flag(sprintf("%s in %s: restricted markers testable", nm, dp),
+               sprintf("0 / %d above VST %.1f", n_quiet, floor_vst), "OK",
+               "every tissue-restricted marker is at background - no carry-over detectable")
+          next
+        }
+        sig <- ex[!is.na(ex$p_genotype) & ex$p_genotype < 0.05, , drop = FALSE]
+
+        ## THREE conditions, because any one alone gives false positives:
+        ##  (a) at least two restricted markers move
+        ##  (b) they move in the SAME direction -- carry-over adds a whole
+        ##      tissue, it cannot raise one marker and lower another
+        ##  (c) some sample is actually contaminated. Carry-over is ADDITIVE and
+        ##      sporadic: it shows up as outlier libraries. A panel that shifts
+        ##      smoothly with genotype and has no outlier sample is regulation.
+        same_dir <- nrow(sig) >= 2 && length(unique(sign(sig$delta_vst))) == 1
+        hot_any  <- isTRUE(panel_has_outlier[[nm]])
+        carry    <- nrow(sig) >= 2 && same_dir && hot_any
+        verdict <- if (carry)
+          "CARRY-OVER: restricted markers move together, in one direction, with outlier samples present"
+        else if (nrow(sig) >= 2 && !same_dir)
+          paste0("NOT carry-over: markers move in OPPOSITE directions (",
+                 paste(sig$gene, sprintf("%+.2f", sig$delta_vst), collapse = ", "),
+                 ") - contamination cannot do that")
+        else if (nrow(sig) >= 2 && !hot_any)
+          "NOT carry-over: markers move but NO sample is an outlier - carry-over is additive and sporadic, this is regulation"
+        else if (nrow(sig) == 1)
+          paste0("NOT carry-over: only ", sig$gene[1], " moves - a single gene, not a tissue")
         else
-          "no tissue-restricted marker moves - regulation, not contamination"
+          "no restricted marker moves - regulation, not contamination"
         flag(sprintf("%s in %s: restricted markers moving", nm, dp),
-             sprintf("%d / %d (shared: %d / %d)", n_ex_sig, nrow(ex),
-                     sum(sh$p_genotype < 0.05, na.rm = TRUE), nrow(sh)),
-             ifelse(n_ex_sig >= 2, "WARN", "OK"), verdict)
+             sprintf("%d / %d testable (%d at background, excluded)",
+                     nrow(sig), nrow(ex), n_quiet),
+             ifelse(carry, "WARN", "OK"), verdict)
       }
     }
   }
@@ -472,7 +505,7 @@ if (!length(qc_files)) {
   ## obvious without a manual lookup.
   if (length(low)) {
     li <- si[match(low, si$Sample), , drop = FALSE]
-    grp <- paste(li$Depot, li$Genotype, sep = "_")
+    grp <- paste(li$Depot, li$Genotype, li$Sex, sep = "_")
     tab <- table(grp)
     all_one <- length(tab) == 1
     flag("samples poorly correlated with the rest (z < -5)",
