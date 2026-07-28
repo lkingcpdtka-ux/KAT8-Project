@@ -212,6 +212,19 @@ CONTAMINATION_EXCLUDE <- c(
   "Spata19", "Izumo1", "Gm35439"
 )
 
+## The list above is THIS dataset's answer, written by hand. The STATISTIC is
+## the general one, and it is what Part 1b actually flags: a fold change
+## carried by a handful of libraries has a large standard error, whatever
+## tissue those reads came from. Filtering on lfcSE as well as on the name list
+## means the next run catches its own contaminant without anyone remembering to
+## edit a vector -- every one of the six genes Part 1b flagged in iWAT
+## (lfcSE > 2) is caught by this rule on its own.
+##
+## Same contract as the list: labels and heatmap selection only. DEG counts,
+## ORA input and GSEA ranking are untouched, so this cannot move a result.
+## Set to Inf to disable.
+MAX_LFCSE_FOR_PLOTS <- 2
+
 ## ---- WHICH PANEL FIGURES TO WRITE ---------------------------------------
 ## Four figure families can be produced from the same panels, and emitting
 ## every family for every panel gave 26 files -- more than anyone will look

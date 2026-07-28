@@ -483,6 +483,21 @@ select_genes_one_direction <- function(de_dir, ora_counts_dir, top_n,
       cat("    [INFO] ", n_before - nrow(de_dir),
           " contamination gene(s) not labelled (still in the DE table)\n", sep = "")
   }
+
+  ## Same rule, driven by the statistic rather than by a name. A gene whose
+  ## effect rests on a few libraries has a large standard error, and it should
+  ## not take a label slot on the strength of a fold change nobody can stand
+  ## behind -- Part 1b flags exactly these as "unstable estimate".
+  if (exists("MAX_LFCSE_FOR_PLOTS") && is.finite(MAX_LFCSE_FOR_PLOTS) &&
+      "lfcSE" %in% names(de_dir)) {
+    n_before <- nrow(de_dir)
+    dropped  <- de_dir$gene_name[is.finite(de_dir$lfcSE) & de_dir$lfcSE > MAX_LFCSE_FOR_PLOTS]
+    de_dir   <- de_dir %>% dplyr::filter(!is.finite(lfcSE) | lfcSE <= MAX_LFCSE_FOR_PLOTS)
+    if (nrow(de_dir) < n_before)
+      cat("    [INFO] ", n_before - nrow(de_dir), " gene(s) not labelled, lfcSE > ",
+          MAX_LFCSE_FOR_PLOTS, " (", paste(utils::head(dropped, 8), collapse = ", "),
+          if (length(dropped) > 8) ", ..." else "", ")\n", sep = "")
+  }
   
   ## Merge DE with ORA counts
   merged <- dplyr::left_join(de_dir, ora_counts_dir, by = "gene_name")
@@ -943,6 +958,11 @@ if (!is.null(vst_data)) {
         dplyr::filter(padj < thresholds$fdr_cut, abs(logFC) >= thresholds$logFC_cut)
       if (exists("CONTAMINATION_EXCLUDE") && length(CONTAMINATION_EXCLUDE))
         top_degs <- top_degs %>% dplyr::filter(!gene_name %in% CONTAMINATION_EXCLUDE)
+      ## and the statistic, so an unstable gene cannot take a heatmap row
+      if (exists("MAX_LFCSE_FOR_PLOTS") && is.finite(MAX_LFCSE_FOR_PLOTS) &&
+          "lfcSE" %in% names(top_degs))
+        top_degs <- top_degs %>%
+          dplyr::filter(!is.finite(lfcSE) | lfcSE <= MAX_LFCSE_FOR_PLOTS)
       top_degs <- top_degs %>%
         dplyr::arrange(padj) %>%
         dplyr::slice_head(n = 100)
