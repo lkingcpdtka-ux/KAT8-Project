@@ -155,6 +155,19 @@ COMBINED_PANELS <- list(
   "Adipogenic program vs effectors" = c("Adipogenic program", "Metabolic effectors")
 )
 
+## ---- SAME PANEL, BOTH DEPOTS, SIDE BY SIDE ------------------------------
+## iWAT on the left, gWAT on the right, each on ITS OWN axis.
+##
+## This is the complement of the CrossDepot figure below, not a duplicate of
+## it. CrossDepot puts both depots on one shared axis, which is the honest way
+## to ask "is the difference between depots bigger than the uncertainty" -- but
+## a shared axis squashes gWAT, whose effects sit under |log2FC| 1, against an
+## iWAT scale that reaches 2. Side by side, each depot is legible in its own
+## right and the comparison is of PATTERN: which genes move, in which
+## direction, in what order. Use both; they answer different questions.
+## Set to NULL to switch off.
+COMBINE_DEPOTS_PANELS <- names(MARKER_PANELS)
+
 ## ---- CROSS-DEPOT (iWAT vs gWAT) FIGURES ---------------------------------
 ## Panels to also draw with both depots on one row per gene. Set to
 ## names(MARKER_PANELS) for all of them, or NULL to switch it off.

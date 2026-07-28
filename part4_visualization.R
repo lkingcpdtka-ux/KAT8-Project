@@ -1642,6 +1642,27 @@ if (generate_marker_forest_plots) {
       }
     }
 
+    ## ---- same panel, both depots, side by side --------------------------
+    ## Depot order is FIXED as iWAT then gWAT. Reading it off the file list
+    ## would put gWAT first (alphabetical), which is not the order anyone
+    ## reads these in.
+    want_dd <- if (exists("COMBINE_DEPOTS_PANELS")) COMBINE_DEPOTS_PANELS else names(panels)
+    for (pname in want_dd) {
+      keys <- paste(c("iWAT", "gWAT"), pname, sep = "||")
+      keys <- keys[keys %in% names(built)]
+      if (length(keys) < 2) next
+      pl <- lapply(keys, function(k) built[[k]]$plot)
+      nn <- max(vapply(keys, function(k) built[[k]]$n, numeric(1)))
+      safe <- gsub("[^A-Za-z0-9]+", "_", pname)
+      df_file <- paste0("CombinedDepots_", safe, "_iWAT_vs_gWAT_", run_tag, ".png")
+      ok <- .save_side_by_side(
+        pl, file.path(panels_dir, df_file),
+        title = paste0(pname, ": iWAT vs gWAT"),
+        subtitle = "same panel, each depot on its own axis -- compare the PATTERN (see CrossDepot_* for a shared axis)",
+        width = 15, height = max(5.5, 0.40 * nn + 2.6))
+      if (ok) cat("[OK] ", df_file, "\n", sep = "")
+    }
+
     ## ---- cross-depot: the same gene in both depots, on one row ----------
     ## Two figures side by side make that comparison from memory. One row makes
     ## it a direct read: overlapping intervals mean the depots are NOT resolved
