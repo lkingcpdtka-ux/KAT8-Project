@@ -201,6 +201,27 @@ run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
   names(vers) <- vfiles
   newest <- if (all(is.na(vers))) NA_character_ else max(vers, na.rm = TRUE)
   odd    <- names(vers)[is.na(vers) | vers != newest]
+  ## ---- content fingerprint ----------------------------------------------
+  ## The date stamp cannot tell two edits made on the SAME DAY apart, and that
+  ## has already caused a stale file to be run while pre-flight reported
+  ## everything in order. A hash of the actual bytes has no such blind spot.
+  ## Compare the printed fingerprint with the one you were given: if they
+  ## differ, at least one script is not the version you think it is, and
+  ## pipeline_hashes() names which.
+  .hashes <- tryCatch(unname(tools::md5sum(file.path(project_root, vfiles))),
+                      error = function(e) rep(NA_character_, length(vfiles)))
+  .hashes <- substr(.hashes, 1, 8)
+  fingerprint <- if (anyNA(.hashes)) "unavailable" else
+    substr(unname(tools::md5sum({
+      .tf <- tempfile(); writeLines(paste(vfiles, .hashes), .tf); .tf })), 1, 8)
+  cat("[INFO] pipeline fingerprint: ", fingerprint,
+      "    (run pipeline_hashes() for per-file hashes)\n", sep = "")
+  assign("pipeline_hashes",
+         local({ .v <- vfiles; .s <- unname(vers); .h <- .hashes
+                 function() data.frame(script = .v, version = .s, md5_8 = .h,
+                                       row.names = NULL) }),
+         envir = globalenv())
+
   if (length(odd) == 0) {
     cat("[OK] all scripts are version ", newest, "\n", sep = "")
   } else {

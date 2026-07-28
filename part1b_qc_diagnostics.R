@@ -286,7 +286,13 @@ if (!length(qc_files)) {
       ## (Apoa1, Ttr and Serpina1a are all expressed in fat). So the WARN
       ## requires BOTH signals; without an outlier sample it is reported as a
       ## biological observation instead of a QC failure.
-      any_outlier <- any(z > 3)
+      ## ONE outlier threshold, stated. This used z > 3 while the panel-level
+      ## flag above reported z > 5, so the same panel could print "samples with
+      ## robust z > 5: none" and then "outlier samples present" three lines
+      ## later. z > 3 is the right sensitivity for "is anything carrying extra
+      ## signal", but the count has to be shown rather than asserted.
+      n_warm <- sum(z > 3)
+      any_outlier <- n_warm > 0
       for (dp in unique(si$Depot)) {
         k   <- si$Depot == dp
         pvd <- wtest(sc[k], si$Genotype[k])
@@ -296,9 +302,9 @@ if (!length(qc_files)) {
              sprintf("p = %.3g", pvd),
              if (hit && any_outlier) "WARN" else if (hit) "INFO" else "OK",
              if (hit && any_outlier)
-               "CONFOUNDED with genotype AND outlier samples present -> can create false DEGs"
+               sprintf("CONFOUNDED with genotype AND %d sample(s) at z > 3 -> can create false DEGs", n_warm)
              else if (hit)
-               "shifts with genotype but NO outlier sample -> reads as regulation of these genes in fat, not carry-over"
+               "shifts with genotype but NO sample above z > 3 -> reads as regulation of these genes in fat, not carry-over"
              else "")
       }
 
@@ -383,8 +389,14 @@ if (!length(qc_files)) {
                  ") - contamination cannot do that")
         else if (nrow(sig) >= 2 && !hot_any)
           "NOT carry-over: markers move but NO sample is an outlier - carry-over is additive and sporadic, this is regulation"
+        else if (nrow(sig) == 1 && nrow(ex) == 1)
+          paste0("INCONCLUSIVE by this test: ", sig$gene[1],
+                 " is the ONLY restricted marker expressed above background, so",
+                 " 'do several move together' cannot be asked. Judge on the",
+                 " outlier and direction evidence instead.")
         else if (nrow(sig) == 1)
-          paste0("NOT carry-over: only ", sig$gene[1], " moves - a single gene, not a tissue")
+          paste0("NOT carry-over: only ", sig$gene[1], " moves of ", nrow(ex),
+                 " testable - a single gene, not a tissue")
         else
           "no restricted marker moves - regulation, not contamination"
         flag(sprintf("%s in %s: restricted markers moving", nm, dp),
