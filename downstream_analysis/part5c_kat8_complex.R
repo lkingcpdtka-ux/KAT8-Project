@@ -2,7 +2,7 @@
 
 ## -------------------------------------------------------------------------
 ## SCRIPT VERSION: 2026-07-27
-##   NSL program; head-to-head specificity test
+##   NSL program; head-to-head specificity + gene-set sensitivity
 ##   All pipeline scripts should carry the SAME version date. run_all.R prints
 ##   them at pre-flight -- a date that differs from the rest means that file is
 ##   a stale copy and should be re-downloaded before you trust its output.
@@ -139,9 +139,11 @@ if (nrow(h2h)) {
 }
 
 ## ---- 4) Data-driven verdict, reported for every dataset ----
-verdict_for <- function(nm) {
-  nuc <- out %>% dplyr::filter(dataset == nm, grepl("^Nuclear", program))
-  hh  <- h2h %>% dplyr::filter(dataset == nm)
+## Takes the tables as arguments so the identical rule can be re-applied to a
+## different gene set in the sensitivity check below.
+verdict_for <- function(nm, out_tbl = out, h2h_tbl = h2h) {
+  nuc <- out_tbl %>% dplyr::filter(dataset == nm, grepl("^Nuclear", program))
+  hh  <- h2h_tbl %>% dplyr::filter(dataset == nm)
   if (nrow(nuc) != 1) return("inconclusive (nuclear-OXPHOS set not measurable here)")
   if (!isTRUE(nuc$p_vs_background < FDR_CUT))
     return("no nuclear-OXPHOS shift detected")
@@ -162,6 +164,58 @@ verdict_for <- function(nm) {
 for (nm in c(CELL_KEY, tissues))
   log_sanity(paste0("NSL specificity verdict (", nm, ")"), verdict_for(nm), "INFO")
 verdict <- verdict_for(CELL_KEY)
+
+## ---- 4b) SENSITIVITY: does the verdict survive a gene set nobody chose? ----
+##
+## The 50-gene nuclear-OXPHOS list above was curated by hand from the
+## KANSL/NSL literature. That is the one part of this test a reader can simply
+## disagree with: change the list, change the numbers. So the whole test is
+## repeated against a set defined by a database instead -- GO:0006119
+## (oxidative phosphorylation), minus the mitochondrially encoded genes, since
+## those serve as a control here and cannot also be in the target set.
+##
+## If both gene sets give the same verdict, the conclusion does not rest on
+## anyone's judgement about which genes count. If they disagree, that has to
+## be known BEFORE the result is presented, not after a reviewer finds it.
+cat("\n---- Sensitivity: GO:0006119 instead of the curated list ----\n")
+go_ox <- tryCatch(go_genes("GO:0006119"), error = function(e) character(0))
+go_ox <- setdiff(go_ox, grep("^mt-", go_ox, value = TRUE))
+if (length(go_ox) < 10) {
+  log_sanity("sensitivity gene set (GO:0006119)", "unavailable - skipped", "WARN")
+} else {
+  out_go <- dplyr::bind_rows(lapply(c(CELL_KEY, tissues), function(nm)
+    program_test(de[[nm]], go_ox, "Nuclear-encoded OXPHOS (GO:0006119)", nm)))
+  h2h_go <- dplyr::bind_rows(lapply(c(CELL_KEY, tissues), function(nm) {
+    d <- de[[nm]]
+    dplyr::bind_rows(
+      head_to_head(d, go_ox, grep("^mt-", d$gene, value = TRUE),
+                   "mito-encoded control", nm),
+      head_to_head(d, go_ox, grep("^Rp[sl][0-9]", d$gene, value = TRUE),
+                   "ribosomal control", nm))
+  }))
+  log_sanity("sensitivity gene set size (GO:0006119, nuclear only)", length(go_ox), "OK")
+  log_sanity("overlap with the curated 50", length(intersect(go_ox, nuclear_oxphos)), "OK")
+
+  sens <- dplyr::bind_rows(lapply(c(CELL_KEY, tissues), function(nm) {
+    vc <- verdict_for(nm)
+    vg <- if (nrow(out_go)) verdict_for(nm, out_go, h2h_go) else NA_character_
+    data.frame(dataset = nm,
+               verdict_curated = vc, verdict_GO0006119 = vg,
+               agree = !is.na(vg) &&
+                       identical(startsWith(vc, "SPECIFIC"), startsWith(vg, "SPECIFIC")),
+               stringsAsFactors = FALSE)
+  }))
+  write.csv(sens, file.path(OUTDIR, paste0("part5c_geneset_sensitivity_", RUN_TAG, ".csv")),
+            row.names = FALSE)
+  if (nrow(out_go)) { cat("\n"); print(out_go, row.names = FALSE) }
+  if (nrow(h2h_go)) { cat("\n"); print(h2h_go, row.names = FALSE, digits = 3) }
+  for (i in seq_len(nrow(sens)))
+    log_sanity(paste0("verdict agrees across gene sets (", sens$dataset[i], ")"),
+               ifelse(sens$agree[i], "YES", "NO - gene-set dependent"),
+               ifelse(sens$agree[i], "OK", "WARN"),
+               ifelse(sens$agree[i], "",
+                      "the call depends on which OXPHOS genes are used - report both"))
+}
 
 ## ---- 5) Figure ----
 pd <- out %>% dplyr::filter(is.finite(mean_Wald)) %>%

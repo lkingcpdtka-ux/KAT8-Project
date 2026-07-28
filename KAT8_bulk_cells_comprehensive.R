@@ -2,7 +2,7 @@
 
 ## -------------------------------------------------------------------------
 ## SCRIPT VERSION: 2026-07-27
-##   3T3-L1 cells: DE / ORA / GSEA
+##   3T3-L1 cells: DE / ORA / GSEA; robust GO simplification
 ##   All pipeline scripts should carry the SAME version date. run_all.R prints
 ##   them at pre-flight -- a date that differs from the rest means that file is
 ##   a stale copy and should be re-downloaded before you trust its output.
@@ -1096,16 +1096,42 @@ tryCatch({
           cat("[INFO] Simplifying GO:BP results (removing redundant terms)...\n")
           tryCatch({
             sig_go <- go_results %>% dplyr::filter(padj < fdr_cut_cells)
+            ## Cap the term count the way the tissue script does. Semantic
+            ## similarity is O(n^2) and the tail of a 445-term list adds
+            ## nothing but runtime.
+            .cap <- if (exists("gsea_params") && !is.null(gsea_params$max_terms_for_simplify))
+                      gsea_params$max_terms_for_simplify else 300
+            if (nrow(sig_go) > .cap) {
+              cat("[INFO] ", nrow(sig_go), " significant terms; simplifying the top ",
+                  .cap, " by FDR\n", sep = "")
+              sig_go <- sig_go %>% dplyr::arrange(padj) %>% dplyr::slice_head(n = .cap)
+            }
             if (nrow(sig_go) > 0) {
               require(GOSemSim)
               godata <- godata("org.Mm.eg.db", ont = "BP", computeIC = TRUE)
               go_ids <- sig_go$pathway
               sim_mat <- mgoSim(go_ids, go_ids, semData = godata, measure = "Wang")
 
-              keep_terms <- c()
-              for (i in seq_along(go_ids)) {
-                if (i == 1 || all(sim_mat[i, keep_terms] < simplify_go_cutoff)) {
-                  keep_terms <- c(keep_terms, i)
+              ## THIS IS WHERE IT USED TO FAIL with "incorrect number of
+              ## dimensions". mgoSim() only returns a square matrix when every
+              ## ID resolves in the semantic data; if any are obsolete or from
+              ## another ontology it can hand back a bare NA or a vector, and
+              ## sim_mat[i, ...] then errors. gseGO reports terms that GOSemSim
+              ## will not always score, so this is expected, not exceptional.
+              ok_mat <- is.matrix(sim_mat) &&
+                        all(dim(sim_mat) == length(go_ids)) &&
+                        any(is.finite(sim_mat))
+              if (!ok_mat) {
+                cat("[INFO] semantic similarity unavailable for these terms",
+                    " - keeping all ", nrow(sig_go), " (unsimplified)\n", sep = "")
+                keep_terms <- seq_len(nrow(sig_go))
+              } else {
+                sim_mat[!is.finite(sim_mat)] <- 0   ## unscored pair = not redundant
+                keep_terms <- c()
+                for (i in seq_along(go_ids)) {
+                  if (i == 1 || all(sim_mat[i, keep_terms] < simplify_go_cutoff)) {
+                    keep_terms <- c(keep_terms, i)
+                  }
                 }
               }
 
