@@ -426,16 +426,56 @@ if (length(cand) > 0) {
       if (length(m) == 0) NA_character_ else sprintf("%+.2f", hits$NES[hits$pathway == m[1]][1])
     }, character(1))
   } else NA_character_
+  ## IS THE TF EVEN IN LAYER 3?
+  ##
+  ## A blank layer-3 cell was being read as "layer 3 disagrees". Usually it
+  ## means layer 3 never tested that TF. The MSigDB C3:TFT collection and the
+  ## DoRothEA regulon are built from different sources and overlap by only
+  ## ~20 of 273 TFs: Pparg, Stat1, Stat2, Irf9, Nfkb1, Rela, Hif1a and Myc all
+  ## have NO target set in TFT. They cannot score there however real they are,
+  ## so n_layers caps at 2 for reasons that have nothing to do with the data.
+  ##
+  ## Absence of evidence is separated from evidence of absence: a TF is
+  ## "not testable" when no set bearing its name exists, and only counted as
+  ## unsupported when a set exists and did not come up.
+  conv$layer3_testable <- if (!is.null(tft)) {
+    vapply(conv$TF, function(t)
+      any(grepl(paste0("(^|_)", toupper(t), "(_|$)"), toupper(tft$pathway))),
+      logical(1))
+  } else FALSE
+  conv$layer3_TFT_NES[!conv$layer3_testable] <- NA_character_
+  conv$layer3_status <- ifelse(!conv$layer3_testable, "not testable (no TFT set)",
+                        ifelse(is.na(conv$layer3_TFT_NES), "tested, not enriched", "supported"))
+
   conv$n_layers <- rowSums(!is.na(conv[, c("layer1_mRNA_log2FC","layer2_activity","layer3_TFT_NES")]))
+  ## Layers a TF COULD have reached, so 2/2 is not mistaken for 2/3.
+  conv$n_layers_testable <- 2L + as.integer(conv$layer3_testable)
   conv <- conv %>% dplyr::arrange(dplyr::desc(n_layers), TF)
   write.csv(conv, file.path(OUTDIR, paste0("part5b_convergence_", RUN_TAG, ".csv")), row.names = FALSE)
+
+  n_testable <- sum(conv$layer3_testable)
+  log_sanity("candidate TFs testable in layer 3 (TFT)",
+             sprintf("%d / %d", n_testable, nrow(conv)),
+             ifelse(n_testable < 0.5 * nrow(conv), "INFO", "OK"),
+             "a blank layer-3 cell mostly means NOT TESTED, not contradicted")
+
   multi <- conv %>% dplyr::filter(n_layers >= 2)
   cat("\nTFs supported by >=2 independent layers:\n")
-  if (nrow(multi) > 0) print(multi, row.names = FALSE) else cat("  (none)\n")
+  if (nrow(multi) > 0) {
+    print(multi[, c("TF", "layer1_mRNA_log2FC", "layer2_activity",
+                    "layer3_TFT_NES", "layer3_status", "n_layers",
+                    "n_layers_testable")], row.names = FALSE)
+  } else cat("  (none)\n")
   log_sanity("TFs with >=2 layers of support", nrow(multi), "INFO")
+  if (n_testable < 0.5 * nrow(conv))
+    cat("\n  NOTE: ", nrow(conv) - n_testable, " of ", nrow(conv),
+        " candidates have no TFT target set, so they max out at 2 layers\n",
+        "        regardless of the biology. Compare n_layers with n_layers_testable.\n", sep = "")
 }
 
 write_sanity()
 cat("\n[DONE] Part 5b complete. Outputs in ", OUTDIR, "\n", sep = "")
 cat("Interpret the CONVERGENCE table first -- a TF supported by 2-3 layers is a\n")
 cat("real candidate; a hit in layer 2 alone is a summary statistic, not evidence.\n")
+cat("Read n_layers against n_layers_testable: most TFs have no TFT set and so\n")
+cat("cannot exceed 2, and check the regulon audit before calling any TF unchanged.\n")
