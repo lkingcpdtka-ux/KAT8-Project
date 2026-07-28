@@ -204,12 +204,31 @@ if (!length(qc_files)) {
   flag("QC matrices", sprintf("screen %d genes / analysis %d genes",
                               nrow(vst_screen), nrow(vst_analysis)), "OK")
 
+  ## The Liver panel is deliberately widened. With only Alb, Apoa1, Ttr and
+  ## Serpina1a it was impossible to tell contamination from regulation: three of
+  ## those four are also expressed in adipose, so a shift in them says nothing,
+  ## and Alb moving alone is not enough to convict. Hepatocyte-restricted genes
+  ## are added so the panel can answer the question it is asked.
   PANELS <- list(
     Sperm_testis = c("Prm1","Prm2","Tnp1","Tnp2","Smcp","Oaz3","Odf1","Akap4","Spata19","Izumo1"),
     Blood        = c("Hba-a1","Hba-a2","Hbb-bs","Hbb-bt","Alas2"),
     Muscle       = c("Acta1","Myh1","Myh2","Ckm","Tnnt3","Mylpf"),
-    Liver        = c("Alb","Apoa1","Ttr","Serpina1a"),
+    Liver        = c("Alb","Apoa1","Ttr","Serpina1a",
+                     "Apob","Tf","Ahsg","F2","Cyp2e1","Fga","Fgb","Apoa2"),
     LymphNode    = c("Cd19","Ms4a1","Cd3e","Ccl21a","Ccl19"))
+
+  ## Which members are RESTRICTED to the foreign tissue, and which are also
+  ## expressed in fat. Real carry-over drags the restricted genes with it -- a
+  ## piece of liver in the tube brings Alb AND Apob AND Fga. A shift confined to
+  ## the shared genes is regulation happening in the adipocyte, and the two
+  ## cannot be told apart from a panel mean. Anything not listed here is
+  ## treated as shared, i.e. as weak evidence.
+  EXCLUSIVE <- list(
+    Sperm_testis = c("Prm1","Prm2","Tnp1","Tnp2","Smcp","Oaz3","Odf1","Akap4","Spata19","Izumo1"),
+    Blood        = c("Hba-a1","Hba-a2","Hbb-bs","Hbb-bt","Alas2"),
+    Muscle       = c("Acta1","Myh1","Myh2","Ckm","Tnnt3","Mylpf"),
+    Liver        = c("Alb","Apob","Tf","Ahsg","F2","Cyp2e1","Fga","Fgb","Apoa2"),
+    LymphNode    = c("Cd19","Ms4a1","Cd3e"))
 
   score_rows <- list()
   per_gene   <- list()
@@ -299,6 +318,7 @@ if (!length(qc_files)) {
             if (nlevels(gt) != 2) return(NULL)
             m  <- tapply(x[k], gt, mean)
             data.frame(panel = nm, gene = gg, Depot = dp,
+                       exclusive = gg %in% EXCLUSIVE[[nm]],
                        mean_ctl = m[[1]], mean_kd = m[[2]],
                        delta_vst = m[[2]] - m[[1]],
                        p_genotype = wtest(x[k], si$Genotype[k]),
@@ -315,6 +335,31 @@ if (!length(qc_files)) {
     cat("  per-gene breakdown for flagged panels -> QC_contamination_per_gene_",
         run_tag, ".csv\n", sep = "")
     print(pg[order(pg$panel, pg$Depot, pg$p_genotype), ], row.names = FALSE, digits = 3)
+
+    ## THE VERDICT THE PANEL MEAN CANNOT GIVE.
+    ## Carry-over moves the tissue-RESTRICTED members together. If only the
+    ## shared members move, the genes are being regulated in the fat and there
+    ## is nothing to correct for.
+    for (nm in unique(pg$panel)) {
+      for (dp in unique(pg$Depot[pg$panel == nm])) {
+        q  <- pg[pg$panel == nm & pg$Depot == dp, , drop = FALSE]
+        ex <- q[q$exclusive, , drop = FALSE]
+        if (!nrow(ex)) next
+        n_ex_sig <- sum(ex$p_genotype < 0.05, na.rm = TRUE)
+        sh <- q[!q$exclusive, , drop = FALSE]
+        verdict <- if (n_ex_sig >= 2)
+          "CARRY-OVER: several tissue-restricted markers move together"
+        else if (n_ex_sig == 1 && nrow(ex) > 2)
+          paste0("NOT carry-over: only 1 of ", nrow(ex),
+                 " tissue-restricted markers moves - a single gene, not a tissue")
+        else
+          "no tissue-restricted marker moves - regulation, not contamination"
+        flag(sprintf("%s in %s: restricted markers moving", nm, dp),
+             sprintf("%d / %d (shared: %d / %d)", n_ex_sig, nrow(ex),
+                     sum(sh$p_genotype < 0.05, na.rm = TRUE), nrow(sh)),
+             ifelse(n_ex_sig >= 2, "WARN", "OK"), verdict)
+      }
+    }
   }
 
   cont <- dplyr::bind_rows(score_rows)
@@ -416,10 +461,33 @@ if (!length(qc_files)) {
   mean_cor <- (rowSums(cm) - 1) / (ncol(cm) - 1)
   z <- (mean_cor - median(mean_cor)) / (mad(mean_cor) + 1e-9)
   low <- names(mean_cor)[z < -5]
-  flag("samples poorly correlated with the rest (z < -5)",
-       ifelse(length(low), paste(low, collapse = ", "), "none"),
-       ifelse(length(low), "WARN", "OK"),
-       ifelse(length(low), "candidate outlier libraries", ""))
+
+  ## A NAME ALONE IS NOT ACTIONABLE. "JS_06, JS_07, JS_09, JS_10" reads as four
+  ## bad libraries until you look up what they are -- and if they all belong to
+  ## ONE group, the far likelier explanation is that the group is genuinely
+  ## different from everything else. Correlation here is against every other
+  ## sample, most of which are controls or the other depot, so the arm with the
+  ## largest treatment effect is EXPECTED to correlate least. That is biology,
+  ## not a failed library. The annotation is printed so the difference is
+  ## obvious without a manual lookup.
+  if (length(low)) {
+    li <- si[match(low, si$Sample), , drop = FALSE]
+    grp <- paste(li$Depot, li$Genotype, sep = "_")
+    tab <- table(grp)
+    all_one <- length(tab) == 1
+    flag("samples poorly correlated with the rest (z < -5)",
+         paste(low, collapse = ", "),
+         if (all_one) "INFO" else "WARN",
+         if (all_one)
+           paste0("all ", length(low), " are ", names(tab)[1],
+                  " -- one group differing from the rest is a treatment effect, not a bad library")
+         else "candidate outlier libraries - check against submission records")
+    print(data.frame(Sample = low, Depot = li$Depot, Genotype = li$Genotype,
+                     Sex = li$Sex, mean_cor = round(mean_cor[low], 3),
+                     robust_z = round(z[low], 1)), row.names = FALSE)
+  } else {
+    flag("samples poorly correlated with the rest (z < -5)", "none", "OK")
+  }
   })
 
   ## The PCA convention comparison that used to sit here has been REMOVED.
