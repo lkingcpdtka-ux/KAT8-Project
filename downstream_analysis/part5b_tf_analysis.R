@@ -176,6 +176,67 @@ if (!is.null(net) && all(c("source","target","mor") %in% colnames(net))) {
   log_sanity("leading-edge rows (0 = the old empty-table bug)", nrow(le),
              ifelse(nrow(le) > 0, "OK", "FAIL"))
 
+  ## ---- REGULON AUDIT ---------------------------------------------------
+  ## A non-significant activity score has two very different causes, and the
+  ## score alone cannot tell them apart:
+  ##   (a) the TF's targets genuinely did not move  -> a real negative
+  ##   (b) the REGULON disagrees with itself in this tissue, so real movement
+  ##       cancels -> an artefact of the annotation, not a finding
+  ##
+  ## (b) is easy to miss and expensive to get wrong. ULM sums mor * stat, so a
+  ## target annotated with the WRONG SIGN for this tissue subtracts from the
+  ## very signal it should support. DoRothEA is built across many tissues:
+  ## Pparg here carries Slc2a4 as a REPRESSED target, which is right in some
+  ## contexts but backwards in adipocytes (PPARG drives GLUT4). Slc2a4 is also
+  ## the single largest mover in the iWAT panel, so its contribution cancels
+  ## Adipoq / Fabp4 / Cd36 / Lpl instead of adding to them.
+  ##
+  ## This reports, per TF and per dataset, the mean target statistic split by
+  ## edge sign. When the activating and repressing targets moved the SAME way,
+  ## the score is being cancelled and should not be read as "no effect".
+  audit_tfs <- intersect(unique(net$source),
+                         c("Pparg", "Cebpa", "Cebpb", "Cebpd", "Srebf1", "Ppara",
+                           "Stat1", "Stat2", "Irf9", "Nfkb1", "Rela", "Hif1a", "Myc",
+                           if (exists("GENES_OF_INTEREST")) GENES_OF_INTEREST else NULL))
+  aud <- list()
+  for (nm in names(de)) {
+    d  <- de[[nm]] %>% dplyr::filter(is.finite(stat)) %>% dplyr::distinct(gene, .keep_all = TRUE)
+    sv <- setNames(d$stat, d$gene)
+    for (tf in audit_tfs) {
+      e <- net[net$source == tf, , drop = FALSE]
+      e$stat <- unname(sv[e$target]); e <- e[is.finite(e$stat), , drop = FALSE]
+      if (nrow(e) < 4) next
+      up <- e$mor > 0; dn <- e$mor < 0
+      m_up <- if (any(up)) mean(e$stat[up]) else NA_real_
+      m_dn <- if (any(dn)) mean(e$stat[dn]) else NA_real_
+      ## Cancelling = both classes moved the same way, so the repressing
+      ## targets push activity opposite to the activating ones.
+      cancel <- is.finite(m_up) && is.finite(m_dn) && sign(m_up) == sign(m_dn) &&
+                abs(m_dn) > 0.25 * abs(m_up)
+      aud[[length(aud) + 1]] <- data.frame(
+        dataset = nm, TF = tf, n_targets = nrow(e),
+        n_activating = sum(up), n_repressing = sum(dn),
+        mean_stat_activating = m_up, mean_stat_repressing = m_dn,
+        signal_cancelling = cancel, stringsAsFactors = FALSE)
+    }
+  }
+  if (length(aud)) {
+    aud <- dplyr::bind_rows(aud)
+    write.csv(aud, file.path(OUTDIR, paste0("part5b_L2_regulon_audit_", RUN_TAG, ".csv")),
+              row.names = FALSE)
+    nc <- sum(aud$signal_cancelling, na.rm = TRUE)
+    log_sanity("regulon audit: TF x dataset with CANCELLING targets", nc,
+               ifelse(nc > 0, "INFO", "OK"),
+               "their activity score understates the effect - read the target genes instead")
+    if (nc > 0) {
+      cat("\n  Regulons whose activating and repressing targets moved the SAME way\n",
+          "  (activity score is cancelled, NOT evidence of no effect):\n", sep = "")
+      print(aud[aud$signal_cancelling, c("dataset", "TF", "n_activating", "n_repressing",
+                                         "mean_stat_activating", "mean_stat_repressing")],
+            row.names = FALSE, digits = 3)
+    }
+  }
+
   ## Cells barplot
   top <- tf_act %>% dplyr::slice_head(n = tp$top_n_cells) %>%
     dplyr::mutate(TF = factor(TF, levels = TF[order(activity)]),
