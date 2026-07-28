@@ -272,11 +272,16 @@ init_sanity <- function(script) {
   .SANITY$rows <- list(); .SANITY$script <- script
   cat("\n== ", script, " ==\n", sep = "")
 }
-log_sanity <- function(check, value, status = "INFO") {
+## `action` is optional and says what to DO about a flagged check, the way
+## part1b's flag() does. It was being passed by callers before the argument
+## existed, which failed the whole step with "unused argument".
+log_sanity <- function(check, value, status = "INFO", action = "") {
   .SANITY$rows[[length(.SANITY$rows) + 1]] <- data.frame(
     script = .SANITY$script, check = check, value = as.character(value),
-    status = status, stringsAsFactors = FALSE)
+    status = status, action = action, stringsAsFactors = FALSE)
   cat(sprintf("  [%-4s] %-48s %s\n", status, check, value))
+  if (nzchar(action) && status %in% c("WARN", "FAIL", "INFO"))
+    cat(sprintf("         %s\n", action))
 }
 write_sanity <- function() {
   df <- do.call(rbind, .SANITY$rows)

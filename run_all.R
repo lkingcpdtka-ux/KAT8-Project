@@ -241,6 +241,28 @@ run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
       out[!has] <- as.numeric(file.info(paths[!has])$mtime)
     out
   }
+  ## Only folders THIS DRIVER made are candidates for resuming.
+  ##
+  ## Part 1 and the cells script both call init_run(), which creates a
+  ## savepoints/RUN_<new tag> folder BEFORE they notice KAT8_RUN_DIR is
+  ## already set and switch to it. Every run therefore leaves 2 empty stray
+  ## RUN_ folders behind, and they carry LATER timestamps than the real run.
+  ## Resume then picked a stray, found no completion markers in it, and
+  ## re-ran the entire pipeline into it -- which is exactly what happened
+  ## when only Part 5b was wanted.
+  ##
+  ## A real run folder is identifiable: this driver writes .done/ into it.
+  ## Strays never have one. If nothing qualifies (a genuine first run), fall
+  ## back to the full list.
+  driver_made <- existing[dir.exists(file.path(existing, ".done"))]
+  if (length(driver_made)) {
+    n_stray <- length(existing) - length(driver_made)
+    if (n_stray > 0)
+      cat("[INFO] ignoring ", n_stray,
+          " folder(s) with no .done marker (init_run() leftovers)\n", sep = "")
+    existing <- driver_made
+  }
+
   if (length(existing))
     existing <- existing[order(.run_time(existing), decreasing = TRUE)]
 
