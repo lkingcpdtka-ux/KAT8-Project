@@ -155,6 +155,30 @@ COMBINED_PANELS <- list(
   "Adipogenic program vs effectors" = c("Adipogenic program", "Metabolic effectors")
 )
 
+## ---- WHICH PANEL FIGURES TO WRITE ---------------------------------------
+## Four figure families can be produced from the same panels, and emitting
+## every family for every panel gave 26 files -- more than anyone will look
+## at, which means the important ones stop being found.
+##
+## The default keeps ONE view per panel: iWAT and gWAT side by side. The
+## per-depot singles are redundant with it (identical content, split in two)
+## and are OFF. The shared-axis cross-depot version is reserved for the panel
+## where the depot comparison IS the question.
+##
+##   single   per depot, one panel per file     (Forest_*)
+##   depots   iWAT | gWAT side by side          (CombinedDepots_*)   <- default
+##   cross    both depots on one shared axis    (CrossDepot_*)
+##   combined two different panels side by side (Combined_*)
+##
+## Each entry: a character vector of panel names, or TRUE for all, or
+## FALSE/NULL for none. Turn singles back on with single = TRUE.
+PANEL_FIGURES <- list(
+  single   = FALSE,
+  depots   = TRUE,
+  cross    = c("Hypoxia HIF axis"),
+  combined = TRUE
+)
+
 ## ---- SAME PANEL, BOTH DEPOTS, SIDE BY SIDE ------------------------------
 ## iWAT on the left, gWAT on the right, each on ITS OWN axis.
 ##

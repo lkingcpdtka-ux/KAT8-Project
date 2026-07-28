@@ -1485,6 +1485,16 @@ if (generate_marker_forest_plots) {
   panels_dir <- file.path(plots_dir, "panels")
   dir.create(panels_dir, recursive = TRUE, showWarnings = FALSE)
 
+  ## Which figure families to write (see PANEL_FIGURES in parameters.R).
+  emit <- if (exists("PANEL_FIGURES")) PANEL_FIGURES else list()
+  .want <- function(family, pname) {
+    v <- emit[[family]]
+    if (is.null(v)) return(TRUE)          ## unset = emit everything
+    if (isTRUE(v))  return(TRUE)
+    if (isFALSE(v)) return(FALSE)
+    pname %in% v
+  }
+
   ## Stars from the configured tiers. Ordered most- to least-stringent, so the
   ## first cutoff a gene clears is the one it gets.
   .stars <- function(padj) {
@@ -1606,25 +1616,30 @@ if (generate_marker_forest_plots) {
           cat("[SKIP] ", tissue, " / ", pname, ": no genes measured\n", sep = ""); next
         }
 
-        p_f <- .forest_plot(fp, spec, paste0(tissue, ": ", pname), thr)
-        safe <- gsub("[^A-Za-z0-9]+", "_", pname)
-        fp_file <- paste0("Forest_", safe, "_", contrast, "_", run_tag, ".png")
-        ggsave(file.path(panels_dir, fp_file), p_f,
-               width = 9, height = max(4, 0.42 * nrow(fp) + 2.4),
-               dpi = 300, bg = "white", limitsize = FALSE)
-        n_sig <- sum(!is.na(fp$padj) & fp$padj < thr$fdr_cut)
-        cat("[OK] ", fp_file, "  (", nrow(fp), " genes, ", n_sig, " significant)\n", sep = "")
-
+        ## Always BUILD the panel -- the side-by-side figures need it even when
+        ## the single-panel file is not written.
         built[[paste(tissue, pname, sep = "||")]] <-
           list(plot = .forest_plot(fp, spec, paste0(tissue, ": ", pname), thr,
                                    compact = TRUE), n = nrow(fp))
         fp$Depot <- tissue
         cross[[length(cross) + 1]] <- transform(fp, panel_name = pname)
+
+        if (.want("single", pname)) {
+          p_f  <- .forest_plot(fp, spec, paste0(tissue, ": ", pname), thr)
+          safe <- gsub("[^A-Za-z0-9]+", "_", pname)
+          fp_file <- paste0("Forest_", safe, "_", contrast, "_", run_tag, ".png")
+          ggsave(file.path(panels_dir, fp_file), p_f,
+                 width = 9, height = max(4, 0.42 * nrow(fp) + 2.4),
+                 dpi = 300, bg = "white", limitsize = FALSE)
+          n_sig <- sum(!is.na(fp$padj) & fp$padj < thr$fdr_cut)
+          cat("[OK] ", fp_file, "  (", nrow(fp), " genes, ", n_sig, " significant)\n", sep = "")
+        }
       }
 
       ## ---- side-by-side combined figures, per depot --------------------
       combos <- if (exists("COMBINED_PANELS")) COMBINED_PANELS else list()
       for (cname in names(combos)) {
+        if (!.want("combined", cname)) next
         want <- combos[[cname]]
         keys <- paste(tissue, want, sep = "||")
         if (!all(keys %in% names(built))) next
@@ -1648,6 +1663,7 @@ if (generate_marker_forest_plots) {
     ## reads these in.
     want_dd <- if (exists("COMBINE_DEPOTS_PANELS")) COMBINE_DEPOTS_PANELS else names(panels)
     for (pname in want_dd) {
+      if (!.want("depots", pname)) next
       keys <- paste(c("iWAT", "gWAT"), pname, sep = "||")
       keys <- keys[keys %in% names(built)]
       if (length(keys) < 2) next
@@ -1671,6 +1687,7 @@ if (generate_marker_forest_plots) {
     cd <- if (length(cross)) dplyr::bind_rows(cross) else NULL
     if (!is.null(cd) && dplyr::n_distinct(cd$Depot) > 1 && length(want_cd)) {
       for (pname in intersect(want_cd, unique(cd$panel_name))) {
+        if (!.want("cross", pname)) next
         sub <- cd[cd$panel_name == pname, , drop = FALSE]
         ## Genes must be measured in EVERY depot: a missing row would read as
         ## "no effect" rather than "not measured".
