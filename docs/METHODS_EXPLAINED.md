@@ -330,9 +330,44 @@ a curated set of a TF's known target genes. If most of PPARγ's targets went dow
 PPARγ activity probably went down, whether or not `Pparg` mRNA moved. ULM
 regresses the DE statistics on regulon membership to score each TF.
 
-**Layer 3 — MSigDB C3:TFT target enrichment.** Gene sets built from **ChIP-derived
-binding data** — an entirely different evidence base from Layer 2's curated
-network.
+**Layer 3 — MSigDB C3:TFT (GTRD) target enrichment, scored with `fgsea`.** Gene
+sets built from **ChIP-derived binding data** — a different evidence base from
+Layer 2's curated network.
+
+### How independent are Layers 2 and 3, really?
+
+Less than the word "independent" suggests, and this matters when you write it up.
+
+**What they share.** Both consume the *same input*: the per-gene DESeq2 Wald
+statistic. Layer 2 feeds it to `run_ulm`; Layer 3 feeds the identical vector to
+`fgsea`. Neither brings a new measurement — they are two different weightings of
+one set of numbers.
+
+**What genuinely differs.**
+
+| | Layer 2 | Layer 3 |
+|---|---|---|
+| Target definition | CollecTRI via OmniPath (DoRothEA A/B/C fallback) — curated, literature-derived | MSigDB C3:TFT:GTRD — ChIP-derived binding |
+| Edge sign | **Signed** (`mor`, mode of regulation) | **Unsigned** — membership only |
+| Method | Univariate linear model: regression of the statistic on regulon membership | Rank-based enrichment score, NES |
+| Null | Optional permutation against the null of the **maximum \|score\| across TFs** — family-wise, deliberately stricter than per-TF BH | fgsea per-set permutation, BH-adjusted |
+
+The signed/unsigned split is the substantive one. Layer 2 knows that a
+*repressed* target going down means the TF is **more** active. Layer 3 only asks
+whether the target set sits high or low in the ranking, so a TF with a mix of
+activated and repressed targets can wash out in Layer 3 while scoring cleanly in
+Layer 2. Disagreement between them is therefore often informative rather than
+contradictory.
+
+**So what does convergence buy you?** L2/L3 agreement shows the result is not an
+artifact of one particular *target annotation* — worth having, since regulon
+definitions disagree substantially. It does **not** show the result replicates in
+independent data, because both read the same statistics.
+
+**Layer 1 is the one that differs in kind.** It measures the TF's own mRNA, which
+is a different quantity from how its targets behave. **L1 agreeing with L2 or L3
+is stronger evidence than L2 agreeing with L3** — and worth saying explicitly
+when you report convergence, rather than treating all three agreements as equal.
 
 ### Why three layers, and why Layer 2 must not be read alone
 Layer 2 is the one people quote, and on its own it is the weakest of the three:
@@ -346,10 +381,59 @@ Layer 2 is the one people quote, and on its own it is the weakest of the three:
 script tabulates that convergence explicitly, and that table is what should be
 reported.
 
-**Also included:** PROGENy, which scores signalling pathway activity one level
-*above* TFs; and a cells-vs-tissue comparison, so a TF active in **both** can be
+**Also included:** a cells-vs-tissue comparison, so a TF active in **both** can be
 distinguished from one that is tissue-only and therefore likely driven by
 infiltrating cells rather than by adipocytes.
+
+### PROGENy — signalling one level above the TFs
+
+**The problem it solves.** If you want to know whether TNFα signalling is active,
+the obvious move is to look at `Tnf` expression — and it is almost always the
+wrong move. Signalling pathways are controlled by **phosphorylation, not
+transcription**. A pathway can be blazing while every one of its component genes
+sits flat, because the proteins were already there and just got switched on.
+Reading pathway member expression tells you about the *machinery*, not about
+whether the machinery is *running*.
+
+**The idea.** PROGENy (Pathway RespOnsive GENes) inverts the question. Instead of
+asking "did the pathway's own genes change?", it asks **"did the genes that are
+known to respond downstream when this pathway fires change?"** Those responsive
+genes — the pathway's *footprint* — were learned from a large compendium of
+published perturbation experiments where a pathway was deliberately stimulated or
+inhibited and the transcriptome measured. The footprint is the empirical
+consequence of the pathway being on.
+
+It covers ~14 signalling pathways: EGFR, MAPK, PI3K, TNFα, NF-κB, TGFβ, p53,
+Hypoxia, VEGF, JAK-STAT, TRAIL, WNT, Estrogen, Androgen.
+
+**How it runs here.** `get_progeny(organism = "mouse", top = 500)` — the top 500
+most informative responsive genes per pathway, each carrying a **signed weight**
+(how strongly and in which direction that gene responds). Scored with
+`run_mlm` — a **multivariate** linear model — against the same per-gene Wald
+statistic used by Layers 2 and 3. BH-corrected across pathways.
+
+**Why multivariate here, when Layer 2 uses univariate.** Pathway footprints
+overlap: a gene responsive to TNFα is often responsive to NF-κB too. Scoring each
+pathway separately would credit that shared gene to both and report two hits where
+there is one signal. A multivariate fit makes the pathways **compete to explain
+the same genes**, so overlapping footprints are disentangled rather than
+double-counted.
+
+**How to read it.** A positive score means the pathway's footprint moved the way
+it moves when the pathway is **activated**; negative means the inhibited
+direction. It is an inference about pathway *state*, not a measurement of any
+molecule.
+
+**Why it belongs in the TF section.** Signalling pathways act largely *through*
+TFs. If a TF program has shifted, PROGENy asks what is upstream driving it — the
+difference between "NF-κB targets are up" and "something is activating NF-κB".
+For this dataset that is the natural question, since the tissue is inflamed while
+the isolated adipocyte looks healthy.
+
+**Caveats worth stating.** The footprints are learned largely from human
+perturbation data (the mouse model is derived from it), and — as with Layers 2
+and 3 — PROGENy consumes the **same Wald statistics** as everything else, so it is
+a different question asked of the same data, not independent confirmation.
 
 ---
 
