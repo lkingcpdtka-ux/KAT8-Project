@@ -9,13 +9,58 @@ Everything else is delivered as a script to run locally, or stopped.
 
 | Task | Status |
 |---|---|
-| 1 — Kat8 deletion efficiency | **STOPPED** — no alignments |
-| 2 — Secretome vs background | Verified arithmetically; script written |
-| 3 — Relaxed gWAT down ORA | Input set sized; script written |
-| 4 — Layer 3 join defect | **FIXED in code** |
-| 5 — Layer 3 set-size inconsistency | **Reporting added**; coverage question answered |
+| 1 — Kat8 deletion efficiency | **STOPPED** — no alignments; not pursued by decision |
+| 2 — Secretome vs background | **RESOLVED** — ≥1 depot claim fails, both-depot survives matching |
+| 3 — Relaxed gWAT down ORA | **RESOLVED** — primary GSEA already carries the finding |
+| 4 — Layer 3 join defect | **FIXED and verified** |
+| 5 — Layer 3 set-size inconsistency | **Documented** — 13/36 survive 5–500 |
 | 6 — Sex summary | **STOPPED** — source scripts absent |
-| 7 — DE_cells column harmonisation | **Preconditions verified**; script written |
+| 7 — DE_cells column harmonisation | **DONE** — preconditions verified, file written |
+
+## Outcomes (all tasks run 2026-07-30)
+
+**Task 2.** Fisher against background: ≥1 depot OR 1.45, p = 0.164 (**not
+significant**); both depots OR 2.17, p = 0.012. Against an
+expression-and-effect-size-matched background: ≥1 depot OR 1.93, p = 0.053;
+both depots **OR 2.54, p = 0.029 — survives matching**. Background resolves to
+314, not 312, as predicted. *"45 of 78 (58%)" must not be quoted as evidence;
+the both-depot statistic is defensible and now has a matched-background check
+behind it.*
+
+**Task 3 — resolved better than the sensitivity analysis anticipated.** The
+relaxed set returned 8 significant GO:BP terms, dominated by cilia. But checking
+the primary GSEA showed **the finding was already there, as the top-ranked
+result**: `cilium organization` (setSize 395, NES −1.94, padj **1.02e-08**) and
+`intraciliary transport` (setSize 48, NES −2.39, padj 5.13e-07), both
+down-regulated. No ciliary terms in iWAT GO:BP or in either KEGG table — the
+effect is **depot-restricted to gWAT**. So no post hoc threshold needs
+justifying and nothing goes to supplementary as a rescue: the claim of "no
+enrichment" was never true of the analysis, only of ORA within it. The relaxed
+ORA is corroboration. `smoothened signaling` reaches significance in the
+relaxed ORA only and **not** in GSEA, so Hedgehog should be reported as
+consistent with the ciliary signature, not as established.
+
+**Task 4 — verified.** All three expected values present after the fix: Foxj2
+−1.202 / 0.279, Ncoa2 +1.293 / 0.138, Snai1 +0.915 / 0.882, each `tested, not
+enriched`, `n_layers` = 1. 3 of 58 testable, as expected. `n_layers` unchanged
+for every TF, confirming the support gate held. The three multi-layer TFs
+(Creb3l1, Myc, Stat2) are all in the *not testable* group — Layer 3 and Layers
+1–2 have essentially no overlap in this dataset.
+
+**Task 5 — numbers now known.** 437 sets returned (450 passed the pre-filter;
+fgsea drops sets below `minSize` after intersecting with the ranked list, which
+is expected). Size range 10–1456; **144 of 437 outside 5–500**; **13 of 36
+significant sets would survive the bound**, i.e. 23 exceed it. Limitations
+section only.
+
+**Task 7 — done.** `pvalue` == `P.Value` and `log2FoldChange` == `logFC` both
+identical across 12,798 rows; 745 NA retained. Harmonised file written to
+`followups/output/`; original untouched.
+
+**Reproducibility check not in the original brief.** Part 5b logged a failure to
+download the PROGENy model from OmniPath and fell back to a static table. All 14
+pathway scores are byte-identical to the 28 July run, including JAK-STAT
+(−12.482), so the fallback is equivalent and the figure is reproducible.
 
 ---
 
