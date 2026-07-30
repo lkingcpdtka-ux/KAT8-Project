@@ -14,7 +14,7 @@ Everything else is delivered as a script to run locally, or stopped.
 | 3 — Relaxed gWAT down ORA | **RESOLVED** — primary GSEA already carries the finding |
 | 4 — Layer 3 join defect | **FIXED and verified** |
 | 5 — Layer 3 set-size inconsistency | **Documented** — 13/36 survive 5–500 |
-| 6 — Sex summary | **STOPPED** — source scripts absent |
+| 6 — Sex summary | (a) **BLOCKED** — scripts absent; (b) **DONE** |
 | 7 — DE_cells column harmonisation | **DONE** — preconditions verified, file written |
 
 ## Outcomes (all tasks run 2026-07-30)
@@ -276,7 +276,35 @@ coverage — ChEA3, or ReMap/ENCODE directly.
 
 ---
 
-## Task 6 — Sex summary — STOPPED
+## Task 6(b) — variance decomposition — DONE
+
+Written to `followups/output/task6b_variance_decomposition_*.csv`.
+
+| Variance component | iWAT | gWAT |
+|---|---|---|
+| Sex | 6.54% | 11.47% |
+| Genotype | **33.17%** | **16.73%** |
+| Sex × Genotype | **2.05%** | **2.39%** |
+| Residual | 46.32% | 50.07% |
+| *(sum of medians)* | *88.08%* | *80.66%* |
+
+Genotype explains **16.2×** more variance than the interaction in iWAT and
+**7.0×** more in gWAT. This is the defensible lead argument for pooling, with
+the 99%+ directional concordance beside it.
+
+**Two presentation cautions.** These are **medians taken independently across
+genes**, so they do not sum to 100 (88.1% and 80.7%). They must not be drawn as
+a pie chart or a stacked bar — the deck's pie-chart analogy is wrong on this
+point — and the shortfall should be explained if asked rather than rescaled.
+
+**`N_genotype_DEGs` in that file (2,691 iWAT / 1,054 gWAT) matches none of the
+other counts** — not the unified headline (3,022 / 1,159), nor per-depot
+`~ Genotype` (2,665 / 1,077), nor `~ Sex + Genotype` (3,042 / 1,131). Every
+other field reconciles exactly with the deck (π₀ 0.8701/0.8483, interaction
+630/374, correlation 0.7272/0.6054), so the discrepancy is confined to that one
+column. Drop it or state which model produced it before showing the table.
+
+## Task 6(a) — N_sex_DEGs — STOPPED
 
 The sex-interaction analysis is **not part of this repository**. Searching every
 `.R` file for `Sex`, `interaction` or `LRT` returns only `part1_main_analysis.R`,
