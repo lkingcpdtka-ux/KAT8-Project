@@ -17,8 +17,26 @@ A journal-ready Methods paragraph is at the end.
 
 ## 0. The experiment
 
-KAT8 knockdown by siRNA in mouse adipose tissue, plus a parallel knockdown in
-3T3-L1 adipocytes.
+Two arms, and they are **different perturbations** — which turns out to explain
+the study's central dissociation rather than complicating it.
+
+- **Tissue:** constitutive **Adipoq-Cre** adipocyte-specific *Kat8* knockout.
+  Adipoq-Cre switches on as adipocytes differentiate, so KAT8 is lost **during
+  adipogenesis** and the animal develops without it.
+- **Cells:** **siRNA** knockdown in **already differentiated** 3T3-L1 adipocytes
+  — KAT8 removed *after* the adipocyte program is established. A maintenance
+  experiment.
+
+Keep that distinction in view. It is the reason the tissue has a phenotype while
+the isolated adipocyte looks healthy (§4): the published requirement for KAT8
+falls **before** differentiation, which the tissue arm crosses and the cell arm
+does not. Two arms that disagree because they perturb at different times is a
+finding, not a conflict.
+
+One consequence for the tissue arm specifically: because Cre is
+adipocyte-specific, the tissue contains **deleted adipocytes alongside untouched
+stroma, endothelium and immune cells**. Any bulk measurement of *Kat8* itself is
+therefore a dilution readout across that mixture, not a deletion efficiency.
 
 - **Two depots:** iWAT (inguinal, subcutaneous) and gWAT (gonadal, visceral)
 - **Design:** 2 × 2 per depot — Sex (F, M) × Genotype (CTL, KAT8-KD)

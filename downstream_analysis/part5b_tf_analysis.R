@@ -394,6 +394,31 @@ if (requireNamespace("msigdbr", quietly = TRUE) && requireNamespace("fgsea", qui
         dplyr::mutate(leadingEdge = vapply(leadingEdge, paste, character(1), collapse = ","))
       write.csv(tft, file.path(OUTDIR, paste0("part5b_L3_TFT_enrichment_", RUN_TAG, ".csv")), row.names = FALSE)
       log_sanity("TFT sets significant (FDR<0.05)", sum(tft$padj < FDR_CUT, na.rm = TRUE), "OK")
+
+      ## SET-SIZE BOUND: layer 3 does NOT use the 5-500 bound applied elsewhere.
+      ##
+      ## The fgsea call above passes minSize = 10, maxSize = 2000, while
+      ## gsea_params in parameters.R specifies 5-500 for every other gene-set
+      ## analysis in the pipeline. That inconsistency is REPORTED here and
+      ## deliberately NOT fixed: re-running layer 3 under a tighter bound after
+      ## seeing the results, and then reporting whichever sets survive, is
+      ## fitting the filter to the answer. The numbers below belong in the
+      ## limitations section, not in a results table.
+      ##
+      ## It matters less than it looks: layer 3 is uninformative for this
+      ## dataset regardless, because only a handful of the convergence
+      ## candidates have any C3:TFT set at all (see the layer3_testable count).
+      .sz  <- tft$size
+      .sig <- !is.na(tft$padj) & tft$padj < FDR_CUT
+      log_sanity("TFT set size range tested",
+                 sprintf("%d-%d (bound used: 10-2000; rest of pipeline: %d-%d)",
+                         min(.sz, na.rm = TRUE), max(.sz, na.rm = TRUE),
+                         gsea_params$min_gs_size, gsea_params$max_gs_size), "INFO")
+      log_sanity("TFT sets outside the 5-500 bound",
+                 sprintf("%d / %d tested", sum(.sz < 5 | .sz > 500, na.rm = TRUE), nrow(tft)), "INFO")
+      log_sanity("significant TFT sets that would survive 5-500",
+                 sprintf("%d / %d", sum(.sig & .sz >= 5 & .sz <= 500, na.rm = TRUE), sum(.sig)),
+                 "INFO", "limitations section only -- do NOT re-report the survivors as a result")
       top <- tft %>% dplyr::filter(padj < FDR_CUT) %>%
         dplyr::arrange(dplyr::desc(abs(NES))) %>% dplyr::slice_head(n = 25)
       if (nrow(top) >= 2) {
@@ -470,13 +495,35 @@ if (length(cand) > 0) {
     i <- match(conv$TF, sig2$TF)
     conv$layer2_activity[!is.na(i)] <- sprintf("%+.2f", sig2$activity[i[!is.na(i)]])
   }
-  conv$layer3_TFT_NES <- if (!is.null(tft)) {
-    hits <- tft %>% dplyr::filter(padj < FDR_CUT)
-    vapply(conv$TF, function(t) {
-      m <- hits$pathway[grepl(paste0("(^|_)", toupper(t), "(_|$)"), toupper(hits$pathway))]
-      if (length(m) == 0) NA_character_ else sprintf("%+.2f", hits$NES[hits$pathway == m[1]][1])
-    }, character(1))
-  } else NA_character_
+  ## THE JOIN USED TO KEEP ONLY SIGNIFICANT SETS.
+  ##
+  ## `hits <- tft %>% filter(padj < FDR_CUT)` meant a TF that WAS tested in
+  ## layer 3 and came back near-significant was recorded identically to one
+  ## that came back flat: both got NA. That is precisely the distinction a
+  ## convergence analysis exists to measure -- NCOA2 (NES +1.29, p = 0.016)
+  ## and SNAI1 (NES +0.92, p = 0.75) are not the same evidence, and the table
+  ## could not tell them apart.
+  ##
+  ## Now: match against the FULL fgsea result and retain NES/pval/padj for
+  ## every TF that has a TFT set at all. Where a TF matches more than one set,
+  ## take the most significant -- without that tie-break, switching from the
+  ## significant subset to the full table could silently select a different
+  ## set for a TF that does have a significant one, which would change
+  ## n_layers. Support is decided below by padj, not by presence of a value,
+  ## so n_layers keeps exactly its previous meaning.
+  conv$layer3_NES <- NA_character_
+  conv$layer3_pval <- NA_real_
+  conv$layer3_padj <- NA_real_
+  if (!is.null(tft)) {
+    for (i in seq_len(nrow(conv))) {
+      m <- which(grepl(paste0("(^|_)", toupper(conv$TF[i]), "(_|$)"), toupper(tft$pathway)))
+      if (!length(m)) next
+      m <- m[order(tft$padj[m], tft$pval[m])][1]   ## most significant match wins
+      conv$layer3_NES[i]  <- sprintf("%+.3f", tft$NES[m])
+      conv$layer3_pval[i] <- tft$pval[m]
+      conv$layer3_padj[i] <- tft$padj[m]
+    }
+  }
   ## IS THE TF EVEN IN LAYER 3?
   ##
   ## A blank layer-3 cell was being read as "layer 3 disagrees". Usually it
@@ -494,11 +541,20 @@ if (length(cand) > 0) {
       any(grepl(paste0("(^|_)", toupper(t), "(_|$)"), toupper(tft$pathway))),
       logical(1))
   } else FALSE
-  conv$layer3_TFT_NES[!conv$layer3_testable] <- NA_character_
-  conv$layer3_status <- ifelse(!conv$layer3_testable, "not testable (no TFT set)",
-                        ifelse(is.na(conv$layer3_TFT_NES), "tested, not enriched", "supported"))
+  conv$layer3_NES[!conv$layer3_testable]  <- NA_character_
+  conv$layer3_pval[!conv$layer3_testable] <- NA_real_
+  conv$layer3_padj[!conv$layer3_testable] <- NA_real_
 
-  conv$n_layers <- rowSums(!is.na(conv[, c("layer1_mRNA_log2FC","layer2_activity","layer3_TFT_NES")]))
+  ## SUPPORT is a significance decision, kept separate from HAVING A VALUE.
+  ## This is what n_layers counts, so the corrected join adds information
+  ## without inflating anyone's layer count.
+  conv$layer3_supported <- conv$layer3_testable &
+    !is.na(conv$layer3_padj) & conv$layer3_padj < FDR_CUT
+  conv$layer3_status <- ifelse(!conv$layer3_testable, "not testable (no TFT set)",
+                        ifelse(conv$layer3_supported, "supported", "tested, not enriched"))
+
+  conv$n_layers <- rowSums(!is.na(conv[, c("layer1_mRNA_log2FC","layer2_activity")])) +
+                   as.integer(conv$layer3_supported)
   ## Layers a TF COULD have reached, so 2/2 is not mistaken for 2/3.
   conv$n_layers_testable <- 2L + as.integer(conv$layer3_testable)
   conv <- conv %>% dplyr::arrange(dplyr::desc(n_layers), TF)
@@ -514,7 +570,7 @@ if (length(cand) > 0) {
   cat("\nTFs supported by >=2 independent layers:\n")
   if (nrow(multi) > 0) {
     print(multi[, c("TF", "layer1_mRNA_log2FC", "layer2_activity",
-                    "layer3_TFT_NES", "layer3_status", "n_layers",
+                    "layer3_NES", "layer3_padj", "layer3_status", "n_layers",
                     "n_layers_testable")], row.names = FALSE)
   } else cat("  (none)\n")
   log_sanity("TFs with >=2 layers of support", nrow(multi), "INFO")
