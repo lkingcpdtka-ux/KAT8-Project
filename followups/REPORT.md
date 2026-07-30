@@ -36,9 +36,31 @@ down-regulated. No ciliary terms in iWAT GO:BP or in either KEGG table — the
 effect is **depot-restricted to gWAT**. So no post hoc threshold needs
 justifying and nothing goes to supplementary as a rescue: the claim of "no
 enrichment" was never true of the analysis, only of ORA within it. The relaxed
-ORA is corroboration. `smoothened signaling` reaches significance in the
-relaxed ORA only and **not** in GSEA, so Hedgehog should be reported as
-consistent with the ciliary signature, not as established.
+ORA is corroboration.
+
+*Leading edge of `cilium organization` (98 genes):* **98 of 98 significant at
+FDR < 0.05, 98 of 98 down-regulated, and only 2 exceeding |log2FC| > 1.** That
+one line explains the whole ORA/GSEA discrepancy — 96 of 98 genes sat below the
+gate ORA applies, so the method could not see a pathway that was fully present
+in the data. Effect sizes cluster between −0.6 and −1.0.
+
+Composition: intraflagellar transport (Ift140, Ift122, Ift172, Ift57, Ift46,
+Ift27, Ift22, Ift43, Wdr35, Cluap1, Ttc21b), the BBSome and its chaperonin
+(**Bbs1, Bbs2, Bbs7, Bbs10, Ttc8/BBS8, Arl6/BBS3**, plus BBS-associated Wdpcp),
+transition zone (Mks1, Rpgrip1l, Tctn1, Tctn2, Tmem231, Cplane1), retrograde
+motor (Dync2li1) and basal body (Cep19, Cep41, Cep89, Cep162, Pcm1). Six
+Bardet-Biedl genes and Cep19 — all human obesity-ciliopathy genes —
+coordinately down in visceral fat and unchanged in subcutaneous.
+
+*Hedgehog is NOT supported and should not be claimed.* No Gli, Ptch, Smo, Sufu,
+Kif7 or Hhip appears in the leading edge. The `smoothened signaling` term in the
+relaxed ORA is annotation overlap: GO assigns ciliary structural genes to that
+term because cilia are required to transduce Hedgehog, so it is the same genes
+under a second label, not independent evidence. For the discussion, the correct
+framing is that Smo and Gli are regulated by localisation and post-translational
+processing rather than transcript abundance, so RNA-seq cannot report Hedgehog
+activity either way — and PROGENy offers no fallback, since Hedgehog is not
+among its 14 pathways.
 
 **Task 4 — verified.** All three expected values present after the fix: Foxj2
 −1.202 / 0.279, Ncoa2 +1.293 / 0.138, Snai1 +0.915 / 0.882, each `tested, not
