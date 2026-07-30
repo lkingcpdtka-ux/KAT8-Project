@@ -578,11 +578,34 @@ tryCatch({
   if (!is.null(res_shrunk)) {
     tt$log2FoldChange_shrunk <- as.data.frame(res_shrunk)[rownames(tt), "log2FoldChange"]
   }
-  if ("padj" %in% colnames(tt)) tt$padj <- NULL
+  ## `padj` used to be DELETED here after being copied to adj.P.Val, so the
+  ## exported cells table carried limma-style names where both tissue tables
+  ## carry DESeq2 ones. Nothing in the pipeline broke -- config_downstream.R
+  ## resolves either spelling, and part2_ora.R has its own shim -- but any
+  ## script written by hand across all three tables silently returned nothing
+  ## for the cells instead of erroring, which is the worst failure mode
+  ## available. The in-memory `tt` keeps its aliases, because ~20 later blocks
+  ## in this script filter on adj.P.Val and logFC; only the FILE changes.
   tt <- tt[, !duplicated(colnames(tt)), drop = FALSE]
 
+  ## Export with the SAME column set as the tissue tables, so a script that
+  ## works on one works on all three. Note this keeps `logFC` rather than
+  ## dropping it: removing it from the cells only would move the asymmetry
+  ## rather than remove it, since part1 writes it for both tissue depots and
+  ## part4 reads it. Parity is the property that actually prevents the bug.
+  tt_out <- tt
+  tt_out$padj      <- tt$adj.P.Val     ## restore the canonical name
+  tt_out$adj.P.Val <- NULL             ## drop the limma aliases
+  tt_out$P.Value   <- NULL
+  keep_order <- c("baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue",
+                  "padj", "logFC", "gene_name", "log2FoldChange_shrunk")
+  tt_out <- tt_out[, c(intersect(keep_order, colnames(tt_out)),
+                       setdiff(colnames(tt_out), keep_order)), drop = FALSE]
+
   de_file <- paste0("DE_cells_KAT8KD_vs_CTL_", run_tag, ".csv")
-  write.csv(tt, file = file.path(outdir, "tables", de_file), row.names = TRUE)
+  write.csv(tt_out, file = file.path(outdir, "tables", de_file), row.names = TRUE)
+  cat("[OK] cells DE table written with canonical DESeq2 column names",
+      " (padj, not adj.P.Val)\n", sep = "")
 
   ## Calculate comprehensive DEG statistics
   n_total <- nrow(tt)
