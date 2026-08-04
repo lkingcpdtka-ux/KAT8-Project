@@ -245,6 +245,100 @@ load_all_de <- function(paths = DE_PATHS) {
 }
 
 ## ---------------------------------------------------------
+## 7b) EXPRESSION-MATCHED SET TESTING
+## ---------------------------------------------------------
+## Why this exists, and why the obvious test is wrong.
+##
+## The natural way to ask "did this gene set move?" is a Wilcoxon of the set's
+## Wald statistics against every other gene. That is what part4b's program
+## test originally did, and it is CONFOUNDED whenever the set is not a typical
+## slice of the transcriptome by expression level -- which curated marker
+## panels almost never are. Well-measured genes have smaller standard errors,
+## hence larger |Wald|, hence a better chance of looking significant in either
+## direction. Comparing highly expressed marker genes to a background that is
+## mostly lowly expressed therefore compares power as much as biology.
+##
+## In this dataset it changes conclusions rather than decimal places. The
+## glycolytic genes sit at the 72nd-82nd expression percentile, and in iWAT
+## the expression-matched null mean Wald is -0.65 rather than 0: highly
+## expressed genes there fall as a class. Against all genes the glycolytic
+## cascade in iWAT gives p = 0.011; against expression-matched sets, p = 0.053.
+##
+## matched_perm_test() draws random gene sets with the SAME baseMean stratum
+## composition as the real set and asks how often they reach the observed mean
+## statistic. The null becomes "genes as well measured as these ones", which is
+## the comparison the naive test should have been making.
+##
+## NOTE this is still a competitive test and still assumes genes are roughly
+## independent. Co-regulated sets (glycolysis, ribosome, ECM) violate that, so
+## even matched p-values run somewhat anti-conservative. A rotation test
+## (limma::roast / camera) on the count matrix is the fix; these summary
+## tables cannot support one.
+
+## Attach baseMean to a DE tibble from load_de_table(), which does not carry
+## it. Returns the tibble with a baseMean column (all NA when unavailable, so
+## callers can always reference it).
+attach_basemean <- function(de_tbl, path) {
+  resolve <- function(p) {
+    if (file.exists(p)) return(p)
+    alt <- c(file.path("downstream_analysis", "data", basename(p)),
+             file.path("data", basename(p)),
+             file.path("..", "downstream_analysis", "data", basename(p)))
+    hit <- alt[file.exists(alt)]
+    if (length(hit) > 0) hit[1] else NA_character_
+  }
+  p <- resolve(path)
+  if (is.na(p)) { de_tbl$baseMean <- NA_real_; return(de_tbl) }
+  df <- utils::read.csv(p, row.names = 1, check.names = FALSE, stringsAsFactors = FALSE)
+  if (!"baseMean" %in% colnames(df)) { de_tbl$baseMean <- NA_real_; return(de_tbl) }
+  gene <- if ("gene_name" %in% colnames(df)) as.character(df$gene_name) else rownames(df)
+  bm <- data.frame(gene = gene, baseMean = as.numeric(df$baseMean), stringsAsFactors = FALSE)
+  bm <- bm[!duplicated(bm$gene) & !is.na(bm$baseMean), , drop = FALSE]
+  de_tbl$baseMean <- bm$baseMean[match(de_tbl$gene, bm$gene)]
+  de_tbl
+}
+
+## Competitive test of `genes` against expression-matched random sets.
+## Returns obs (set mean statistic), null_mean, p (two-sided empirical), n.
+## p is NA when baseMean is unavailable or the set is too small -- callers
+## should fall back to reporting the naive Wilcoxon and say so.
+matched_perm_test <- function(d, genes, n_perm = 10000, n_bins = 20,
+                              stat_col = "stat") {
+  if (!"baseMean" %in% colnames(d)) return(list(obs = NA_real_, null_mean = NA_real_, p = NA_real_, n = 0L))
+  d <- d[!is.na(d[[stat_col]]) & !is.na(d$baseMean), , drop = FALSE]
+  present <- intersect(genes, d$gene)
+  if (length(present) < 3 || nrow(d) < 200)
+    return(list(obs = NA_real_, null_mean = NA_real_, p = NA_real_, n = length(present)))
+  d <- d[order(d$baseMean), , drop = FALSE]
+  bin <- pmin(seq_len(nrow(d)) %/% max(1, floor(nrow(d) / n_bins)) + 1, n_bins)
+  names(bin) <- d$gene
+  stat <- stats::setNames(d[[stat_col]], d$gene)
+  obs  <- mean(stat[present])
+  want <- table(bin[present])
+  pool <- split(d$gene, bin)
+  null <- replicate(n_perm, {
+    s <- unlist(lapply(names(want), function(b) {
+      k <- want[[b]]; cand <- pool[[b]]
+      if (length(cand) >= k) sample(cand, k) else sample(cand, k, replace = TRUE)
+    }), use.names = FALSE)
+    mean(stat[s])
+  })
+  p_one <- (sum(if (obs >= 0) null >= obs else null <= obs) + 1) / (n_perm + 1)
+  list(obs = obs, null_mean = mean(null), p = min(1, 2 * p_one), n = length(present))
+}
+
+## Median expression percentile of a gene set -- the number that says whether
+## the naive test was ever safe for this set.
+expression_percentile <- function(d, genes) {
+  if (!"baseMean" %in% colnames(d)) return(NA_real_)
+  d <- d[!is.na(d$baseMean), , drop = FALSE]
+  if (nrow(d) < 10) return(NA_real_)
+  present <- intersect(genes, d$gene)
+  if (!length(present)) return(NA_real_)
+  stats::median(100 * rank(d$baseMean)[match(present, d$gene)] / nrow(d), na.rm = TRUE)
+}
+
+## ---------------------------------------------------------
 ## 8) SHARED LOOK + SANITY HELPERS
 ## ---------------------------------------------------------
 ## Kept here so every downstream script stays short and they all look and

@@ -43,6 +43,25 @@
 ## Hence both tests are computed and BOTH are reported. The naive Wilcoxon is
 ## kept only so the gap between the two is visible rather than hidden.
 ##
+## WHAT "NOT CELL-AUTONOMOUS" DOES AND DOES NOT FOLLOW FROM THIS.
+## Discordance between the cells and the tissue is necessary for that reading
+## but not sufficient, because the two systems differ in more than the
+## presence of other cell types. They differ in the perturbation (transient
+## siRNA knockdown vs constitutive Adipoq-Cre knockout), in its duration, in
+## differentiation state and time in culture, and in that 3T3-L1 is an
+## immortalised line rather than a primary adipocyte. Any one of those
+## produces cells-vs-tissue discordance with nothing non-cell-autonomous
+## happening at all. This dataset cannot separate them; primary adipocytes or
+## SVF-differentiated cells from the same animals could. State the limitation
+## rather than leaving it for a reviewer to raise.
+##
+## The iWAT-vs-gWAT comparison does NOT share this weakness -- same animals,
+## same perturbation, same protocol -- which is a reason to lean on it.
+## It has a different one: it is inferred by comparing two separately fitted
+## contrasts rather than by a genotype x depot interaction term in one model.
+## If both depots were sequenced together, that interaction is the stronger
+## test and would upgrade this result.
+##
 ## GENE SET PROVENANCE: the primary set is GO:0006096 (glycolytic process)
 ## read offline from org.Mm.eg.db -- curated externally, with no knowledge of
 ## these data, so it cannot have been chosen to fit the result. The hand-
@@ -130,36 +149,10 @@ for (nm in DATASETS) {
 }
 
 ## 4) baseMean, for expression matching ----------------------
-## config's load_de_table() does not carry baseMean, and the matched null
-## needs it. Read it straight from the same CSVs, mirroring config's
-## working-directory fallback so this behaves identically when the script is
-## sourced from the project root or from inside downstream_analysis/.
-resolve_de_path <- function(path) {
-  if (file.exists(path)) return(path)
-  alt <- c(file.path("downstream_analysis", "data", basename(path)),
-           file.path("data", basename(path)),
-           file.path("..", "downstream_analysis", "data", basename(path)))
-  hit <- alt[file.exists(alt)]
-  if (length(hit) > 0) hit[1] else NA_character_
-}
-
-load_basemean <- function(path) {
-  p <- resolve_de_path(path)
-  if (is.na(p)) return(NULL)
-  df <- utils::read.csv(p, row.names = 1, check.names = FALSE, stringsAsFactors = FALSE)
-  if (!"baseMean" %in% colnames(df)) return(NULL)
-  gene <- if ("gene_name" %in% colnames(df)) as.character(df$gene_name) else rownames(df)
-  out <- data.frame(gene = gene, baseMean = as.numeric(df$baseMean),
-                    stringsAsFactors = FALSE)
-  out[!duplicated(out$gene) & !is.na(out$baseMean), , drop = FALSE]
-}
-
-for (nm in DATASETS) {
-  bmt <- load_basemean(DE_PATHS[[nm]])
-  de[[nm]] <- if (is.null(bmt)) {
-    de[[nm]]$baseMean <- NA_real_; de[[nm]]
-  } else dplyr::left_join(de[[nm]], bmt, by = "gene")
-}
+## load_de_table() does not carry baseMean and the matched null needs it.
+## attach_basemean() lives in config_downstream.R so part4b uses the identical
+## code path -- the two scripts must not drift into testing different things.
+for (nm in DATASETS) de[[nm]] <- attach_basemean(de[[nm]], DE_PATHS[[nm]])
 have_bm <- vapply(DATASETS, function(nm) any(!is.na(de[[nm]]$baseMean)), logical(1))
 log_sanity("baseMean available for expression matching",
            paste(DATASETS[have_bm], collapse = ", "),
@@ -214,32 +207,10 @@ naive_wilcox <- function(d, genes) {
            error = function(e) NA_real_)
 }
 
-## MATCHED: compare the set's mean Wald statistic against random gene sets
-## drawn to have the SAME expression profile (same baseMean stratum counts).
-## The null is then "genes as well measured as these ones", which is the
-## comparison the naive test should have been making all along.
-matched_perm <- function(d, genes, n_perm = N_PERM, n_bins = N_BINS) {
-  d <- d[!is.na(d$stat) & !is.na(d$baseMean), ]
-  present <- intersect(genes, d$gene)
-  if (length(present) < 3 || nrow(d) < 200)
-    return(list(obs = NA_real_, null_mean = NA_real_, p = NA_real_, n = length(present)))
-  d <- d[order(d$baseMean), ]
-  bin <- pmin(seq_len(nrow(d)) %/% max(1, floor(nrow(d) / n_bins)) + 1, n_bins)
-  names(bin) <- d$gene
-  stat <- setNames(d$stat, d$gene)
-  obs <- mean(stat[present])
-  want <- table(bin[present])
-  pool <- split(d$gene, bin)
-  null <- replicate(n_perm, {
-    s <- unlist(lapply(names(want), function(b) {
-      k <- want[[b]]; cand <- pool[[b]]
-      if (length(cand) >= k) sample(cand, k) else sample(cand, k, replace = TRUE)
-    }), use.names = FALSE)
-    mean(stat[s])
-  })
-  p_one <- (sum(if (obs >= 0) null >= obs else null <= obs) + 1) / (n_perm + 1)
-  list(obs = obs, null_mean = mean(null), p = min(1, 2 * p_one), n = length(present))
-}
+## MATCHED: matched_perm_test() from config_downstream.R -- random gene sets
+## with the SAME baseMean stratum composition, so the null is "genes as well
+## measured as these ones" rather than "all genes".
+matched_perm <- function(d, genes) matched_perm_test(d, genes, n_perm = N_PERM, n_bins = N_BINS)
 
 rows <- list()
 for (sname in names(TEST_SETS)) {
@@ -498,6 +469,10 @@ cat("\n[DONE] Part 4c complete. Outputs in ", OUTDIR, "\n", sep = "")
 cat("Read-out:\n")
 cat(" - Lead with the per-gene 'significant in BOTH, opposite sign' genes: no gene set,\n")
 cat("   no set-level null, each gene carries its own FDR.\n")
-cat(" - Cells UP while iWAT is DOWN = the glycolytic response is NOT cell-autonomous.\n")
+cat(" - Cells UP while iWAT is DOWN: consistent with a non-cell-autonomous effect, but\n")
+cat("   3T3-L1 vs in-vivo KO also differ in perturbation, duration and cell model --\n")
+cat("   see the header. Report it as 'not reproduced in pure adipocytes', which is what\n")
+cat("   was measured, rather than as proven indirect.\n")
 cat(" - iWAT vs gWAT also disagree, so 'adipose tissue' is not one response; name the depot.\n")
+cat("   That comparison is same-animal/same-protocol, so it does not carry the caveat above.\n")
 cat(" - Check p_matched, never p_naive_wilcox, before claiming a set moved.\n")

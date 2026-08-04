@@ -234,6 +234,29 @@ PROGRAMS <- list(
   "ECM / fibrosis"     = c("Col1a1","Col3a1","Col6a1","Fn1","Timp1","Sparc","Col1a2","Lox")
 )
 
+## The Wilcoxon-vs-all-other-genes test used here is CONFOUNDED BY EXPRESSION
+## LEVEL. Curated marker panels are made of well-known, well-expressed genes;
+## well-measured genes have smaller standard errors and therefore larger
+## |Wald| whichever way they move. Comparing them to a background that is
+## mostly lowly expressed compares statistical power as much as biology.
+##
+## This is not a hypothetical concern in this dataset. Part 4c found the same
+## test called the glycolytic cascade significantly down in iWAT (p = 0.011)
+## when, against gene sets matched on expression level, it is not (p = 0.053) --
+## because in iWAT highly expressed genes fall as a class (matched null mean
+## Wald -0.65, not 0). Every program below is an equally plausible candidate
+## for that artefact, and the adipocyte/thermogenic/lipid collapse in iWAT is
+## a headline claim of this analysis.
+##
+## So both are computed: the original Wilcoxon (p_vs_background) and an
+## expression-matched permutation test (p_matched, from config_downstream.R).
+## p_matched is the one to quote. The median expression percentile of each
+## program is reported alongside, because it says how far apart the two tests
+## can possibly be -- a program near the 50th percentile is one the naive test
+## was always safe for.
+set.seed(MASTER_SEED)
+for (nm in names(de)) de[[nm]] <- attach_basemean(de[[nm]], DE_PATHS[[nm]])
+
 prog_rows <- list()
 for (nm in names(de)) {
   d <- de[[nm]]
@@ -244,6 +267,7 @@ for (nm in names(de)) {
     bg  <- d[!d$gene %in% present, ]
     pv <- tryCatch(suppressWarnings(wilcox.test(sub$stat, bg$stat)$p.value),
                    error = function(e) NA_real_)
+    mp <- matched_perm_test(d, PROGRAMS[[pname]])
     prog_rows[[length(prog_rows) + 1]] <- data.frame(
       dataset      = nm,
       program      = pname,
@@ -251,7 +275,10 @@ for (nm in names(de)) {
       mean_log2FC  = mean(sub$log2FC, na.rm = TRUE),
       mean_Wald    = mean(sub$stat, na.rm = TRUE),
       n_sig        = sum(sub$padj < cp$tissue_fdr, na.rm = TRUE),
+      expr_percentile = expression_percentile(d, PROGRAMS[[pname]]),
       p_vs_background = pv,
+      matched_null_mean = mp$null_mean,
+      p_matched    = mp$p,
       stringsAsFactors = FALSE)
   }
 }
@@ -264,6 +291,36 @@ if (nrow(prog) > 0) {
                            names_from = dataset, values_from = mean_log2FC),
         n = 100)
 
+  ## Any program the naive test calls significant and the matched test does
+  ## not is an expression artefact, and it must be visible in the log rather
+  ## than only in a column of the CSV.
+  ## Matching cuts BOTH ways and both directions are reported. Losing
+  ## significance means the naive test was reading expression level as
+  ## biology. GAINING it means the naive test was hiding a real effect,
+  ## because the background it used was drifting the same way as the program
+  ## -- which is exactly what happens in iWAT, where highly expressed genes
+  ## fall as a class and an upward-moving program has to swim against that.
+  cat("\n=== EXPRESSION-MATCHED RE-TEST ===\n")
+  cat("Median expression percentile per program is in the CSV; several curated\n")
+  cat("panels here sit near the 99th, which is why the two tests can disagree.\n")
+  lost   <- prog[!is.na(prog$p_vs_background) & !is.na(prog$p_matched) &
+                   prog$p_vs_background <  0.05 & prog$p_matched >= 0.05, ]
+  gained <- prog[!is.na(prog$p_vs_background) & !is.na(prog$p_matched) &
+                   prog$p_vs_background >= 0.05 & prog$p_matched <  0.05, ]
+  show <- function(df, verdict, advice) {
+    for (i in seq_len(nrow(df)))
+      cat(sprintf("  [%s] %-6s %-22s expr pct %3.0f | naive p=%.4f -> matched p=%.4f  %s\n",
+                  verdict, df$dataset[i], df$program[i], df$expr_percentile[i],
+                  df$p_vs_background[i], df$p_matched[i], advice))
+  }
+  if (nrow(lost) == 0 && nrow(gained) == 0) {
+    cat("[OK] no program changes verdict at 0.05 when expression-matched.\n")
+  } else {
+    show(lost,   "WARN", "<- naive test overstated this")
+    show(gained, "NOTE", "<- naive test MISSED this")
+  }
+  cat("Quote p_matched throughout.\n")
+
   ord <- c(CELL_KEY, TISSUE_KEYS)
   prog$dataset <- factor(prog$dataset, levels = ord[ord %in% unique(prog$dataset)])
   prog$program <- factor(prog$program, levels = rev(names(PROGRAMS)))
@@ -275,9 +332,10 @@ if (nrow(prog) > 0) {
     labs(x = expression(mean~log[2]~fold~change~(KD/KO~vs~CTL)), y = NULL,
          title = "Program-level KAT8 response: pure adipocytes vs tissue",
          subtitle = "flat in cells + strong in tissue = NOT cell-autonomous",
-         caption = paste0("Curated programs; each tested competitively against all other genes ",
-                          "in that dataset (Wilcoxon on Wald stats).\nSee program_level_concordance_",
-                          RUN_TAG, ".csv for n, p-values and significant-gene counts.")) +
+         caption = paste0("Curated programs, each tested against expression-matched random gene sets ",
+                          "(10,000 permutations on Wald stats).\nSee program_level_concordance_",
+                          RUN_TAG, ".csv for n, both p-values (p_matched is the one to quote), ",
+                          "expression percentile\nand significant-gene counts.")) +
     theme_bw(base_size = 11) +
     theme(panel.grid.minor = element_blank(),
           plot.title = element_text(face = "bold"),
