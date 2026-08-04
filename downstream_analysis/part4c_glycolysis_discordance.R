@@ -166,6 +166,39 @@ log_sanity("baseMean available for expression matching",
            ifelse(all(have_bm), "OK", "WARN"),
            if (all(have_bm)) "" else "matched test skipped where absent; naive Wilcoxon still reported")
 
+## WHY the matched null is needed, measured rather than asserted: if the
+## glycolytic genes were a typical slice of the transcriptome by expression,
+## the naive Wilcoxon would be fine and this whole apparatus unnecessary.
+## They are not -- they sit far up the expression distribution, where genes
+## are better powered. This logs the number that justifies the method.
+for (nm in DATASETS) {
+  d <- de[[nm]]
+  d <- d[!is.na(d$baseMean), ]
+  if (nrow(d) < 10) next
+  present <- intersect(FIGURE_GENES, d$gene)
+  pct <- 100 * rank(d$baseMean)[match(present, d$gene)] / nrow(d)
+  log_sanity(paste0(nm, ": expression percentile of glycolytic genes"),
+             sprintf("median %.0fth (IQR %.0f-%.0f)", median(pct, na.rm = TRUE),
+                     quantile(pct, 0.25, na.rm = TRUE), quantile(pct, 0.75, na.rm = TRUE)),
+             ifelse(median(pct, na.rm = TRUE) > 60, "WARN", "OK"),
+             ifelse(median(pct, na.rm = TRUE) > 60,
+                    "well above average expression -> naive Wilcoxon vs all genes is confounded; use p_matched", ""))
+}
+
+## Aldoa audit. It is absent from every DE table here, and the useful question
+## is whether that is a NAMING difference (fixable, and a silent bug if
+## ignored) or a genuine absence. Hprt is a live example of the former: it
+## appears as "Hprt1". This checks for sibling/variant symbols so the answer is
+## in the run log rather than in someone's memory of a one-off grep.
+for (nm in DATASETS) {
+  al <- grep("^Aldo", de[[nm]]$gene, value = TRUE)
+  log_sanity(paste0(nm, ": aldolase symbols present"),
+             ifelse(length(al), paste(sort(al), collapse = ", "), "none"),
+             ifelse("Aldoa" %in% al, "OK", "WARN"),
+             ifelse("Aldoa" %in% al, "",
+                    "Aldoa not measured; other Aldo* present means this is a real gap, not a symbol mismatch"))
+}
+
 ## 5) Two competitive tests ----------------------------------
 ## NAIVE: Wilcoxon of the set's Wald statistics against every other gene.
 ## This is what part4b's program test does, and it is CONFOUNDED here:
