@@ -1,0 +1,606 @@
+## -------------------------------------------------------------------------
+## SCRIPT VERSION: 2026-07-27
+##   PCA convention; MARKER_PANELS from the original figures
+##   All pipeline scripts should carry the SAME version date. run_all.R prints
+##   them at pre-flight -- a date that differs from the rest means that file is
+##   a stale copy and should be re-downloaded before you trust its output.
+## -------------------------------------------------------------------------
+## =========================================================
+## KAT8 bulk RNA-seq - CENTRAL PARAMETERS FILE
+## =========================================================
+## All analysis cutoffs and thresholds are defined HERE ONLY
+## Other scripts (part1-6) source this file to use these values
+## =========================================================
+
+## ============================================================
+## REPRODUCIBILITY: RANDOM SEED CONFIGURATION
+## ============================================================
+## Single seed for all stochastic operations to ensure reproducibility
+## Used by: all parts (DESeq2, GSEA, clustering, PCA, etc.)
+
+MASTER_SEED <- 12345
+set.seed(MASTER_SEED)
+
+## ============================================================
+## DEG THRESHOLDS (Differential Expression)
+## ============================================================
+## Used by: part1_main_analysis.R, part2_ora.R, part3_fgsea.R
+
+## iWAT cutoffs (stringent - strong signal)
+iWAT_logFC_cut <- 1.0
+iWAT_fdr_cut   <- 0.05
+
+## gWAT cutoffs (can be relaxed if needed)
+gWAT_logFC_cut <- 1.0
+gWAT_fdr_cut   <- 0.05
+
+## Default cutoffs (for any other contrasts)
+default_logFC_cut <- 1.0
+default_fdr_cut   <- 0.05
+
+## ============================================================
+## GENES OF INTEREST  <<< ADD YOUR GENES HERE, ONCE >>>
+## ============================================================
+## One list, honoured by every plot that labels individual genes:
+##   part1  - genes-of-interest heatmap + EnhancedVolcano
+##   part4  - volcano plots (always labelled if they pass DE thresholds)
+##   part4b - cell-vs-tissue concordance quadrant plot
+##
+## >>> THE EDITABLE COPY OF THIS LIST NOW LIVES AT THE TOP OF run_all.R <<<
+##
+## Each part runs in its own environment, so a part sourcing this file would
+## shadow whatever run_all.R set. The global value therefore WINS, and what is
+## below is only the fallback for running a part on its own.
+if (exists("GENES_OF_INTEREST", envir = globalenv())) {
+  GENES_OF_INTEREST <- get("GENES_OF_INTEREST", envir = globalenv())
+} else {
+  GENES_OF_INTEREST <- c(
+    "Kat8",                                         ## catalytic subunit
+    "Msl1", "Msl2", "Msl3",                         ## MSL complex
+    "Kansl1", "Kansl2", "Kansl3", "Mcrs1", "Phf20", ## NSL/KANSL complex
+    ## Medium-chain acyl-CoA synthetases: among the strongest tissue effects
+    ## (Acsm3 iWAT log2FC -5.8, gWAT -3.1) and NOT expressed in 3T3-L1, so they
+    ## are tissue-only and cannot be assessed for cell-autonomy.
+    "Acsm3", "Acsm5"
+  )
+}
+
+## ============================================================
+## MARKER PANELS  -- for the forest (effect-size) plots
+## ============================================================
+## Used by: part4_visualization.R Section F
+##
+## Each entry becomes ONE figure per depot. The names inside each entry are
+## the facet rows, and gene order is preserved exactly as written here (the
+## plot draws them top-to-bottom in this order), so keep related genes
+## adjacent and put the gene you most want seen first.
+##
+## Any gene not measured in a depot is dropped from that panel with a note in
+## the log -- it is never silently blanked.
+MARKER_PANELS <- list(
+
+  ## ---- 1. Adipogenic program  (was "Adipocyte identity") ----------------
+  "Adipogenic program" = list(
+    subtitle = "Master TFs and Pparg targets",
+    groups = list(
+      "Master TFs" = c("Pparg", "Cebpa", "Cebpb", "Cebpd", "Klf15", "Srebf1"),
+      "Pparg target genes" = c("Adipoq", "Lep", "Fabp4", "Plin1", "Cd36",
+                               "Lpl", "Slc2a4", "Angptl4")
+    )
+  ),
+
+  ## ---- 2. Metabolic effectors -------------------------------------------
+  "Metabolic effectors" = list(
+    subtitle = "Glycolysis, OXPHOS, Hypoxia, mTORC1",
+    groups = list(
+      "Glycolysis"   = c("Hk2", "Pfkl", "Pkm", "Eno1", "Ldha", "Gapdh"),
+      "OXPHOS"       = c("Cox4i1", "Cox5a", "Ndufa9", "Sdhb", "Uqcrc1"),
+      "Hypoxia / HIF" = c("Hif1a", "Vegfa", "Slc2a1", "Egln1", "Egln3", "Bnip3"),
+      "mTORC1"       = c("Mtor", "Rps6", "Eif4ebp1", "Hmgcs1", "Acaca")
+    )
+  ),
+
+  ## ---- 3. Hypoxia / HIF axis --------------------------------------------
+  ## Not a marker list -- a CASCADE. The same genes as the Hypoxia block
+  ## above, re-cut so the row order follows the pathway: the master TF, then
+  ## what it turns on, then the feedback that should shut it off, then the
+  ## downstream effectors. Reading top to bottom is reading the mechanism, so
+  ## a break in the chain (TF up, effectors down) is visible as a break.
+  ## NOT called a "hypoxia axis". The data does not show one: Hif1a mRNA rises
+  ## in BOTH depots while its two canonical effectors, Vegfa and Bnip3, fall in
+  ## both -- and glycolysis goes opposite ways (down in iWAT, up in gWAT). A
+  ## title asserting an axis would claim a coherence the figure disproves. The
+  ## rows are still ordered as the cascade, because a break in the chain is
+  ## exactly what there is to see.
+  "HIF1a and its targets" = list(
+    subtitle = "Ordered as the cascade: master TF -> uptake -> glycolysis -> feedback -> effectors",
+    groups = list(
+      "HIF master TF"            = c("Hif1a"),
+      "Glucose uptake"           = c("Slc2a1"),
+      "Glycolysis (HIF targets)" = c("Hk2", "Pfkl", "Pkm", "Ldha"),
+      "HIF feedback (PHDs)"      = c("Egln1", "Egln3"),
+      "Hypoxia effectors"        = c("Vegfa", "Bnip3")
+    )
+  ),
+
+  ## ---- 4-6. Additional panels -------------------------------------------
+  "Thermogenic and lipid handling" = list(
+    subtitle = "Browning markers and lipid metabolism",
+    groups = list(
+      "Thermogenic" = c("Ucp1", "Cidea", "Ppargc1a", "Dio2", "Elovl3", "Prdm16"),
+      "Lipid metabolism" = c("Ppara", "Acox1", "Acaca", "Acacb", "Fasn",
+                             "Scd1", "Pck1", "Cpt1b", "Lipe", "Pnpla2")
+    )
+  ),
+  "Inflammation and remodelling" = list(
+    subtitle = "Immune infiltration and ECM -- the non-cell-autonomous candidates",
+    groups = list(
+      "Inflammatory" = c("Ccl2", "Ccl8", "Cxcl2", "Cxcl10", "Il1b", "Tnf",
+                         "Adgre1", "Cd68", "Itgax", "Ctss"),
+      "ECM / fibrosis" = c("Col1a1", "Col1a2", "Col3a1", "Col6a1", "Fn1",
+                           "Sparc", "Timp1", "Lox")
+    )
+  ),
+  "KAT8 complex" = list(
+    subtitle = "Catalytic subunit and its MSL / NSL partners (partners expected flat)",
+    groups = list(
+      "Catalytic"   = c("Kat8"),
+      "MSL"         = c("Msl1", "Msl2", "Msl3"),
+      "NSL / KANSL" = c("Kansl1", "Kansl2", "Kansl3", "Mcrs1", "Phf20")
+    )
+  )
+)
+
+## ---- SIDE-BY-SIDE COMBINED FIGURES --------------------------------------
+## Two panels drawn as one figure, each keeping its OWN x-axis and its own
+## colour scale. That matters: iWAT effect sizes reach |log2FC| ~ 2 while the
+## gWAT ones sit under 1, and forcing a shared axis would flatten the smaller
+## panel into a stripe. Each entry is c(left_panel, right_panel), naming
+## panels defined above.
+COMBINED_PANELS <- list(
+  "Adipogenic program vs effectors" = c("Adipogenic program", "Metabolic effectors")
+)
+
+## ============================================================
+## NSL SPECIFICITY TEST  (part5c)
+## ============================================================
+## How much bigger must the nuclear-OXPHOS shift be than a control's before
+## the effect is called specific? Both numbers are conventions, not facts, so
+## they live here rather than being buried in the script.
+##
+## WHY A BORDERLINE BAND EXISTS: the verdict is a word, the evidence is a
+## ratio, and a hard cut turns 1.99 into "NOT specific" and 2.01 into
+## "SPECIFIC". That actually happened -- swapping the curated OXPHOS list for
+## GO:0006119 moved iWAT's margin against the mito-encoded control from 2.54
+## to 1.96 and flipped the verdict, while every p-value stayed below 4e-04.
+## Anything landing in the band is now labelled BORDERLINE instead of
+## silently falling to one side.
+##
+## A NOTE ON THE MITO-ENCODED CONTROL: it is the stricter of the two and it
+## is not fully independent. Mitochondrially encoded transcripts drop when
+## mitochondrial content drops, which in iWAT is plausibly downstream of the
+## same effect being measured. The ribosomal-protein control is the cleaner
+## comparison, and iWAT beats it by 7.3-9.4x at p < 1e-22 under BOTH gene
+## sets. Read the two controls separately; do not average them.
+nsl_specificity_params <- list(
+  margin            = 2.0,   ## SPECIFIC requires this fold or more vs every control
+  borderline_margin = 1.5    ## between the two = BORDERLINE, not a negative
+)
+
+## ============================================================
+## CONTAMINATION EXCLUSIONS  -- kept in the tables, kept off the figures
+## ============================================================
+## Used by: part4_visualization.R (volcano labels, top-DEG heatmaps)
+##
+## Part 1b found sperm/testis transcripts in eight gWAT MALE samples -- normal
+## epididymal carry-over when dissecting gonadal fat. It is NOT confounded with
+## genotype (p = 0.82 pooled; 0.41 iWAT, 0.57 gWAT), so it does not bias the
+## DE results. But these genes are near-zero in most libraries and huge in a
+## few, which is why all six of Part 1b's "unstable estimate" flags (lfcSE > 2)
+## are sperm genes. They then take the largest |log2FC| slots on the iWAT
+## volcano and the top-DEG heatmap, displacing real biology.
+##
+## They are NOT removed from the DE tables. Deleting a real measurement to
+## make a figure look better is not defensible, and the DEG counts, ORA and
+## GSEA inputs all stay exactly as computed. This list only stops them being
+## LABELLED or picked for a heatmap, and the exclusion is stated in the log.
+##
+## Set to character(0) to disable.
+CONTAMINATION_EXCLUDE <- c(
+  ## sperm / testis, from epididymal carry-over in gWAT males
+  "Prm1", "Prm2", "Tnp1", "Tnp2", "Smcp", "Oaz3", "Odf1", "Akap4",
+  "Spata19", "Izumo1", "Gm35439"
+)
+
+## The list above is THIS dataset's answer, written by hand. The STATISTIC is
+## the general one, and it is what Part 1b actually flags: a fold change
+## carried by a handful of libraries has a large standard error, whatever
+## tissue those reads came from. Filtering on lfcSE as well as on the name list
+## means the next run catches its own contaminant without anyone remembering to
+## edit a vector -- every one of the six genes Part 1b flagged in iWAT
+## (lfcSE > 2) is caught by this rule on its own.
+##
+## Same contract as the list: labels and heatmap selection only. DEG counts,
+## ORA input and GSEA ranking are untouched, so this cannot move a result.
+## Set to Inf to disable.
+MAX_LFCSE_FOR_PLOTS <- 2
+
+## ---- WHICH PANEL FIGURES TO WRITE ---------------------------------------
+## Four figure families can be produced from the same panels, and emitting
+## every family for every panel gave 26 files -- more than anyone will look
+## at, which means the important ones stop being found.
+##
+## The default keeps ONE view per panel: iWAT and gWAT side by side. The
+## per-depot singles are redundant with it (identical content, split in two)
+## and are OFF. The shared-axis cross-depot version is reserved for the panel
+## where the depot comparison IS the question.
+##
+##   single   per depot, one panel per file     (Forest_*)
+##   depots   iWAT | gWAT side by side          (CombinedDepots_*)   <- default
+##   cross    both depots on one shared axis    (CrossDepot_*)
+##   combined two different panels side by side (Combined_*)
+##
+## Each entry: a character vector of panel names, or TRUE for all, or
+## FALSE/NULL for none. Turn singles back on with single = TRUE.
+PANEL_FIGURES <- list(
+  single   = FALSE,
+  depots   = TRUE,
+  cross    = c("HIF1a and its targets"),
+  combined = TRUE
+)
+
+## ---- SAME PANEL, BOTH DEPOTS, SIDE BY SIDE ------------------------------
+## iWAT on the left, gWAT on the right, each on ITS OWN axis.
+##
+## This is the complement of the CrossDepot figure below, not a duplicate of
+## it. CrossDepot puts both depots on one shared axis, which is the honest way
+## to ask "is the difference between depots bigger than the uncertainty" -- but
+## a shared axis squashes gWAT, whose effects sit under |log2FC| 1, against an
+## iWAT scale that reaches 2. Side by side, each depot is legible in its own
+## right and the comparison is of PATTERN: which genes move, in which
+## direction, in what order. Use both; they answer different questions.
+## Set to NULL to switch off.
+COMBINE_DEPOTS_PANELS <- names(MARKER_PANELS)
+
+## ---- CROSS-DEPOT (iWAT vs gWAT) FIGURES ---------------------------------
+## Panels to also draw with both depots on one row per gene. Set to
+## names(MARKER_PANELS) for all of them, or NULL to switch it off.
+CROSS_DEPOT_PANELS <- names(MARKER_PANELS)
+
+## ---- SIGNIFICANCE MARKERS ------------------------------------------------
+## ASCII ONLY, deliberately. The original figures used a middle dot for the
+## FDR<0.1 tier and it rendered as "A." on Windows -- the same mojibake hit
+## the arrows in the Hypoxia subtitle. Anything non-ASCII risks that on some
+## machine, so the markers stay in plain ASCII.
+marker_sig_tiers <- list(
+  list(cutoff = 0.001, label = "***"),
+  list(cutoff = 0.01,  label = "**"),
+  list(cutoff = 0.05,  label = "*"),
+  list(cutoff = 0.10,  label = ".")     ## trend
+)
+
+## Colours for the cross-depot figures.
+marker_depot_colours <- c(iWAT = "#4FA5D8", gWAT = "#C4749E")
+
+marker_panel_conf_level <- 0.95
+
+## ============================================================
+## CELL (3T3-L1) PARAMETERS
+## ============================================================
+## Used by: KAT8_bulk_cells_comprehensive.R, downstream_analysis/*
+## Previously these lived INSIDE the cells script, which contradicted this
+## file's "all cutoffs defined HERE ONLY" contract. Values are unchanged.
+##
+## IMPORTANT NOTE ON THE logFC GATE:
+##   The cells are a MAINTENANCE experiment (KAT8 siRNA in already-
+##   differentiated 3T3-L1). Effects are real but small: among FDR<0.05 genes
+##   the median |log2FC| is ~0.37, so gating at 0.5 discards ~74% of genuine
+##   DEGs (290 of 392) before any downstream analysis. FDR-only is therefore
+##   the PRIMARY DEG definition for cells; the logFC-gated list is retained
+##   for backward compatibility and reporting.
+cells_params <- list(
+  ## Prefilter: counts >= min_count in >= min_samples_per_group in AT LEAST
+  ## ONE group (appropriate for a 2-group comparison).
+  prefilter_min_count            = 10,
+  prefilter_min_samples_per_group = 2,
+
+  ## DE thresholds
+  fdr_cutoff   = 0.05,
+  logFC_cutoff = 0.5,     ## descriptive gate, NOT the primary DEG rule
+
+  ## Which rule defines the AUTHORITATIVE cell DEG list used downstream:
+  ##   "fdr_only"    - FDR < fdr_cutoff                (RECOMMENDED)
+  ##   "fdr_and_lfc" - FDR < fdr_cutoff AND |logFC| >  (legacy behaviour)
+  primary_deg_rule = "fdr_only"
+)
+
+## ============================================================
+## ORA PARAMETERS (Over-Representation Analysis)
+## ============================================================
+## Used by: part2_ora.R, part4_publication_plots.R
+
+ora_params <- list(
+  ## Enrichment analysis cutoffs (initial filtering)
+  pvalue_cutoff   = 0.1,
+  qvalue_cutoff   = 0.2,
+  
+  ## Gene set size constraints
+  min_gs_size     = 5,
+  max_gs_size     = 500,
+  
+  ## GO:BP simplification (removes redundant terms)
+  simplify_cutoff = 0.7,
+  
+  ## Plotting parameters
+  top_n           = 15,      ## Top pathways per direction for bar plots
+  order_by        = "adj. p-value"
+)
+
+## ============================================================
+## GSEA/fGSEA PARAMETERS (Gene Set Enrichment Analysis)
+## ============================================================
+## Used by: part3_fgsea.R, part5_barcode_plots.R
+
+gsea_params <- list(
+  ## Gene set size constraints
+  min_gs_size     = 5,
+  max_gs_size     = 500,
+  
+  ## Ranking metric (from DESeq2)
+  rank_metric     = "DESeq2 Wald statistic",
+  
+  ## GO:BP simplification - reduces redundant GO terms using semantic similarity
+  ## WARNING: simplify() is O(n^2) complexity - can hang with many terms!
+  ## Strategy: Only simplify the TOP N most significant terms (by p-value)
+  simplify_go     = TRUE,    ## Enable GO:BP simplification
+  simplify_cutoff = 0.5,     ## Semantic similarity threshold (lower = more aggressive merging)
+  max_terms_for_simplify = 300,  ## Simplify top N terms by p-value (keeps computation manageable)
+  
+  ## Plotting parameters
+  top_n_per_direction = 10,  ## Top pathways per direction for plots
+  
+  ## FDR cutoff for significance
+  fdr_cutoff      = 0.05,
+  
+  ## Random seed for reproducibility (used by gseGO/gseKEGG)
+  seed            = 12345
+)
+
+## ============================================================
+## GSEA PLOT PARAMETERS
+## ============================================================
+## Used by: part4_visualizations.R
+
+gsea_plot_params <- list(
+  plot_width  = 6.9,
+  plot_height = 6.8,
+  label_wrap_width = 32
+)
+
+## ============================================================
+## PUBLICATION PLOT PARAMETERS
+## ============================================================
+## Used by: part4_publication_plots.R
+
+dotplot_params <- list(
+  ## Filtering
+  fdr_cutoff      = 0.05,
+  min_count       = 3,       ## Minimum genes per pathway
+  
+  ## Top pathways to show
+  top_n_gobp      = 15,
+  top_n_kegg      = 15,
+  
+  ## Plot sizing (fixed to keep dot plots consistent)
+  plot_width      = 4.6,
+  plot_height     = 4.6,
+  
+  ## GO:BP simplification cutoff (should match ora_params)
+  gobp_simplify_cutoff = 0.7
+)
+
+## ============================================================
+## ENRICHMENT BAR PLOT PARAMETERS
+## ============================================================
+## Used by: part4_visualizations.R
+
+barplot_params <- list(
+  plot_width  = 6.9,
+  plot_height = 6.8,
+  label_wrap_width = 32
+)
+
+## ============================================================
+## HEATMAP PARAMETERS
+## ============================================================
+## Used by: part4_visualizations.R
+
+heatmap_params <- list(
+  lfc_clip    = 2.0,         ## Clip z-scores at +/- this value
+  
+  ## Custom gradient: RdYlBu (ColorBrewer) diverging
+  ## Down (blue) -> neutral (yellow) -> up (red)
+  custom_gradient = c("#4575B4", "#91BFDB", "#FFFFBF", "#FC8D59", "#D73027"),
+  
+  ## Display mode: "zscore" is standard for heatmaps
+  display_mode = "zscore",
+  
+  ## Legacy labels
+  lfc_label   = "log2FC (DESeq2)",
+  reference   = "CTL=0 reference"
+)
+
+## ============================================================
+## ENRICHMENT PLOT COLORS
+## ============================================================
+## Used by: part4_visualizations.R (ORA bar plots, dot plots, fGSEA)
+
+enrichment_colors <- list(
+  ## Gradient: RdYlBu diverging
+  gradient = c("#4575B4", "#91BFDB", "#FFFFBF", "#FC8D59", "#D73027")
+)
+
+## ============================================================
+## VOLCANO PLOT GENE SELECTION
+## ============================================================
+## Used by: part4_visualizations.R (ORA-informed labeling)
+## Genes are selected by intersecting significant ORA pathways
+## with DEGs, then ranked by a composite score:
+##   score = z(pathway_count) + z(|logFC|) + z(-log10(FDR))
+
+## Fraction of EXTRA labels reserved for the largest fold changes, on top of
+## the composite-ranked ones. Guarantees the volcano labels both the most
+## significant genes AND the biggest effects, instead of clustering them all
+## at the top. 0 disables (composite ranking only).
+volcano_fc_label_fraction <- 0.5
+
+volcano_gene_selection <- list(
+  ## >>> CHANGE THIS to control how many genes are labeled per direction <<<
+  top_n_per_direction = 20,
+  
+  ## ORA pathway significance threshold for counting gene membership
+  ora_padj_cutoff     = 0.05,
+  
+  ## Minimum pathway count for a gene to be considered ORA-supported
+  min_pathway_count   = 1,
+  
+  ## Genes always labeled if they pass DE thresholds (biological anchors).
+  ## Inherits the single GENES_OF_INTEREST list defined above.
+  mandatory_genes     = GENES_OF_INTEREST,
+  
+  ## Fallback: when no ORA pathways exist for a direction, use DE-only ranking
+  ## (top genes by padj, then by |logFC|)
+  fallback_to_de      = TRUE
+)
+
+## ============================================================
+## VOLCANO PLOT COLORS
+## ============================================================
+## Used by: part1_main_analysis.R, part4_visualizations.R
+
+volcano_colors <- list(
+  up   = "#D73027",   ## Red for up-regulated
+  down = "#4575B4",   ## Blue for down-regulated
+  ns   = "grey70"     ## Grey for non-significant
+)
+
+## ============================================================
+## QC PLOT COLORS (PCA/MDS/Density)
+## ============================================================
+## Used by: part1_main_analysis.R, part4_visualizations.R
+
+qc_plot_params <- list(
+  ## --- PCA construction (these change how the plot LOOKS) ---
+  ## pca_ntop  : number of most-variable genes to use. Inf = every filtered
+  ##             gene (the setting used here). 500 = DESeq2::plotPCA default.
+  ## pca_scale : unit-scale each gene before PCA? TRUE = every gene gets equal
+  ##             weight. FALSE = DESeq2 default, where high-variance genes
+  ##             dominate.
+  ##
+  ## THIS PIPELINE USES ntop = Inf, scale = TRUE, and that is a legitimate,
+  ## commonly used convention -- not a workaround. Unit-scaling asks "which
+  ## samples differ in their overall expression PATTERN", giving a gene that
+  ## moves 2-fold the same say as one that moves 20-fold. The DESeq2 default
+  ## instead asks "which samples differ most in the genes that vary most".
+  ## Both answer real questions; they simply answer different ones.
+  ##
+  ## The usual objection to unit-scaling -- that it amplifies low-expression
+  ## noise -- is handled upstream: PCA runs on the POST-FILTER matrix, so
+  ## every gene included is expressed (>=10 counts in >=4 samples). Genes with
+  ## zero variance are dropped before scaling, since scale. = TRUE cannot
+  ## rescale a constant column.
+  ##
+  ## The sign of a principal component is arbitrary -- a mirrored plot between
+  ## runs is not an error.
+  pca_ntop  = Inf,
+  pca_scale = TRUE,
+
+  ## Palette for DepotSex colors: any viridis option or "manual"
+  depot_sex_palette = "manual",
+  ## Manual colors (named vector by DepotSex). Used when palette = "manual".
+  depot_sex_manual = c(
+    "iWAT_F" = "#4575B4",  ## blue
+    "iWAT_M" = "#91BFDB",  ## light blue
+    "gWAT_F" = "#FC8D59",  ## orange
+    "gWAT_M" = "#D73027"   ## red
+  )
+)
+
+## ============================================================
+## BARCODE PLOT PARAMETERS
+## ============================================================
+## Used by: part5_barcode_plots.R
+
+barcode_params <- list(
+  ## Should match gsea_params for consistency
+  top_n_per_direction = gsea_params$top_n_per_direction,
+  fdr_cutoff          = gsea_params$fdr_cutoff
+)
+
+## ============================================================
+## HELPER FUNCTION: Get tissue-specific thresholds
+## ============================================================
+
+get_tissue_thresholds <- function(contrast_name) {
+  if (grepl("iWAT", contrast_name, ignore.case = TRUE)) {
+    return(list(logFC_cut = iWAT_logFC_cut, fdr_cut = iWAT_fdr_cut))
+  } else if (grepl("gWAT", contrast_name, ignore.case = TRUE)) {
+    return(list(logFC_cut = gWAT_logFC_cut, fdr_cut = gWAT_fdr_cut))
+  } else {
+    return(list(logFC_cut = default_logFC_cut, fdr_cut = default_fdr_cut))
+  }
+}
+
+## ============================================================
+## BIOLOGICAL INTERPRETATION PARAMETERS (Part 6)
+## ============================================================
+## Used by: part6_biological_interpretation.R
+
+interpretation_params <- list(
+  ## Cell type signature scoring
+  min_markers_for_score = 3,    ## Minimum markers found to calculate score
+  signature_method = "mean_logfc",  ## Options: "mean_logfc", "median_logfc", "ssgsea"
+  
+  ## Pathway convergence thresholds
+  convergence_fdr = 0.05,       ## FDR cutoff for convergent pathways
+  
+  ## Leading edge analysis
+  min_le_overlap = 2,           ## Minimum overlap for pathway-cell type reporting
+  min_le_fraction = 0.05,       ## Minimum fraction of leading edge for visualization
+  
+  ## Publication figure parameters
+  top_pathways_for_heatmap = 15,
+  celltype_logfc_threshold = 0.3  ## Threshold for asterisk annotation
+)
+
+## ============================================================
+## DEPOT CONCORDANCE PARAMETERS (Part 7)
+## ============================================================
+## Used by: part7_depot_concordance.R
+## Compares iWAT vs gWAT KAT8-KD responses to identify
+## shared (depot-general) vs depot-specific DEGs
+
+depot_concordance_params <- list(
+  ## Correlation method for logFC comparison
+  cor_method = "pearson",
+  
+  ## Number of top genes to label on scatter plot
+  top_n_label = 20,
+  
+  ## Plot dimensions
+  plot_width  = 10,
+  plot_height = 8
+)
+
+## ============================================================
+## PRINT CONFIRMATION
+## ============================================================
+
+cat("[INFO] Loaded central parameters from parameters.R\n")
+cat("       Reproducibility: MASTER_SEED=", MASTER_SEED, "\n", sep = "")
+cat("       DEG thresholds: iWAT FDR<", iWAT_fdr_cut, " |logFC|>", iWAT_logFC_cut, "\n", sep = "")
+cat("                       gWAT FDR<", gWAT_fdr_cut, " |logFC|>", gWAT_logFC_cut, "\n", sep = "")
+cat("       ORA: top_n=", ora_params$top_n, ", simplify=", ora_params$simplify_cutoff, "\n", sep = "")
+cat("       GSEA: top_n_per_direction=", gsea_params$top_n_per_direction, ", FDR<", gsea_params$fdr_cutoff, "\n", sep = "")
+cat("       Heatmap: display_mode=", heatmap_params$display_mode, ", clip=", heatmap_params$lfc_clip, "\n", sep = "")
+cat("       Interpretation: signature_method=", interpretation_params$signature_method, "\n", sep = "")
