@@ -39,7 +39,7 @@
 ##     Rscript run_all.R tissue          # parts 1-4 only
 ##
 ## STEP KEYS for RUN_FORCE:
-##   part1  qc  part2  part3  part4  cells  p4b  p5a  p5b  p5c   (or "all")
+##   part1  qc  part2  part3  part4  cells  p4b  p4c  p5a  p5b  p5c   (or "all")
 ##
 ## TARGETS: all (default) | tissue | cells | downstream
 ##
@@ -151,6 +151,7 @@ run_pipeline <- function(target = NULL, fresh = NULL, force = NULL,
     st("cells", "Cells   DE / ORA / GSEA (slow)", "KAT8_bulk_cells_comprehensive.R"))
   DOWNSTREAM <- list(
     st("p4b", "Part 4b  Is it cell-autonomous?", "downstream_analysis/part4b_cell_tissue_concordance.R"),
+    st("p4c", "Part 4c  Glycolysis: cells vs depots", "downstream_analysis/part4c_glycolysis_discordance.R"),
     st("p5a", "Part 5a  What does the cell broadcast?", "downstream_analysis/part5a_secretome.R"),
     st("p5b", "Part 5b  Which TF drives it?", "downstream_analysis/part5b_tf_analysis.R"),
     st("p5c", "Part 5c  Is the KAT8/NSL program engaged?", "downstream_analysis/part5c_kat8_complex.R"))
